@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+/* Oman LNG brand tokens — the only colours allowed in this app. Never introduce a new hex value. */
+:root {
+  --olng-blue: #00558c; /* primary actions, links, active nav, headers */
+  --olng-navy: #003e51; /* sidebar background, dark surfaces */
+  --olng-mid: #004f71; /* hover states on navy, secondary emphasis */
+  --olng-sail: #5bc2e7; /* highlights, progress fill, focus rings, sail motif */
+  --olng-text: #5f6062; /* body text — warm gray, never pure black */
+  --olng-gray: #b1b3b4; /* borders, muted text, disabled */
+  --olng-sand: #d1ccbd; /* rare secondary accent (awaiting review badge) */
+
+  /* Status colours (brand family + conventional signals) */
+  --status-not-started: #b1b3b4;
+  --status-in-progress: #00558c;
+  --status-blocked: #b54a4a; /* the only red on screen */
+  --status-awaiting-review: #d1ccbd;
+  --status-completed: #3e7a5e;
+
+  /* Surfaces */
+  --page-bg: #f5f6f7;
+  --surface: #ffffff;
+  --border: #e3e5e6;
+  --radius: 6px;
+}
+
+@theme inline {
+  --color-olng-blue: var(--olng-blue);
+  --color-olng-navy: var(--olng-navy);
+  --color-olng-mid: var(--olng-mid);
+  --color-olng-sail: var(--olng-sail);
+  --color-olng-text: var(--olng-text);
+  --color-olng-gray: var(--olng-gray);
+  --color-olng-sand: var(--olng-sand);
+  --color-status-not-started: var(--status-not-started);
+  --color-status-in-progress: var(--status-in-progress);
+  --color-status-blocked: var(--status-blocked);
+  --color-status-awaiting-review: var(--status-awaiting-review);
+  --color-status-completed: var(--status-completed);
+  --color-page: var(--page-bg);
+  --color-surface: var(--surface);
+  --color-border-soft: var(--border);
+  --font-sans: Candara, "Segoe UI", "Trebuchet MS", system-ui, sans-serif;
+  --radius-card: var(--radius);
+}
+
+html,
+body {
+  background: var(--page-bg);
+  color: var(--olng-text);
+  font-family: Candara, "Segoe UI", "Trebuchet MS", system-ui, sans-serif;
+}
+
+/* Keyboard focus is always visible, in the brand's sail blue. */
+:focus-visible {
+  outline: 2px solid var(--olng-sail);
+  outline-offset: 2px;
+}
