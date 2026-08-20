@@ -195,8 +195,8 @@ describe("non-member", () => {
   });
 });
 
-describe("project role beats a weaker global role", () => {
-  it("treats an engineer who leads a project as a project manager there", () => {
+describe("the project role always wins inside a project", () => {
+  it("treats an engineer who manages a project as a project manager there", () => {
     const actor: Actor = {
       userId: "u-mixed",
       role: "ENGINEER",
@@ -204,6 +204,21 @@ describe("project role beats a weaker global role", () => {
     };
     expect(can(actor, "CREATE_MAIN_TASK", { projectId: PROJECT })).toBe(true);
     expect(can(actor, "MANAGE_USERS", { projectId: PROJECT })).toBe(false);
+  });
+
+  it("restricts a global project manager added to a project as an engineer", () => {
+    const actor: Actor = {
+      userId: "u-demoted",
+      role: "PROJECT_MANAGER",
+      memberships: [{ projectId: PROJECT, projectRole: "ENGINEER", disciplineId: MECH }],
+    };
+    expect(can(actor, "OVERRIDE_MAIN_TASK_STATUS", { projectId: PROJECT })).toBe(false);
+    expect(can(actor, "DELETE_PROJECT", { projectId: PROJECT })).toBe(false);
+    expect(can(actor, "MANAGE_MEMBERS", { projectId: PROJECT })).toBe(false);
+    // Their own assigned work still behaves like an engineer's.
+    expect(
+      can(actor, "COMPLETE_DISCIPLINE_TASK", { projectId: PROJECT, assigneeId: "u-demoted" }),
+    ).toBe(true);
   });
 });
 

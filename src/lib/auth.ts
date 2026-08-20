@@ -50,24 +50,20 @@ export async function verifyPassword(hash: string, plain: string): Promise<boole
   }
 }
 
-/** Creates a session row and puts the raw token in an httpOnly cookie. The raw token is never stored. */
-export async function createSession(
-  userId: string,
-  meta: { ip?: string; userAgent?: string } = {},
-): Promise<void> {
+export type MintedSession = { rawToken: string; tokenHash: string; expiresAt: Date };
+
+/** Mints a fresh session token. The hash goes to the database; the raw token only ever to the cookie. */
+export function mintSession(): MintedSession {
   const rawToken = randomBytes(32).toString("hex");
-  const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
+  return {
+    rawToken,
+    tokenHash: hashToken(rawToken),
+    expiresAt: new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000),
+  };
+}
 
-  await prisma.session.create({
-    data: {
-      tokenHash: hashToken(rawToken),
-      userId,
-      expiresAt,
-      ip: meta.ip,
-      userAgent: meta.userAgent?.slice(0, 300),
-    },
-  });
-
+/** Puts the raw session token in the httpOnly cookie. Call only after the session row is committed. */
+export async function setSessionCookie(rawToken: string, expiresAt: Date): Promise<void> {
   const jar = await cookies();
   jar.set(SESSION_COOKIE, rawToken, {
     httpOnly: true,
@@ -76,6 +72,49 @@ export async function createSession(
     path: "/",
     expires: expiresAt,
   });
+}
+
+/** Best-effort sweep of expired session rows — cheap thanks to the expiresAt index. */
+export async function pruneExpiredSessions(): Promise<void> {
+  try {
+    await prisma.session.deleteMany({ where: { expiresAt: { lt: new Date() } } });
+  } catch (error) {
+    logger.warn("Expired-session sweep failed", { error });
+  }
+}
+
+/** Creates a session row and puts the raw token in an httpOnly cookie. The raw token is never stored. */
+export async function createSession(
+  userId: string,
+  meta: { ip?: string; userAgent?: string } = {},
+): Promise<void> {
+  const minted = mintSession();
+  await prisma.session.create({
+    data: {
+      tokenHash: minted.tokenHash,
+      userId,
+      expiresAt: minted.expiresAt,
+      ip: meta.ip,
+      userAgent: meta.userAgent?.slice(0, 300),
+    },
+  });
+  await setSessionCookie(minted.rawToken, minted.expiresAt);
+}
+
+/**
+ * A fixed argon2 hash of a random throwaway value, verified on the unknown-email
+ * path so failures cost the same time whether or not the account exists.
+ */
+const DUMMY_HASH_PROMISE: Promise<string> = argon2.hash(randomBytes(16).toString("hex"), {
+  type: argon2.argon2id,
+});
+
+export async function burnPasswordCheck(): Promise<void> {
+  try {
+    await argon2.verify(await DUMMY_HASH_PROMISE, "not-the-password");
+  } catch {
+    // Timing equalisation only — the result is irrelevant.
+  }
 }
 
 /** Reads the cookie and returns the signed-in person, or null. Safe to call from any server component or route. */

@@ -94,6 +94,8 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/tasks/[id]/activity` | GET | — | `ActivityItemDTO[]` |
 | `/api/tasks/[id]/comments` | GET | — | `CommentDTO[]` |
 | `/api/discipline-tasks/[id]` | GET | — | `DisciplineTaskDTO` |
+| `/api/disciplines` | GET | — | `DisciplineDTO[]` (the catalogue, any signed-in person) |
+| `/api/users` | GET | query: `q` (optional name or email fragment) | `UserDTO[]` (active people, 50 max) |
 | `/api/notifications` | GET | — | `NotificationDTO[]` |
 | `/api/search?q=` | GET | `q` | `SearchResultsDTO` |
 | `/api/dashboard` | GET | — | `DashboardDTO` |
@@ -142,14 +144,27 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 npm ci
 npx prisma generate
 DATABASE_URL="$DATABASE_URL_TEST" npx prisma migrate deploy
+npm run seed
+npm run seed:check
 npm run lint
 npx tsc --noEmit
 npm test
 npm run build
 ```
 
-`npm run verify` chains the middle steps against the current `DATABASE_URL`. (A seed check joins this
-list in Milestone 2.)
+`npm run verify` chains the middle steps against the current `DATABASE_URL`.
+
+About the two seed steps:
+
+- `npm run seed` is safe to run again and again. It refreshes the disciplines and the demo people,
+  then stops if the demo project `SUR-EXP` is already there. `SEED_RESET=1 npm run seed` rebuilds that
+  demo project from scratch — development data only, never against real data.
+- `npm run seed:check` proves the seeded data still obeys the golden rule: the design review sits at
+  60% and in progress, the inspection close-out at 100% and complete, the vendor review is overdue by
+  derivation, the HAZOP override is recorded with who, why and when, and the project has a real audit
+  trail. It fails loudly if any of that drifts.
+- The service tests (`npm test`) run against `DATABASE_URL_TEST` and empty it between tests, so they
+  never touch the seeded development data.
 
 ## Review priorities for `code-reviewer`
 

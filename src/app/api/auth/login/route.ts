@@ -1,7 +1,13 @@
-// Sign in: rate limited by IP, validated with zod, and deliberately vague about which half was wrong.
+// Sign in: rate limited by IP and by account, validated with zod, and deliberately vague about which half was wrong.
 
 import { NextResponse } from "next/server";
-import { createSession, verifyPassword } from "@/lib/auth";
+import {
+  burnPasswordCheck,
+  mintSession,
+  pruneExpiredSessions,
+  setSessionCookie,
+  verifyPassword,
+} from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { byIp, clientIp, limit } from "@/lib/rate-limit";
@@ -31,23 +37,48 @@ export async function POST(request: Request) {
   }
 
   const { email, password } = parsed.data;
+
+  // Second limiter keyed on the account, so rotating the forwarded IP doesn't buy unlimited guesses.
+  const accountThrottle = limit(`login-account:${email}`, 5, 15 * 60_000);
+  if (!accountThrottle.ok) {
+    return NextResponse.json(
+      { ok: false, error: "Too many sign-in attempts. Please wait a few minutes and try again." },
+      { status: 429, headers: { "Retry-After": String(accountThrottle.retryAfterSec) } },
+    );
+  }
+
   const user = await prisma.user.findUnique({ where: { email } });
 
   if (!user || !user.isActive) {
-    logger.warn("Sign-in refused", { email, reason: user ? "inactive" : "unknown-email" });
+    // Same time cost as a real account, and no address in the log — people mistype passwords into email boxes.
+    await burnPasswordCheck();
+    logger.warn("Sign-in refused", {
+      reason: user ? "inactive" : "unknown-email",
+      userId: user?.id,
+    });
     return NextResponse.json({ ok: false, error: GENERIC_FAILURE }, { status: 401 });
   }
 
   const passwordOk = await verifyPassword(user.passwordHash, password);
   if (!passwordOk) {
-    logger.warn("Sign-in refused", { email, reason: "wrong-password" });
+    logger.warn("Sign-in refused", { reason: "wrong-password", userId: user.id });
     return NextResponse.json({ ok: false, error: GENERIC_FAILURE }, { status: 401 });
   }
 
   const ip = clientIp(request);
-  await createSession(user.id, { ip, userAgent: request.headers.get("user-agent") ?? undefined });
+  const minted = mintSession();
 
+  // Session row, lastLoginAt and the audit row commit or fail together; the cookie is only set after commit.
   await prisma.$transaction([
+    prisma.session.create({
+      data: {
+        tokenHash: minted.tokenHash,
+        userId: user.id,
+        expiresAt: minted.expiresAt,
+        ip: ip ?? undefined,
+        userAgent: request.headers.get("user-agent")?.slice(0, 300),
+      },
+    }),
     prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } }),
     prisma.activityLog.create({
       data: {
@@ -56,10 +87,13 @@ export async function POST(request: Request) {
         entityId: user.id,
         action: "LOGIN",
         summary: `${user.name} signed in`,
-        metadata: { ip: ip ?? null },
+        metadata: { reportedIp: ip ?? null }, // reported by the client's proxy chain, not verified
       },
     }),
   ]);
+  await setSessionCookie(minted.rawToken, minted.expiresAt);
+
+  void pruneExpiredSessions();
 
   logger.info("Sign-in succeeded", { userId: user.id });
   return NextResponse.json({ ok: true, data: { id: user.id, name: user.name, role: user.role } });

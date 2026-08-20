@@ -4,18 +4,22 @@
 
 import { useEffect, useRef, type ReactNode } from "react";
 
+const SIZE_CLASS = { sm: "max-w-md", md: "max-w-lg", lg: "max-w-3xl" } as const;
+
 export function Modal({
   open,
   title,
   onClose,
   children,
   footer,
+  size = "md",
 }: {
   open: boolean;
   title: string;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  size?: keyof typeof SIZE_CLASS;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -44,7 +48,7 @@ export function Modal({
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
-        className="w-full max-w-lg rounded-[var(--radius)] bg-white shadow-lg focus:outline-none"
+        className={`max-h-[90vh] w-full ${SIZE_CLASS[size]} overflow-y-auto rounded-[var(--radius)] bg-white shadow-lg focus:outline-none`}
       >
         <header className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
           <h2 className="text-sm font-semibold text-[var(--olng-navy)]">{title}</h2>

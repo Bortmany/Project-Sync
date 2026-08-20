@@ -24,7 +24,12 @@ export function deriveMainTask(subtasks: SubtaskForDerivation[]): DerivedMainTas
   if (live.length === 0) return { progressPct: 0, status: "NOT_STARTED" };
 
   const completed = live.filter((task) => task.status === "COMPLETED");
-  const progressPct = Math.round((100 * completed.length) / live.length);
+  // 100% is reserved for "everything is complete" — a floor plus a 99 cap stops
+  // 199/200 finished from rounding up into a number that contradicts the status.
+  const progressPct =
+    completed.length === live.length
+      ? 100
+      : Math.min(99, Math.floor((100 * completed.length) / live.length));
 
   if (completed.length === live.length) return { progressPct, status: "COMPLETED" };
   if (live.some((task) => task.status === "BLOCKED")) return { progressPct, status: "BLOCKED" };

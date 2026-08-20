@@ -32,6 +32,16 @@ describe("deriveMainTask", () => {
     expect(result.status).toBe("IN_PROGRESS");
   });
 
+  it("never shows 100 percent while any task is open, however many are finished", () => {
+    const nearlyDone = [
+      ...Array.from({ length: 199 }, () => sub("COMPLETED")),
+      sub("IN_PROGRESS"),
+    ];
+    const result = deriveMainTask(nearlyDone);
+    expect(result.progressPct).toBe(99);
+    expect(result.status).not.toBe("COMPLETED");
+  });
+
   it("is COMPLETED only when every discipline task is complete", () => {
     expect(deriveMainTask([sub("COMPLETED"), sub("COMPLETED")])).toEqual({
       progressPct: 100,
@@ -47,7 +57,7 @@ describe("deriveMainTask", () => {
       sub("IN_PROGRESS", true),
     ]);
     expect(result.status).toBe("IN_PROGRESS");
-    expect(result.progressPct).toBe(67);
+    expect(result.progressPct).toBe(66);
   });
 
   it("is AWAITING_REVIEW when all mandatory work is done and only optional work is open", () => {
@@ -57,7 +67,7 @@ describe("deriveMainTask", () => {
       sub("NOT_STARTED", false),
     ]);
     expect(result.status).toBe("AWAITING_REVIEW");
-    expect(result.progressPct).toBe(67);
+    expect(result.progressPct).toBe(66);
   });
 
   it("is BLOCKED when any task is blocked, even if mandatory work is otherwise done", () => {

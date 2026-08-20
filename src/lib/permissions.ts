@@ -73,22 +73,19 @@ const ENGINEER_OWN_TASK_ACTIONS: Action[] = [
   "UPLOAD_DOCUMENT",
 ];
 
-const ROLE_RANK: Record<RoleValue, number> = {
-  ENGINEER: 0,
-  DISCIPLINE_LEAD: 1,
-  PROJECT_MANAGER: 2,
-  ADMIN: 3,
-};
-
 function membershipFor(actor: Actor, projectId?: string): Membership | undefined {
   if (!projectId) return undefined;
   return actor.memberships.find((membership) => membership.projectId === projectId);
 }
 
-/** The role that applies inside a project: the stronger of the person's global role and their project role. */
+/**
+ * The role that applies inside a project is the PROJECT role — per-project assignment
+ * always wins, in both directions: a global manager added to someone else's project as
+ * an engineer acts as an engineer there. Admins bypass this entirely in can().
+ */
 function effectiveRole(actor: Actor, membership: Membership | undefined): RoleValue {
   if (!membership) return actor.role;
-  return ROLE_RANK[membership.projectRole] > ROLE_RANK[actor.role] ? membership.projectRole : actor.role;
+  return membership.projectRole;
 }
 
 /** Answers "may this person do this?" — the only place that question is answered. */

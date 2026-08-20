@@ -6,6 +6,32 @@ import path from "node:path";
 
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB
 
+export type SizeCheck = { ok: true; error?: undefined } | { ok: false; error: string };
+
+/**
+ * Routes MUST call this against file.size / Content-Length BEFORE reading the body
+ * into memory — validateUpload's own cap only runs once the bytes are already held.
+ */
+export function assertUploadSize(bytes: number, maxBytes = MAX_UPLOAD_BYTES): SizeCheck {
+  if (!Number.isFinite(bytes) || bytes <= 0) return { ok: false, error: "That file is empty." };
+  if (bytes > maxBytes) {
+    const mb = Math.floor(maxBytes / (1024 * 1024));
+    return { ok: false, error: `That file is larger than the ${mb} MB limit.` };
+  }
+  return { ok: true };
+}
+
+/**
+ * Makes a browser-supplied filename safe to store and echo in a Content-Disposition
+ * header: strips path separators and control characters, bounds the length.
+ */
+export function safeOriginalName(originalName: string): string {
+  const base = path.basename(originalName.replace(/\\/g, "/"));
+  const cleaned = base.replace(/[\x00-\x1f\x7f"\\]/g, "_").trim();
+  const bounded = cleaned.length > 180 ? cleaned.slice(-180) : cleaned;
+  return bounded || "file";
+}
+
 export type ValidateResult =
   | { ok: true; mimeType: string; ext: string; error?: undefined }
   | { ok: false; mimeType?: undefined; ext?: undefined; error: string };

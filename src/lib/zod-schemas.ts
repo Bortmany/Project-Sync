@@ -233,6 +233,11 @@ export type UpsertProjectDisciplineInput = z.infer<typeof UpsertProjectDisciplin
 /* ------------------------------------------------------------------ */
 
 const DisciplineSummaryItem = z.object({
+  disciplineTaskId: id,
+  title: z.string(),
+  assigneeName: z.string().nullable(),
+  deadline: dateOut,
+  isOverdue: z.boolean(),
   disciplineId: id,
   code: z.string(),
   colorHex: z.string(),
@@ -312,6 +317,9 @@ export const CreateMainTaskInput = z.object({
     )
     .max(100)
     .default([]),
+}).refine((value) => !value.startDate || value.startDate <= value.deadline, {
+  message: "A task cannot end before it starts.",
+  path: ["deadline"],
 });
 export type CreateMainTaskInput = z.infer<typeof CreateMainTaskInput>;
 
@@ -414,6 +422,9 @@ export const CreateDisciplineTaskInput = z.object({
     .array(z.object({ name: shortText, isMandatory: z.boolean().default(true) }))
     .max(50)
     .default([]),
+}).refine((value) => !value.startDate || value.startDate <= value.deadline, {
+  message: "A task cannot end before it starts.",
+  path: ["deadline"],
 });
 export type CreateDisciplineTaskInput = z.infer<typeof CreateDisciplineTaskInput>;
 
@@ -423,12 +434,17 @@ export const AddDependencyInput = z.object({
 });
 export type AddDependencyInput = z.infer<typeof AddDependencyInput>;
 
-export const UpdateTaskDatesInput = z.object({
-  id: id,
-  kind: z.enum(["MAIN", "DISCIPLINE"]),
-  startDate: dateIn.nullable().optional(),
-  deadline: dateIn,
-});
+export const UpdateTaskDatesInput = z
+  .object({
+    id: id,
+    kind: z.enum(["MAIN", "DISCIPLINE"]),
+    startDate: dateIn.nullable().optional(),
+    deadline: dateIn,
+  })
+  .refine((value) => !value.startDate || value.startDate <= value.deadline, {
+    message: "A task cannot end before it starts.",
+    path: ["deadline"],
+  });
 export type UpdateTaskDatesInput = z.infer<typeof UpdateTaskDatesInput>;
 
 /* ------------------------------------------------------------------ */

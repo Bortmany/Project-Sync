@@ -258,6 +258,7 @@ model TaskDependency {
   successor   DisciplineTask @relation("DependencySuccessor", fields: [successorId], references: [id])
 
   @@unique([predecessorId, successorId])
+  @@index([successorId])
 }
 
 model RequiredDocument {

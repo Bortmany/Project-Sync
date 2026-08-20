@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "seed": "tsx prisma/seed.ts",
-    "verify": "npx prisma generate && npx prisma migrate deploy && npm run lint && npx tsc --noEmit && npm test && npm run build"
+    "seed:check": "tsx prisma/seed-check.ts",
+    "verify": "npx prisma generate && npx prisma migrate deploy && npm run seed && npm run seed:check && npm run lint && npx tsc --noEmit && npm test && npm run build"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",
