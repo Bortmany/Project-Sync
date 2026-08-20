@@ -1,11 +1,12 @@
-// Top bar: search placeholder, notification bell placeholder, and the user menu with sign out.
+// Top bar: search placeholder, the notification bell, and the user menu with sign out.
 
 "use client";
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Avatar } from "@/components/ui";
-import { BellIcon, SearchIcon } from "@/components/shell/icons";
+import { SearchIcon } from "@/components/shell/icons";
+import { NotificationBell } from "@/components/notifications/notification-bell";
 
 export function Topbar({ name, email }: { name: string; email: string }) {
   const router = useRouter();
@@ -34,15 +35,7 @@ export function Topbar({ name, email }: { name: string; email: string }) {
         />
       </div>
 
-      <button
-        type="button"
-        disabled
-        title="Notifications (coming soon)"
-        aria-label="Notifications"
-        className="rounded-[var(--radius)] p-2 text-[var(--olng-gray)]"
-      >
-        <BellIcon />
-      </button>
+      <NotificationBell />
 
       <div className="relative">
         <button

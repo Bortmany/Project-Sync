@@ -22,6 +22,7 @@ import { checkDto, checkDtoList } from "@/server/serialize";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
 import { notify } from "@/server/services/notify";
 import { assertCanViewProject } from "@/server/services/projects";
+import { lockMainTask } from "@/server/services/tasks";
 
 /** The most documents one project listing ever returns in one go. */
 const PROJECT_DOCUMENT_CAP = 200;
@@ -105,6 +106,12 @@ async function writeVersion(input: WriteVersionInput): Promise<string> {
   const { actor, meta, file, target, requiredDocument, title, filename } = input;
 
   return prisma.$transaction(async (tx) => {
+    // When the document already exists, locking its row is the FIRST thing this transaction does,
+    // so a delete of the same document and this upload can never interleave.
+    if (target.documentId) {
+      await tx.$queryRaw`SELECT id FROM "Document" WHERE id = ${target.documentId} FOR UPDATE`;
+    }
+
     const documentId = target.documentId ?? (await createDocument(tx, actor, target, title, meta));
 
     // Locks this document's row so two people uploading at the same moment queue up instead of
@@ -303,34 +310,58 @@ export async function softDeleteDocument(
   const document = await loadDocument(input.id);
   assertCan(actor, "DELETE_DOCUMENT", { projectId: document.projectId });
 
-  const satisfied = await prisma.requiredDocument.findMany({
-    where: { documentId: document.id },
-    select: {
-      id: true,
-      name: true,
-      disciplineTask: { select: { id: true, title: true, status: true, deletedAt: true } },
-    },
-  });
-
-  const onCompletedTask = satisfied.find(
-    (item) => !item.disciplineTask.deletedAt && item.disciplineTask.status === "COMPLETED",
-  );
-  if (onCompletedTask) {
-    throw new ServiceError(
-      "This document satisfies a requirement on a completed task. Reopen the task first.",
-    );
-  }
-
   await prisma.$transaction(async (tx) => {
+    // Locking the document row first serialises this against an upload satisfying the same
+    // document at the same moment: whichever gets here second waits and then sees the truth.
+    await tx.$queryRaw`SELECT id FROM "Document" WHERE id = ${document.id} FOR UPDATE`;
+
+    // Locking every affected parent main task FIRST (same order as the completion gate)
+    // serialises this against completeDisciplineTask — the two can never interleave into
+    // a completed task whose mandatory proof was just deleted.
+    const affected = await tx.requiredDocument.findMany({
+      where: { documentId: document.id },
+      select: {
+        id: true,
+        name: true,
+        disciplineTask: {
+          select: { id: true, title: true, status: true, deletedAt: true, mainTaskId: true },
+        },
+      },
+    });
+    const parentIds = [...new Set(affected.map((item) => item.disciplineTask.mainTaskId))].sort();
+    for (const mainTaskId of parentIds) {
+      await lockMainTask(tx, mainTaskId);
+    }
+
+    // Re-read after the locks — the pre-lock rows may be stale.
+    const fresh = await tx.requiredDocument.findMany({
+      where: { documentId: document.id },
+      select: {
+        id: true,
+        name: true,
+        disciplineTask: { select: { id: true, title: true, status: true, deletedAt: true } },
+      },
+    });
+    const onCompletedTask = fresh.find(
+      (item) => !item.disciplineTask.deletedAt && item.disciplineTask.status === "COMPLETED",
+    );
+    if (onCompletedTask) {
+      throw new ServiceError(
+        "This document satisfies a requirement on a completed task. Reopen the task first.",
+      );
+    }
+
     await tx.document.update({ where: { id: document.id }, data: { deletedAt: new Date() } });
 
-    for (const item of satisfied) {
+    for (const item of fresh) {
       await tx.requiredDocument.update({
         where: { id: item.id },
         data: { documentId: null, satisfiedAt: null },
       });
     }
 
+    // The audit row belongs to the same transaction as the delete it records: either both
+    // land or neither does.
     await appendActivity(tx, {
       actorId: actor.userId,
       projectId: document.projectId,
@@ -339,12 +370,12 @@ export async function softDeleteDocument(
       action: ACTIVITY.DOCUMENT_DELETED,
       summary:
         `${actor.name} removed the document "${document.title}"` +
-        (satisfied.length > 0
-          ? ` — ${satisfied.length === 1 ? "1 checklist item is" : `${satisfied.length} checklist items are`} open again`
+        (fresh.length > 0
+          ? ` — ${fresh.length === 1 ? "1 checklist item is" : `${fresh.length} checklist items are`} open again`
           : ""),
       metadata: {
         documentId: document.id,
-        reopenedRequirements: satisfied.map((item) => ({ id: item.id, name: item.name })),
+        reopenedRequirements: fresh.map((item) => ({ id: item.id, name: item.name })),
         versionsKept: await tx.documentVersion.count({ where: { documentId: document.id } }),
       },
     });

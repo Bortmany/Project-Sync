@@ -1,5 +1,8 @@
-// The notification seam. Milestone 4 fills this in; until then every call is a deliberate no-op.
+// The notification seam. Every service calls this after its transaction has committed, so a problem
+// saving notifications can never undo the change that caused them.
 
+import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import type { NotificationTypeName } from "@/lib/zod-schemas";
 
 export type NotifyPayload = {
@@ -14,19 +17,39 @@ export type NotifyPayload = {
 };
 
 /**
- * Tells people something happened.
+ * Tells people something happened: one Notification row per recipient.
  *
- * TODO (Milestone 4): write a Notification row per recipient (skipping the actor), respect any
- * per-person preferences, and hand off to email once that integration exists. Every caller in
- * src/server/services already passes the right recipients and payload, so Milestone 4 only edits
- * this file. Failures here must never fail the surrounding change — notifications are a side effect.
+ * The actor never hears about their own action, a person listed twice gets one row, and people who
+ * have been deactivated get nothing. Failures are logged and swallowed — notifications are a side
+ * effect of a change that has already happened, never a reason to fail it. Email delivery, if it is
+ * ever added, hangs off this same function.
  */
 export async function notify(
   userIds: string[],
   type: NotificationTypeName,
   payload: NotifyPayload,
 ): Promise<void> {
-  void userIds;
-  void type;
-  void payload;
+  try {
+    const wanted = [...new Set(userIds.filter((id) => Boolean(id) && id !== payload.actorId))];
+    if (wanted.length === 0) return;
+
+    const recipients = await prisma.user.findMany({
+      where: { id: { in: wanted }, isActive: true },
+      select: { id: true },
+    });
+    if (recipients.length === 0) return;
+
+    await prisma.notification.createMany({
+      data: recipients.map((recipient) => ({
+        userId: recipient.id,
+        type,
+        title: payload.title,
+        body: payload.body,
+        linkUrl: payload.linkUrl,
+        actorId: payload.actorId ?? null,
+      })),
+    });
+  } catch (error) {
+    logger.error("Could not save notifications", { type, linkUrl: payload.linkUrl, error });
+  }
 }

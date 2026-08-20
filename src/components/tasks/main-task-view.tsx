@@ -14,9 +14,10 @@ import {
 } from "@/components/actions";
 import { MainTaskActivity } from "@/components/activity/activity-feeds";
 import { MainTaskComments } from "@/components/comments/comment-list";
+import { MainTaskDocumentsTab } from "@/components/documents/main-task-documents";
 import { fieldError, useAction } from "@/components/hooks/use-action";
 import {
-  isManager,
+  isManagerOn,
   useMainTask,
   useMe,
   useProject,
@@ -411,7 +412,9 @@ export function MainTaskView({ taskId }: { taskId: string }) {
   }
 
   const data = task.data;
-  const canManage = isManager(me.data);
+  // Managing follows this project's team list, not the org-wide role — a project manager elsewhere
+  // is an ordinary member here. The server enforces the same rule.
+  const canManage = isManagerOn(me.data, project.data);
   const mentionable = (project.data?.members ?? []).map((member) => ({
     userId: member.userId,
     userName: member.userName,
@@ -511,7 +514,7 @@ export function MainTaskView({ taskId }: { taskId: string }) {
               {
                 id: "documents",
                 label: "Documents",
-                content: <EmptyState message="Coming in a later milestone." />,
+                content: <MainTaskDocumentsTab task={data} canDelete={canManage} />,
               },
               {
                 id: "comments",

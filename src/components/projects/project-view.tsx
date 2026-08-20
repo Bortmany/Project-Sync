@@ -6,11 +6,12 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { updateProject } from "@/components/actions";
 import { ProjectActivity } from "@/components/activity/activity-feeds";
+import { ProjectDocumentsTab } from "@/components/documents/project-documents";
 import { ProjectStatusBadge } from "@/components/projects/projects-view";
 import { ProjectTasksTab } from "@/components/projects/project-tasks-tab";
 import { ProjectTeamTab } from "@/components/projects/project-team-tab";
 import { fieldError, useAction } from "@/components/hooks/use-action";
-import { isManager, useMe, useProject } from "@/components/hooks/use-api";
+import { isManager, isManagerOn, useMe, useProject } from "@/components/hooks/use-api";
 import { formatDate, toDateInputValue } from "@/components/format";
 import {
   Breadcrumb,
@@ -226,7 +227,9 @@ export function ProjectView({ projectId }: { projectId: string }) {
           {
             id: "documents",
             label: "Documents",
-            content: <EmptyState message="Coming in a later milestone." />,
+            content: (
+              <ProjectDocumentsTab project={data} canDelete={isManagerOn(me.data, data)} />
+            ),
           },
           {
             id: "team",

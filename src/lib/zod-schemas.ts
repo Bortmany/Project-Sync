@@ -540,6 +540,10 @@ export const NotificationDTO = z.object({
 });
 export type NotificationDTO = z.infer<typeof NotificationDTO>;
 
+/** What /api/notifications/unread-count returns — the number on the bell, nothing else. */
+export const UnreadCountDTO = z.object({ unread: z.number().int().min(0) });
+export type UnreadCountDTO = z.infer<typeof UnreadCountDTO>;
+
 export const ActivityItemDTO = z.object({
   id: id,
   actorId: z.string().nullable(),

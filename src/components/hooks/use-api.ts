@@ -11,12 +11,16 @@ import {
   DashboardDTO,
   DisciplineDTO,
   DisciplineTaskDTO,
+  DocumentDTO,
+  DocumentVersionDTO,
   GanttDTO,
   MainTaskDTO,
   MainTaskListItemDTO,
   ProjectDTO,
   ProjectListItemDTO,
   UserDTO,
+  type ProjectMemberDTO,
+  type RoleName,
 } from "@/lib/zod-schemas";
 
 /** The signed-in person as /api/auth/me returns them — a subset of the shared UserDTO shape. */
@@ -38,7 +42,11 @@ export type MeDTO = z.infer<typeof MeDTO>;
 export const CommentRowDTO = CommentDTO.extend({ isDeleted: z.boolean() });
 export type CommentRowDTO = z.infer<typeof CommentRowDTO>;
 
-async function readRoute<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+/**
+ * Fetches a contract route, unwraps the `{ ok, data }` envelope and parses the payload. Exported so
+ * the notification hooks read routes exactly the same way instead of keeping their own copy.
+ */
+export async function readRoute<T>(path: string, schema: z.ZodType<T>): Promise<T> {
   const response = await fetch(path, {
     headers: { accept: "application/json" },
     credentials: "same-origin",
@@ -86,6 +94,57 @@ export function isManager(me: MeDTO | undefined): boolean {
 /** Roles allowed to steer work inside a discipline (plus the task's own assignee). */
 export function isLeadOrAbove(me: MeDTO | undefined): boolean {
   return isManager(me) || me?.role === "DISCIPLINE_LEAD";
+}
+
+/* ------------------------------------------------------------------ */
+/* What someone may do inside ONE project                              */
+/* ------------------------------------------------------------------ */
+// The server decides by the person's membership of that project, not by their org-wide role
+// (src/server/authz.ts). The helpers below read the same membership out of ProjectDTO so the UI
+// offers the same buttons the server would accept. They are a courtesy, never the check itself.
+
+/** The signed-in person's own membership row on this project, if they have one. */
+export function membershipIn(
+  me: MeDTO | undefined,
+  project: ProjectDTO | undefined,
+): ProjectMemberDTO | undefined {
+  if (!me || !project) return undefined;
+  return project.members.find((member) => member.userId === me.id);
+}
+
+/**
+ * The role that actually applies inside this project. A global administrator always keeps their
+ * reach; everyone else is whatever their membership row says. Undefined means "not a member" —
+ * treat that as no extra powers.
+ */
+export function projectRoleOf(
+  me: MeDTO | undefined,
+  project: ProjectDTO | undefined,
+): RoleName | undefined {
+  if (me?.role === "ADMIN") return "ADMIN";
+  return membershipIn(me, project)?.projectRole;
+}
+
+/** May manage this project: create and edit its tasks, override a status, change the team. */
+export function isManagerOn(me: MeDTO | undefined, project: ProjectDTO | undefined): boolean {
+  const role = projectRoleOf(me, project);
+  return role === "ADMIN" || role === "PROJECT_MANAGER";
+}
+
+/**
+ * May steer work in this project. A discipline lead only counts for their own discipline, so pass
+ * the task's discipline when the control belongs to one (reassigning, editing a discipline task).
+ */
+export function isLeadOrAboveOn(
+  me: MeDTO | undefined,
+  project: ProjectDTO | undefined,
+  disciplineId?: string,
+): boolean {
+  if (isManagerOn(me, project)) return true;
+  const membership = membershipIn(me, project);
+  if (membership?.projectRole !== "DISCIPLINE_LEAD") return false;
+  if (!disciplineId) return true;
+  return membership.disciplineId === disciplineId;
 }
 
 /* ------------------------------------------------------------------ */
@@ -213,6 +272,46 @@ export function useProjectActivity(projectId: string): UseQueryResult<ActivityIt
     queryKey: ["project", projectId, "activity"],
     queryFn: () => readRoute(`/api/projects/${projectId}/activity`, z.array(ActivityItemDTO)),
     enabled: projectId.length > 0,
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Documents                                                           */
+/* ------------------------------------------------------------------ */
+// Each list sits under its owner's query key, so invalidating ["task", id] or
+// ["discipline-task", id] after an upload refreshes the documents with everything else.
+
+export function useMainTaskDocuments(taskId: string): UseQueryResult<DocumentDTO[]> {
+  return useQuery({
+    queryKey: ["task", taskId, "documents"],
+    queryFn: () => readRoute(`/api/tasks/${taskId}/documents`, z.array(DocumentDTO)),
+  });
+}
+
+export function useDisciplineTaskDocuments(taskId: string): UseQueryResult<DocumentDTO[]> {
+  return useQuery({
+    queryKey: ["discipline-task", taskId, "documents"],
+    queryFn: () => readRoute(`/api/discipline-tasks/${taskId}/documents`, z.array(DocumentDTO)),
+  });
+}
+
+export function useProjectDocuments(projectId: string): UseQueryResult<DocumentDTO[]> {
+  return useQuery({
+    queryKey: ["project", projectId, "documents"],
+    queryFn: () => readRoute(`/api/projects/${projectId}/documents`, z.array(DocumentDTO)),
+    enabled: projectId.length > 0,
+  });
+}
+
+/** Every revision of one document, newest first. Only fetched while the history panel is open. */
+export function useDocumentVersions(
+  documentId: string,
+  enabled = true,
+): UseQueryResult<DocumentVersionDTO[]> {
+  return useQuery({
+    queryKey: ["document", documentId, "versions"],
+    queryFn: () => readRoute(`/api/documents/${documentId}/versions`, z.array(DocumentVersionDTO)),
+    enabled: enabled && documentId.length > 0,
   });
 }
 

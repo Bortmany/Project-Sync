@@ -20,6 +20,14 @@ export {
 export { createComment, editComment, deleteComment } from "@/server/actions/comments";
 
 export {
+  markNotificationRead,
+  markAllNotificationsRead,
+} from "@/server/actions/notifications";
+
+// Whole documents only — a revision is never deleted anywhere in this app.
+export { softDeleteDocument } from "@/server/actions/documents";
+
+export {
   createDisciplineTask,
   updateDisciplineTask,
   updateDisciplineTaskStatus,

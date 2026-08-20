@@ -104,7 +104,8 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/documents/[id]/versions` | GET | — | `DocumentVersionDTO[]` (every revision, newest first) |
 | `/api/disciplines` | GET | — | `DisciplineDTO[]` (the catalogue, any signed-in person) |
 | `/api/users` | GET | query: `q` (optional name or email fragment) | `UserDTO[]` (active people, 50 max) |
-| `/api/notifications` | GET | — | `NotificationDTO[]` |
+| `/api/notifications` | GET | — | `NotificationDTO[]` (the signed-in person's own, newest first, 100 max, read and unread together) |
+| `/api/notifications/unread-count` | GET | — | `{ unread: number }` (the bell's badge — its own tiny route so the topbar can poll it every 60 seconds without pulling the list) |
 | `/api/search?q=` | GET | `q` | `SearchResultsDTO` |
 | `/api/dashboard` | GET | — | `DashboardDTO` |
 | `/api/uploads` | POST | multipart: `file`, `projectId`, `mainTaskId?` \| `disciplineTaskId?`, `documentId?`, `requiredDocumentId?`, `title?`, `category?`, `note?` (validated by `UploadMeta`) | `DocumentVersionDTO` |
@@ -140,14 +141,40 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `editComment` | `{ id, body }` | `ActionResult<CommentDTO>` |
 | `deleteComment` | `{ id }` | `ActionResult<{ removed: true }>` (soft delete — the thread keeps a tombstone) |
 | `softDeleteDocument` (ADMIN / PM; never deletes a revision) | `{ id }` | `ActionResult<{ deleted: true }>` |
-| `markNotificationRead` | `{ id }` | `ActionResult<NotificationDTO>` |
-| `markAllNotificationsRead` | — | `ActionResult<{ count: number }>` |
+| `markNotificationRead` (own notification only — someone else's is refused) | `{ id }` | `ActionResult<NotificationDTO>` |
+| `markAllNotificationsRead` (the signed-in person's unread only) | — | `ActionResult<{ count: number }>` |
 | `createUser` | `CreateUserInput` | `ActionResult<UserDTO>` |
 | `updateUser` | `UpdateUserInput` | `ActionResult<UserDTO>` |
 | `deactivateUser` | `{ id }` | `ActionResult<UserDTO>` |
 | `createDiscipline` | `CreateDisciplineInput` | `ActionResult<DisciplineDTO>` |
 | `updateDiscipline` | `UpdateDisciplineInput` | `ActionResult<DisciplineDTO>` |
 | `updateTaskDates` (Gantt drag) | `UpdateTaskDatesInput` | `ActionResult<MainTaskDTO \| DisciplineTaskDTO>` |
+
+## Notifications and the deadline sweep
+
+- **`notify()` (`src/server/services/notify.ts`) is the only way a Notification row is written by a
+  person's action.** Every service already calls it *after* its transaction has committed, so a
+  problem saving notifications can never undo the change that caused them — failures are logged and
+  swallowed. It skips the actor, skips duplicates inside one call, and skips deactivated people.
+- **Marking a notification read writes no `ActivityLog` row.** Read state is a personal preference,
+  not project work; the audit trail records project work only. This is the one documented exception
+  to house rule 1.
+- **The sweep** (`src/server/sweep.ts`, started by `src/instrumentation.ts` in the Node runtime only,
+  once per process — first run ~60 seconds after boot, then hourly) sends `DEADLINE_APPROACHING` for
+  open tasks due inside 48 hours and `OVERDUE` for open tasks past their deadline: discipline tasks
+  to their assignee, main tasks to their owner.
+  - Every run takes a **Postgres advisory lock** (`pg_try_advisory_xact_lock`, key `728431001`) inside
+    the transaction that does the work, and skips the run if another instance holds it. A
+    transaction-scoped lock is always released when the transaction ends, which a session-scoped lock
+    cannot promise behind a connection pool.
+  - **Sent exactly once**, without a new column (the schema is frozen): a notification's `linkUrl`
+    identifies the task, so the sweep looks for a row of the same type, for the same person, with the
+    same link. `OVERDUE` is once per person per task, ever; `DEADLINE_APPROACHING` only counts a row
+    created inside the current 48-hour window, so moving a deadline out earns a fresh warning.
+  - **Nothing depends on the sweep having run.** Overdue is still derived at read time everywhere
+    (`isOverdue()`); a skipped run costs a nudge, never correctness.
+  - `SWEEP_DISABLED=1` stops the scheduler (the tests set it). `runSweepOnce()` itself ignores the
+    flag so tests can call it directly.
 
 ## Verify recipe (run in this order, all must pass)
 

@@ -14,8 +14,16 @@ import {
 } from "@/components/actions";
 import { DisciplineTaskActivity } from "@/components/activity/activity-feeds";
 import { DisciplineTaskComments } from "@/components/comments/comment-list";
+import { DisciplineTaskDocuments } from "@/components/documents/discipline-task-documents";
+import { RequiredDocsChecklist } from "@/components/documents/required-docs-checklist";
 import { useAction } from "@/components/hooks/use-action";
-import { isLeadOrAbove, useDisciplineTask, useMe, useProject } from "@/components/hooks/use-api";
+import {
+  isLeadOrAboveOn,
+  isManagerOn,
+  useDisciplineTask,
+  useMe,
+  useProject,
+} from "@/components/hooks/use-api";
 import { formatDate } from "@/components/format";
 import {
   Avatar,
@@ -34,8 +42,6 @@ import {
   Textarea,
 } from "@/components/ui";
 import type { TaskStatusName } from "@/lib/zod-schemas";
-
-const UPLOAD_TOOLTIP = "Document upload arrives in the next milestone";
 
 export function DisciplineTaskView({ taskId }: { taskId: string }) {
   const me = useMe();
@@ -77,8 +83,12 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
   }
 
   const data = task.data;
-  const canControl = isLeadOrAbove(me.data) || me.data?.id === data.assigneeId;
-  const canReassign = isLeadOrAbove(me.data);
+  // What someone may do here follows their membership of THIS project, and a discipline lead only
+  // leads their own discipline. The server checks the same thing again before anything changes.
+  const leadsThisWork = isLeadOrAboveOn(me.data, project.data, data.disciplineId);
+  const canControl = leadsThisWork || me.data?.id === data.assigneeId;
+  const canReassign = leadsThisWork;
+  const canDeleteDocuments = isManagerOn(me.data, project.data);
   const teammates = (project.data?.members ?? []).filter(
     (member) => member.disciplineId === data.disciplineId,
   );
@@ -194,45 +204,10 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
             </p>
 
             <div className="mt-4">
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--olng-gray)]">
-                  Required documents
-                </h3>
-                <Button variant="secondary" disabled title={UPLOAD_TOOLTIP}>
-                  Upload
-                </Button>
-              </div>
-              {data.requiredDocuments.length === 0 ? (
-                <p className="text-sm text-[var(--olng-gray)]">
-                  No required documents for this discipline task.
-                </p>
-              ) : (
-                <ul className="divide-y divide-[var(--border)]">
-                  {data.requiredDocuments.map((document) => (
-                    <li key={document.id} className="flex items-center gap-2 py-2 text-sm">
-                      <span
-                        aria-hidden="true"
-                        style={{
-                          color: document.isSatisfied
-                            ? "var(--status-completed)"
-                            : "var(--status-blocked)",
-                        }}
-                      >
-                        {document.isSatisfied ? "✓" : "✕"}
-                      </span>
-                      <span className="flex-1 text-[var(--olng-navy)]">{document.name}</span>
-                      {document.isMandatory ? (
-                        <span className="text-xs text-[var(--olng-gray)]">Mandatory</span>
-                      ) : null}
-                      <span className="text-xs text-[var(--olng-text)]">
-                        {document.isSatisfied
-                          ? `Uploaded ${formatDate(document.satisfiedAt)}`
-                          : "Not uploaded"}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--olng-gray)]">
+                Required documents
+              </h3>
+              <RequiredDocsChecklist task={data} />
             </div>
           </Card>
 
@@ -278,11 +253,7 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
               {
                 id: "documents",
                 label: "Documents",
-                content: (
-                  <p className="py-6 text-center text-sm text-[var(--olng-text)]">
-                    Coming in a later milestone.
-                  </p>
-                ),
+                content: <DisciplineTaskDocuments task={data} canDelete={canDeleteDocuments} />,
               },
               {
                 id: "activity",

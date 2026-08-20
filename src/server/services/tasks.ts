@@ -354,6 +354,7 @@ export async function createDisciplineTask(
   if (input.assigneeId) await assertOnProject(mainTask.projectId, input.assigneeId, "assignee");
 
   const taskId = await prisma.$transaction(async (tx) => {
+    await lockMainTask(tx, mainTask.id);
     const last = await tx.disciplineTask.findFirst({
       where: { mainTaskId: mainTask.id, ...notDeleted },
       orderBy: { sortOrder: "desc" },
@@ -442,6 +443,7 @@ export async function updateDisciplineTask(
   assertDatesOrdered(input.startDate ?? existing.startDate, input.deadline ?? existing.deadline);
 
   await prisma.$transaction(async (tx) => {
+    await lockMainTask(tx, existing.mainTaskId);
     const updated = await tx.disciplineTask.update({
       where: { id: existing.id },
       data: {
@@ -547,6 +549,7 @@ export async function updateDisciplineTaskStatus(
   }
 
   await prisma.$transaction(async (tx) => {
+    await lockMainTask(tx, existing.mainTaskId);
     await tx.disciplineTask.update({ where: { id: existing.id }, data: { status: input.status } });
 
     await appendActivity(tx, {
@@ -594,7 +597,7 @@ export async function completeDisciplineTask(
 
   if (existing.status === "COMPLETED") return buildDisciplineTaskDTO(existing.id);
 
-  await prisma.$transaction(async (tx) => {
+  const completedNow = await prisma.$transaction(async (tx) => {
     // The gate is judged INSIDE the transaction, after the parent lock, so a document
     // removed or a predecessor reopened in flight can never slip a completion through.
     await lockMainTask(tx, existing.mainTaskId);
@@ -603,7 +606,7 @@ export async function completeDisciplineTask(
       where: { id: existing.id },
       include: { requiredDocuments: true },
     });
-    if (fresh.status === "COMPLETED") return;
+    if (fresh.status === "COMPLETED") return false;
 
     const unmet = await tx.taskDependency.findMany({
       where: {
@@ -640,14 +643,18 @@ export async function completeDisciplineTask(
     });
 
     await recomputeMainTask(tx, existing.mainTaskId, actor, projectId);
+    return true;
   });
 
-  await notify(await taskAudience(existing.id, actor.userId), "STATUS_CHANGED", {
-    title: "A task was completed",
-    body: `${actor.name} marked "${existing.title}" complete.`,
-    linkUrl: `/discipline-tasks/${existing.id}`,
-    actorId: actor.userId,
-  });
+  // A lost race (someone else completed it first) writes nothing, so it must announce nothing.
+  if (completedNow) {
+    await notify(await taskAudience(existing.id, actor.userId), "STATUS_CHANGED", {
+      title: "A task was completed",
+      body: `${actor.name} marked "${existing.title}" complete.`,
+      linkUrl: `/discipline-tasks/${existing.id}`,
+      actorId: actor.userId,
+    });
+  }
 
   return buildDisciplineTaskDTO(existing.id);
 }
@@ -671,6 +678,7 @@ export async function reopenDisciplineTask(
   if (existing.status !== "COMPLETED") throw new ServiceError("That task is not complete, so it cannot be reopened.");
 
   await prisma.$transaction(async (tx) => {
+    await lockMainTask(tx, existing.mainTaskId);
     await tx.disciplineTask.update({
       where: { id: existing.id },
       data: { status: "IN_PROGRESS", completedAt: null, completedById: null },
@@ -727,6 +735,7 @@ export async function addDependency(actor: ActorContext, input: AddDependencyInp
   if (alreadyThere) return buildDisciplineTaskDTO(successor.id);
 
   await prisma.$transaction(async (tx) => {
+    await lockMainTask(tx, successor.mainTaskId);
     await tx.taskDependency.create({
       data: { predecessorId: predecessor.id, successorId: successor.id },
     });
@@ -761,6 +770,7 @@ export async function removeDependency(
   if (!edge) throw new NotFoundError("Those two tasks are not linked.");
 
   await prisma.$transaction(async (tx) => {
+    await lockMainTask(tx, successor.mainTaskId);
     await tx.taskDependency.delete({ where: { id: edge.id } });
 
     await appendActivity(tx, {
@@ -817,6 +827,7 @@ export async function updateTaskDates(
   assertDatesOrdered(nextStart, input.deadline);
 
   await prisma.$transaction(async (tx) => {
+    await lockMainTask(tx, existing.mainTaskId);
     await tx.disciplineTask.update({
       where: { id: existing.id },
       data: { startDate: nextStart, deadline: input.deadline },

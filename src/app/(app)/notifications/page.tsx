@@ -1,14 +1,10 @@
-// Notifications — the real feed arrives in a later milestone; the nav link needs a home until then.
+// Notifications — everything waiting for the signed-in person. The list itself is client-side so the
+// bell and this page share one cache and clear together.
 
-import { EmptyState } from "@/components/ui";
+import { NotificationsView } from "@/components/notifications/notifications-view";
 
 export const metadata = { title: "Notifications — Project Nexus" };
 
 export default function NotificationsPage() {
-  return (
-    <div className="space-y-6">
-      <h1 className="text-xl font-semibold text-[var(--olng-blue)]">Notifications</h1>
-      <EmptyState message="Coming in a later milestone." />
-    </div>
-  );
+  return <NotificationsView />;
 }

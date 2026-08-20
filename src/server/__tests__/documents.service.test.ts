@@ -271,6 +271,13 @@ describe("removing a document never removes a revision", () => {
       "This document satisfies a requirement on a completed task. Reopen the task first.",
     );
 
+    // A refused delete leaves nothing behind — no audit row for a deletion that never happened.
+    expect(
+      await prisma.activityLog.count({
+        where: { entityType: "Document", entityId: version.documentId, action: "DOCUMENT_DELETED" },
+      }),
+    ).toBe(0);
+
     const stillSatisfied = await prisma.requiredDocument.findUniqueOrThrow({
       where: { id: work.civilRequirementId },
     });
@@ -310,6 +317,14 @@ describe("removing a document never removes a revision", () => {
       where: { entityType: "Document", entityId: version.documentId, action: "DOCUMENT_DELETED" },
     });
     expect(audit).toHaveLength(1);
+    // Written inside the same transaction as the delete, so it records exactly what that
+    // transaction reopened and how many revisions it kept.
+    expect(audit[0].summary).toContain("1 checklist item is open again");
+    expect(audit[0].metadata).toMatchObject({
+      documentId: version.documentId,
+      reopenedRequirements: [{ id: work.civilRequirementId }],
+      versionsKept: 2,
+    });
   });
 
   it("only lets an administrator or project manager remove a document", async () => {
