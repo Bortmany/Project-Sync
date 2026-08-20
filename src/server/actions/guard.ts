@@ -40,6 +40,12 @@ export function revalidateProject(projectId: string): void {
   revalidatePath(`/projects/${projectId}`);
 }
 
+/** Refreshes the Admin screens after a change to the people directory or the discipline catalogue. */
+export function revalidateAdmin(): void {
+  revalidatePath("/admin/users");
+  revalidatePath("/admin/disciplines");
+}
+
 /** Refreshes the pages a task change is visible on. */
 export function revalidateTask(projectId: string, mainTaskId: string, disciplineTaskId?: string): void {
   revalidateProject(projectId);

@@ -15,7 +15,16 @@ export {
   updateMainTask,
   overrideMainTaskStatus,
   clearOverride,
+  updateTaskDates,
 } from "@/server/actions/main-tasks";
+
+export {
+  createUser,
+  updateUser,
+  deactivateUser,
+  createDiscipline,
+  updateDiscipline,
+} from "@/server/actions/admin";
 
 export { createComment, editComment, deleteComment } from "@/server/actions/comments";
 

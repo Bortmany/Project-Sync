@@ -63,6 +63,27 @@ export function AdminIcon({ size = 18, className }: IconProps) {
   );
 }
 
+export function PeopleIcon({ size = 18, className }: IconProps) {
+  return (
+    <svg {...base(size, className)}>
+      <circle cx="8" cy="7" r="2.6" />
+      <path d="M3.5 16c0-2.3 2-3.8 4.5-3.8s4.5 1.5 4.5 3.8" />
+      <path d="M13.5 6.2a2.4 2.4 0 0 1 0 4.6M14.5 12.6c1.3.5 2.2 1.7 2.2 3.4" />
+    </svg>
+  );
+}
+
+export function DisciplinesIcon({ size = 18, className }: IconProps) {
+  return (
+    <svg {...base(size, className)}>
+      <circle cx="6" cy="6" r="2.5" />
+      <circle cx="14" cy="6" r="2.5" />
+      <circle cx="6" cy="14" r="2.5" />
+      <circle cx="14" cy="14" r="2.5" />
+    </svg>
+  );
+}
+
 export function SearchIcon({ size = 16, className }: IconProps) {
   return (
     <svg {...base(size, className)}>

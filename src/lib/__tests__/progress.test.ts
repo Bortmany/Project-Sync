@@ -140,6 +140,23 @@ describe("isOverdue", () => {
   it("is not overdue before the deadline", () => {
     expect(isOverdue(new Date("2026-09-30T00:00:00Z"), "BLOCKED", now)).toBe(false);
   });
+
+  it("is not overdue when it is due later today", () => {
+    // The rule is a moment, not a day: a task due at 5pm is not late at noon.
+    expect(isOverdue(new Date("2026-08-20T17:00:00Z"), "NOT_STARTED", now)).toBe(false);
+    expect(isOverdue(new Date("2026-08-20T23:59:59.999Z"), "IN_PROGRESS", now)).toBe(false);
+  });
+
+  it("is overdue for something due earlier today", () => {
+    expect(isOverdue(new Date("2026-08-20T09:00:00Z"), "IN_PROGRESS", now)).toBe(true);
+  });
+
+  it("is overdue whatever the open status says, including awaiting review", () => {
+    const yesterday = new Date("2026-08-19T12:00:00Z");
+    for (const status of ["NOT_STARTED", "IN_PROGRESS", "BLOCKED", "AWAITING_REVIEW"] as const) {
+      expect({ status, overdue: isOverdue(yesterday, status, now) }).toEqual({ status, overdue: true });
+    }
+  });
 });
 
 describe("canCompleteDisciplineTask", () => {
@@ -189,6 +206,21 @@ describe("canCompleteDisciplineTask", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.blockers).toEqual(["Waiting on 1 earlier task: Piping layout sign-off."]);
+  });
+
+  it("names the missing required documents, not just how many there are", () => {
+    const result = canCompleteDisciplineTask({
+      requiredDocs: [
+        { isMandatory: true, documentId: null, name: "Mechanical review checklist" },
+        { isMandatory: true, documentId: null, name: "Marked-up drawing" },
+        { isMandatory: true, documentId: "doc1", name: "Equipment register" },
+      ],
+      unmetDependencies: [],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.blockers).toEqual([
+      "2 required documents are still missing: Mechanical review checklist, Marked-up drawing.",
+    ]);
   });
 
   it("lists every blocker at once", () => {

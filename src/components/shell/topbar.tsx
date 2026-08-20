@@ -1,11 +1,11 @@
-// Top bar: search placeholder, the notification bell, and the user menu with sign out.
+// Top bar: global search, the notification bell, and the user menu with sign out.
 
 "use client";
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Avatar } from "@/components/ui";
-import { SearchIcon } from "@/components/shell/icons";
+import { SearchBox } from "@/components/search/search-box";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 
 export function Topbar({ name, email }: { name: string; email: string }) {
@@ -22,18 +22,7 @@ export function Topbar({ name, email }: { name: string; email: string }) {
 
   return (
     <header className="flex h-14 items-center gap-4 border-b border-[var(--border)] bg-white px-4">
-      <div className="relative flex-1 max-w-xl">
-        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--olng-gray)]">
-          <SearchIcon />
-        </span>
-        <input
-          type="search"
-          disabled
-          placeholder="Search projects, tasks and documents (coming soon)"
-          aria-label="Search"
-          className="w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--page-bg)] py-2 pl-9 pr-3 text-sm text-[var(--olng-text)] placeholder:text-[var(--olng-gray)]"
-        />
-      </div>
+      <SearchBox />
 
       <NotificationBell />
 

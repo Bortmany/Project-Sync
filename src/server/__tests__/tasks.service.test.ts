@@ -14,6 +14,7 @@ import {
   completeDisciplineTask,
   createMainTask,
   overrideMainTaskStatus,
+  reopenDisciplineTask,
   updateDisciplineTaskStatus,
 } from "@/server/services/tasks";
 import {
@@ -170,6 +171,45 @@ describe("the dependency rule", () => {
       addDependency(fixture.adminActor, { predecessorId: second, successorId: first }),
     ).rejects.toThrow(/wait on each other/i);
   });
+
+  it("refuses a loop that closes several steps later, and adds no edge", async () => {
+    const mainTask = await makeMainTask(4, ["A", "B", "C", "D"]);
+    const subtasks = await subtaskIdsByTitle(mainTask.id);
+    const id = (title: string) => subtasks.get(title) as string;
+
+    // A → B → C → D, then D → A would close the ring.
+    await addDependency(fixture.adminActor, { predecessorId: id("A"), successorId: id("B") });
+    await addDependency(fixture.adminActor, { predecessorId: id("B"), successorId: id("C") });
+    await addDependency(fixture.adminActor, { predecessorId: id("C"), successorId: id("D") });
+
+    await expect(
+      addDependency(fixture.adminActor, { predecessorId: id("D"), successorId: id("A") }),
+    ).rejects.toThrow(/wait on each other/i);
+
+    expect(await prisma.taskDependency.count()).toBe(3);
+    expect(
+      await prisma.activityLog.count({
+        where: { entityId: id("A"), action: "DEPENDENCY_ADDED" },
+      }),
+    ).toBe(0);
+
+    // A branch that joins the chain without closing it is still fine.
+    const extra = await addDependency(fixture.adminActor, {
+      predecessorId: id("A"),
+      successorId: id("D"),
+    });
+    expect(extra.dependencies.map((dependency) => dependency.title).sort()).toEqual(["A", "C"]);
+  });
+
+  it("refuses a task that waits on itself", async () => {
+    const mainTask = await makeMainTask(1, ["Only task"]);
+    const only = (await subtaskIdsByTitle(mainTask.id)).get("Only task") as string;
+
+    await expect(
+      addDependency(fixture.adminActor, { predecessorId: only, successorId: only }),
+    ).rejects.toThrow(/wait on itself/i);
+    expect(await prisma.taskDependency.count()).toBe(0);
+  });
 });
 
 describe("the override — the only legal bypass", () => {
@@ -256,5 +296,66 @@ describe("the audit trail", () => {
     expect(actions).toContain("STATUS_CHANGED");
     expect(actions).toContain("COMPLETED");
     expect(rows.some((row) => row.summary.includes("John Carter"))).toBe(true);
+  });
+
+  it("appends exactly one row for each core mutation — never two, never none", async () => {
+    const mainTask = await makeMainTask(2, ["First", "Second"]);
+    const subtasks = await subtaskIdsByTitle(mainTask.id);
+    const first = subtasks.get("First") as string;
+
+    const rowsFor = (entityId: string, action: string) =>
+      prisma.activityLog.count({ where: { entityId, action } });
+
+    expect(await rowsFor(mainTask.id, "MAIN_TASK_CREATED")).toBe(1);
+    expect(await rowsFor(first, "TASK_CREATED")).toBe(1);
+
+    await updateDisciplineTaskStatus(fixture.engineerActor, { id: first, status: "IN_PROGRESS" });
+    expect(await rowsFor(first, "STATUS_CHANGED")).toBe(1);
+
+    await completeDisciplineTask(fixture.engineerActor, { id: first });
+    expect(await rowsFor(first, "COMPLETED")).toBe(1);
+
+    await overrideMainTaskStatus(fixture.pmActor, {
+      id: mainTask.id,
+      status: "COMPLETED",
+      reason: "Remaining action transferred to operations MOC-1182",
+    });
+    expect(await rowsFor(mainTask.id, "OVERRIDE_APPLIED")).toBe(1);
+
+    // The main task's own derivation rows are separate entries on the parent: one per real change,
+    // and none at all when a change leaves the derived values where they were.
+    const derived = await prisma.activityLog.findMany({
+      where: { entityId: mainTask.id, action: "STATUS_CHANGED" },
+      orderBy: { createdAt: "asc" },
+    });
+    expect(derived).toHaveLength(2);
+    expect(derived.map((row) => (row.metadata as { after: { progressPct: number } }).after.progressPct)).toEqual([
+      0, 50,
+    ]);
+    expect(derived.every((row) => (row.metadata as { derived?: boolean }).derived === true)).toBe(true);
+  });
+
+  it("keeps every audit row exactly as written — a later change never edits an earlier row", async () => {
+    const mainTask = await makeMainTask(2, ["First", "Second"]);
+    const subtasks = await subtaskIdsByTitle(mainTask.id);
+
+    const before = await prisma.activityLog.findMany({ orderBy: { createdAt: "asc" } });
+    expect(before.length).toBeGreaterThan(0);
+
+    for (const id of subtasks.values()) {
+      await completeDisciplineTask(fixture.engineerActor, { id });
+    }
+    await reopenDisciplineTask(fixture.adminActor, {
+      id: subtasks.get("First") as string,
+      reason: "The load calculation was superseded.",
+    });
+
+    const after = await prisma.activityLog.findMany({
+      where: { id: { in: before.map((row) => row.id) } },
+      orderBy: { createdAt: "asc" },
+    });
+
+    // Same rows, same contents, nothing removed.
+    expect(after).toEqual(before);
   });
 });

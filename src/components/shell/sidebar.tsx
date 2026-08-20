@@ -5,9 +5,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  AdminIcon,
   BellIcon,
   DashboardIcon,
+  DisciplinesIcon,
+  PeopleIcon,
   ProjectsIcon,
   TasksIcon,
 } from "@/components/shell/icons";
@@ -22,7 +23,11 @@ const MAIN_NAV: NavItem[] = [
   { href: "/notifications", label: "Notifications", icon: BellIcon },
 ];
 
-const ADMIN_NAV: NavItem[] = [{ href: "/admin", label: "Admin", icon: AdminIcon }];
+// Administrators only — nobody else sees these two rows at all.
+const ADMIN_NAV: NavItem[] = [
+  { href: "/admin/users", label: "Users", icon: PeopleIcon },
+  { href: "/admin/disciplines", label: "Disciplines", icon: DisciplinesIcon },
+];
 
 export function Sidebar({ role }: { role: RoleName }) {
   const pathname = usePathname();

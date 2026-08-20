@@ -18,6 +18,7 @@ import {
   MainTaskListItemDTO,
   ProjectDTO,
   ProjectListItemDTO,
+  SearchResultsDTO,
   UserDTO,
   type ProjectMemberDTO,
   type RoleName,
@@ -245,6 +246,15 @@ export function useMainTaskSchedule(taskId: string): UseQueryResult<GanttDTO> {
   });
 }
 
+/** The whole project's schedule, for the Timeline tab. */
+export function useProjectGantt(projectId: string): UseQueryResult<GanttDTO> {
+  return useQuery({
+    queryKey: ["project", projectId, "gantt"],
+    queryFn: () => readRoute(`/api/projects/${projectId}/gantt`, GanttDTO),
+    enabled: projectId.length > 0,
+  });
+}
+
 export function useMainTaskActivity(taskId: string): UseQueryResult<ActivityItemDTO[]> {
   return useQuery({
     queryKey: ["task", taskId, "activity"],
@@ -313,6 +323,39 @@ export function useDocumentVersions(
     queryFn: () => readRoute(`/api/documents/${documentId}/versions`, z.array(DocumentVersionDTO)),
     enabled: enabled && documentId.length > 0,
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Global search                                                       */
+/* ------------------------------------------------------------------ */
+
+/** The shortest query the search route accepts — the same rule as src/lib/search.ts. */
+export const MIN_SEARCH_LENGTH = 2;
+
+/**
+ * One search, shared by the topbar dropdown and the /search page: the same query key means typing
+ * in the topbar and then opening the full page does not fetch twice.
+ */
+export function useSearch(query: string): UseQueryResult<SearchResultsDTO> {
+  const trimmed = query.trim();
+  return useQuery({
+    queryKey: ["search", trimmed],
+    queryFn: () => readRoute(`/api/search?q=${encodeURIComponent(trimmed)}`, SearchResultsDTO),
+    enabled: trimmed.length >= MIN_SEARCH_LENGTH,
+    staleTime: 30_000,
+  });
+}
+
+/** How many results a set carries, across every group. */
+export function countResults(results: SearchResultsDTO | undefined): number {
+  if (!results) return 0;
+  return (
+    results.projects.length +
+    results.mainTasks.length +
+    results.disciplineTasks.length +
+    results.users.length +
+    results.documents.length
+  );
 }
 
 /* ------------------------------------------------------------------ */

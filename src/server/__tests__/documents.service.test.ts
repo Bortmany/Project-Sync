@@ -149,6 +149,38 @@ describe("revisions are only ever added, never altered or lost", () => {
     expect(history[0].downloadUrl).toBe(`/api/documents/versions/${second.id}/download`);
   });
 
+  it("gives two uploads that land together two different revision numbers", async () => {
+    // The smallest possible race, written out on its own: two people press Upload on the same
+    // document at the same moment. Neither may overwrite the other, and the document must end up
+    // pointing at the higher of the two.
+    const work = await makeWork();
+    const first = await upload(fixture.pmActor, { mainTaskId: work.mainTaskId });
+
+    const [a, b] = await Promise.all([
+      upload(fixture.pmActor, { documentId: first.documentId }, { body: "revision,a\n" }),
+      upload(fixture.engineerActor, { documentId: first.documentId }, { body: "revision,b\n" }),
+    ]);
+
+    expect(a.revisionNumber).not.toBe(b.revisionNumber);
+    expect([a.revisionNumber, b.revisionNumber].sort()).toEqual([1, 2]);
+    expect(a.id).not.toBe(b.id);
+
+    const rows = await prisma.documentVersion.findMany({ where: { documentId: first.documentId } });
+    expect(rows).toHaveLength(3);
+
+    const document = await prisma.document.findUniqueOrThrow({ where: { id: first.documentId } });
+    const highest = rows.reduce((best, row) => (row.revisionNumber > best.revisionNumber ? row : best));
+    expect(highest.revisionNumber).toBe(2);
+    expect(document.currentVersionId).toBe(highest.id);
+
+    // Both uploads are in the audit trail — one row each, nothing swallowed by the race.
+    expect(
+      await prisma.activityLog.count({
+        where: { entityType: "Document", entityId: first.documentId, action: "DOCUMENT_UPLOADED" },
+      }),
+    ).toBe(3);
+  });
+
   it("keeps revision numbers monotonic when four uploads land at once", async () => {
     const work = await makeWork();
     const first = await upload(fixture.pmActor, { mainTaskId: work.mainTaskId });

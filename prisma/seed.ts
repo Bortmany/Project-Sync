@@ -66,7 +66,8 @@ const PEOPLE: Person[] = [
   { email: "ahmed.albalushi@omanlng.example", name: "Ahmed al-Balushi", role: "ENGINEER", discipline: "ELEC", jobTitle: "Electrical engineer" },
 ];
 
-const day = (iso: string) => new Date(`${iso}T08:00:00.000Z`);
+// Task dates are always stored at UTC midnight — the same invariant the services enforce.
+const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 
 /* ------------------------------------------------------------------ */
 /* The demo project's work                                             */

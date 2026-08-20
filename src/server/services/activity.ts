@@ -34,6 +34,12 @@ export const ACTIVITY = {
   COMMENT_DELETED: "COMMENT_DELETED",
   DOCUMENT_UPLOADED: "DOCUMENT_UPLOADED",
   DOCUMENT_DELETED: "DOCUMENT_DELETED",
+  USER_CREATED: "USER_CREATED",
+  USER_UPDATED: "USER_UPDATED",
+  USER_DEACTIVATED: "USER_DEACTIVATED",
+  USER_REACTIVATED: "USER_REACTIVATED",
+  DISCIPLINE_CREATED: "DISCIPLINE_CREATED",
+  DISCIPLINE_UPDATED: "DISCIPLINE_UPDATED",
 } as const;
 
 export type ActivityAction = (typeof ACTIVITY)[keyof typeof ACTIVITY];
@@ -47,7 +53,10 @@ export type AppendActivityInput = {
     | "ProjectDiscipline"
     | "MainTask"
     | "DisciplineTask"
-    | "Document";
+    | "Document"
+    // Admin-section rows carry no project — they are about the organisation, not one project.
+    | "User"
+    | "Discipline";
   entityId: string;
   action: ActivityAction;
   /** Plain English, e.g. "Ahmed al-Balushi marked Electrical review complete". */

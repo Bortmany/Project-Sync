@@ -39,6 +39,22 @@ export async function assertCanViewProject(actor: ActorContext, projectId: strin
 /** Projects the signed-in person may see: their own memberships, or all of them for an administrator. */
 export async function listProjectsForActor(actor: ActorContext): Promise<ProjectListItemDTO[]> {
   const projects = actor.role === "ADMIN" ? await activeProjects() : await activeProjectsForUser(actor.userId);
+  return buildProjectListItems(projects);
+}
+
+type ProjectRow = {
+  id: string;
+  name: string;
+  code: string;
+  status: ProjectListItemDTO["status"];
+  targetDate: Date | null;
+};
+
+/**
+ * Turns project rows into list cards. Callers pass rows they have already limited to what the
+ * person may see — global search reuses this so its project rows look exactly like the list page's.
+ */
+export async function buildProjectListItems(projects: ProjectRow[]): Promise<ProjectListItemDTO[]> {
   if (projects.length === 0) return [];
 
   const projectIds = projects.map((project) => project.id);

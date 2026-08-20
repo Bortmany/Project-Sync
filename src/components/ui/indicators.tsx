@@ -22,6 +22,11 @@ export function statusLabel(status: TaskStatusName): string {
   return STATUS_LABEL[status];
 }
 
+/** The fill a status is drawn with — the same colour StatusBadge uses, for timeline bars and dots. */
+export function statusColor(status: TaskStatusName): string {
+  return STATUS_STYLE[status].background;
+}
+
 export function StatusBadge({
   status,
   overridden = false,

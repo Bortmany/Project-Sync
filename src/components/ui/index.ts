@@ -10,6 +10,7 @@ export {
   StatTile,
   Avatar,
   initialsOf,
+  statusColor,
   statusLabel,
 } from "@/components/ui/indicators";
 export { EmptyState } from "@/components/ui/empty-state";

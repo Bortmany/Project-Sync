@@ -583,7 +583,7 @@ type DocumentRow = {
 };
 
 /** Turns live document rows into DTOs, with their current revision and how many revisions there are. */
-async function toDocumentDTOs(rows: DocumentRow[]): Promise<DocumentDTO[]> {
+export async function toDocumentDTOs(rows: DocumentRow[]): Promise<DocumentDTO[]> {
   if (rows.length === 0) return [];
 
   const documentIds = rows.map((row) => row.id);

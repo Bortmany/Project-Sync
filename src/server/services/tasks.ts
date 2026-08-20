@@ -20,6 +20,7 @@ import type {
   CreateDisciplineTaskInput,
   CreateMainTaskInput,
   DisciplineTaskDTO,
+  GanttDTO,
   MainTaskDTO,
   MainTaskListItemDTO,
   OverrideStatusInput,
@@ -32,6 +33,7 @@ import type {
 } from "@/lib/zod-schemas";
 import {
   DisciplineTaskDTO as DisciplineTaskSchema,
+  GanttDTO as GanttSchema,
   MainTaskDTO as MainTaskSchema,
   MainTaskListItemDTO as MainTaskListItemSchema,
 } from "@/lib/zod-schemas";
@@ -109,6 +111,79 @@ export async function getDisciplineTaskForActor(
   return buildDisciplineTaskDTO(disciplineTaskId);
 }
 
+/**
+ * A named set of main tasks as list rows. Global search calls this with ids it has already
+ * limited to the projects the person may see — this function does not re-check that.
+ */
+export async function listMainTaskItems(mainTaskIds: string[]): Promise<MainTaskListItemDTO[]> {
+  if (mainTaskIds.length === 0) return [];
+
+  const tasks = await prisma.mainTask.findMany({
+    where: { id: { in: mainTaskIds }, ...notDeleted },
+    orderBy: { deadline: "asc" },
+    include: { project: { select: { code: true } } },
+  });
+  if (tasks.length === 0) return [];
+
+  const subtasks = await liveSubtasksFor(tasks.map((task) => task.id));
+  const now = new Date();
+  const items = tasks.map((task) =>
+    buildListItem(task, task.project.code, subtasks.get(task.id) ?? [], now),
+  );
+
+  return checkDtoList(MainTaskListItemSchema, items, "MainTaskListItemDTO");
+}
+
+/** The whole project on one timeline: every live main task with the discipline tasks beneath it. */
+export async function ganttForProject(actor: ActorContext, projectId: string): Promise<GanttDTO> {
+  await assertCanViewProject(actor, projectId);
+  return buildGantt(await activeMainTasks(projectId));
+}
+
+/** One main task on a timeline, with its own discipline tasks. Same shape as the project view. */
+export async function ganttForMainTask(actor: ActorContext, mainTaskId: string): Promise<GanttDTO> {
+  const task = await loadMainTask(mainTaskId);
+  await assertCanViewProject(actor, task.projectId);
+  return buildGantt([task]);
+}
+
+type GanttTaskRow = {
+  id: string;
+  title: string;
+  startDate: Date | null;
+  deadline: Date;
+  status: TaskStatusName;
+  statusOverride: TaskStatusName | null;
+  progressPct: number;
+};
+
+/** Shared by both Gantt reads. The status shown on a bar is the effective one, override included. */
+async function buildGantt(tasks: GanttTaskRow[]): Promise<GanttDTO> {
+  if (tasks.length === 0) return checkDto(GanttSchema, { mainTasks: [] }, "GanttDTO");
+  const subtasks = await liveSubtasksFor(tasks.map((task) => task.id));
+
+  const mainTasks = tasks.map((task) => ({
+    id: task.id,
+    title: task.title,
+    startDate: task.startDate,
+    deadline: task.deadline,
+    status: effectiveStatus(task.status, task.statusOverride),
+    progressPct: task.progressPct,
+    disciplineTasks: (subtasks.get(task.id) ?? []).map((subtask) => ({
+      id: subtask.id,
+      title: subtask.title,
+      disciplineCode: subtask.discipline.code,
+      disciplineColorHex: subtask.discipline.colorHex,
+      assigneeName: subtask.assignee?.name ?? null,
+      startDate: subtask.startDate,
+      deadline: subtask.deadline,
+      status: subtask.status,
+    })),
+  }));
+
+  return checkDto(GanttSchema, { mainTasks }, "GanttDTO");
+}
+
 /* ------------------------------------------------------------------ */
 /* Main task mutations                                                 */
 /* ------------------------------------------------------------------ */
@@ -133,6 +208,7 @@ export async function createMainTask(actor: ActorContext, input: CreateMainTaskI
     if (task.assigneeId) await assertOnProject(project.id, task.assigneeId, "assignee");
   }
 
+  const deadline = utcMidnight(input.deadline);
   const mainTaskId = await prisma.$transaction(async (tx) => {
     const mainTask = await tx.mainTask.create({
       data: {
@@ -140,8 +216,8 @@ export async function createMainTask(actor: ActorContext, input: CreateMainTaskI
         title: input.title,
         description: input.description,
         priority: input.priority,
-        startDate: input.startDate ?? null,
-        deadline: input.deadline,
+        startDate: utcMidnightOrNull(input.startDate) ?? null,
+        deadline,
         createdById: actor.userId,
         ownerId: input.ownerId ?? null,
       },
@@ -157,7 +233,7 @@ export async function createMainTask(actor: ActorContext, input: CreateMainTaskI
           description: task.description ?? null,
           assigneeId: task.assigneeId ?? null,
           assignedById: task.assigneeId ? actor.userId : null,
-          deadline: task.deadline,
+          deadline: utcMidnight(task.deadline),
           isMandatory: task.isMandatory,
           sortOrder: sortOrder++,
           requiredDocuments: {
@@ -192,7 +268,7 @@ export async function createMainTask(actor: ActorContext, input: CreateMainTaskI
       entityId: mainTask.id,
       action: ACTIVITY.MAIN_TASK_CREATED,
       summary: `${actor.name} created the task "${mainTask.title}" with ${countWords(input.disciplineTasks.length, "discipline task")}`,
-      metadata: { deadline: input.deadline, priority: input.priority },
+      metadata: { deadline, priority: input.priority },
     });
 
     await recomputeMainTask(tx, mainTask.id, actor, project.id);
@@ -219,7 +295,9 @@ export async function updateMainTask(actor: ActorContext, input: UpdateMainTaskI
   const existing = await loadMainTask(input.id);
   assertCan(actor, "EDIT_MAIN_TASK", { projectId: existing.projectId });
   if (input.ownerId) await assertOnProject(existing.projectId, input.ownerId, "owner");
-  assertDatesOrdered(input.startDate ?? existing.startDate, input.deadline ?? existing.deadline);
+  const nextStart = utcMidnightOrNull(input.startDate);
+  const nextDeadline = input.deadline === undefined ? undefined : utcMidnight(input.deadline);
+  assertDatesOrdered(nextStart ?? existing.startDate, nextDeadline ?? existing.deadline);
 
   await prisma.$transaction(async (tx) => {
     const updated = await tx.mainTask.update({
@@ -228,8 +306,8 @@ export async function updateMainTask(actor: ActorContext, input: UpdateMainTaskI
         title: input.title ?? undefined,
         description: input.description ?? undefined,
         priority: input.priority ?? undefined,
-        startDate: input.startDate === undefined ? undefined : input.startDate,
-        deadline: input.deadline ?? undefined,
+        startDate: nextStart === undefined ? undefined : nextStart,
+        deadline: nextDeadline ?? undefined,
         ownerId: input.ownerId === undefined ? undefined : input.ownerId,
       },
     });
@@ -369,8 +447,8 @@ export async function createDisciplineTask(
         description: input.description ?? null,
         assigneeId: input.assigneeId ?? null,
         assignedById: input.assigneeId ? actor.userId : null,
-        startDate: input.startDate ?? null,
-        deadline: input.deadline,
+        startDate: utcMidnightOrNull(input.startDate) ?? null,
+        deadline: utcMidnight(input.deadline),
         priority: input.priority,
         isMandatory: input.isMandatory,
         sortOrder: (last?.sortOrder ?? -1) + 1,
@@ -387,7 +465,7 @@ export async function createDisciplineTask(
       entityId: task.id,
       action: ACTIVITY.TASK_CREATED,
       summary: `${actor.name} added "${task.title}" to "${mainTask.title}"`,
-      metadata: { disciplineId: input.disciplineId, deadline: input.deadline, isMandatory: input.isMandatory },
+      metadata: { disciplineId: input.disciplineId, deadline: task.deadline, isMandatory: input.isMandatory },
     });
 
     if (input.assigneeId) {
@@ -440,7 +518,9 @@ export async function updateDisciplineTask(
   if (editingAnythingElse) {
     assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, disciplineId: existing.disciplineId });
   }
-  assertDatesOrdered(input.startDate ?? existing.startDate, input.deadline ?? existing.deadline);
+  const nextStart = utcMidnightOrNull(input.startDate);
+  const nextDeadline = input.deadline === undefined ? undefined : utcMidnight(input.deadline);
+  assertDatesOrdered(nextStart ?? existing.startDate, nextDeadline ?? existing.deadline);
 
   await prisma.$transaction(async (tx) => {
     await lockMainTask(tx, existing.mainTaskId);
@@ -451,8 +531,8 @@ export async function updateDisciplineTask(
         description: input.description === undefined ? undefined : input.description,
         assigneeId: input.assigneeId === undefined ? undefined : input.assigneeId,
         assignedById: reassigning ? actor.userId : undefined,
-        startDate: input.startDate === undefined ? undefined : input.startDate,
-        deadline: input.deadline ?? undefined,
+        startDate: nextStart === undefined ? undefined : nextStart,
+        deadline: nextDeadline ?? undefined,
         priority: input.priority ?? undefined,
         isMandatory: input.isMandatory ?? undefined,
         sortOrder: input.sortOrder ?? undefined,
@@ -619,6 +699,7 @@ export async function completeDisciplineTask(
       requiredDocs: fresh.requiredDocuments.map((doc) => ({
         isMandatory: doc.isMandatory,
         documentId: doc.documentId,
+        name: doc.name,
       })),
       unmetDependencies: unmet.map((edge) => edge.predecessor.title),
     });
@@ -795,13 +876,15 @@ export async function updateTaskDates(
   if (input.kind === "MAIN") {
     const existing = await loadMainTask(input.id);
     assertCan(actor, "EDIT_MAIN_TASK", { projectId: existing.projectId });
-    const nextStart = input.startDate === undefined ? existing.startDate : input.startDate;
-    assertDatesOrdered(nextStart, input.deadline);
+    const nextStart =
+      utcMidnightOrNull(input.startDate === undefined ? existing.startDate : input.startDate) ?? null;
+    const deadline = utcMidnight(input.deadline);
+    assertDatesOrdered(nextStart, deadline);
 
     await prisma.$transaction(async (tx) => {
       await tx.mainTask.update({
         where: { id: existing.id },
-        data: { startDate: nextStart, deadline: input.deadline },
+        data: { startDate: nextStart, deadline },
       });
       await appendActivity(tx, {
         actorId: actor.userId,
@@ -812,7 +895,7 @@ export async function updateTaskDates(
         summary: `${actor.name} moved the dates for "${existing.title}"`,
         metadata: {
           before: { startDate: existing.startDate, deadline: existing.deadline },
-          after: { startDate: input.startDate ?? null, deadline: input.deadline },
+          after: { startDate: nextStart, deadline },
         },
       });
     });
@@ -823,14 +906,16 @@ export async function updateTaskDates(
   const existing = await loadDisciplineTask(input.id);
   const projectId = existing.mainTask.projectId;
   assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, disciplineId: existing.disciplineId });
-  const nextStart = input.startDate === undefined ? existing.startDate : input.startDate;
-  assertDatesOrdered(nextStart, input.deadline);
+  const nextStart =
+    utcMidnightOrNull(input.startDate === undefined ? existing.startDate : input.startDate) ?? null;
+  const deadline = utcMidnight(input.deadline);
+  assertDatesOrdered(nextStart, deadline);
 
   await prisma.$transaction(async (tx) => {
     await lockMainTask(tx, existing.mainTaskId);
     await tx.disciplineTask.update({
       where: { id: existing.id },
-      data: { startDate: nextStart, deadline: input.deadline },
+      data: { startDate: nextStart, deadline },
     });
     await appendActivity(tx, {
       actorId: actor.userId,
@@ -841,7 +926,7 @@ export async function updateTaskDates(
       summary: `${actor.name} moved the dates for "${existing.title}"`,
       metadata: {
         before: { startDate: existing.startDate, deadline: existing.deadline },
-        after: { startDate: nextStart, deadline: input.deadline },
+        after: { startDate: nextStart, deadline },
       },
     });
   });
@@ -1202,6 +1287,21 @@ function assertDatesOrdered(startDate: Date | null | undefined, deadline: Date):
   if (startDate && startDate > deadline) {
     throw new ServiceError("A task cannot end before it starts.");
   }
+}
+
+/**
+ * Task dates are whole days, so every one of them is stored at UTC midnight — whatever time of day
+ * arrived with it. A bar dragged on the timeline and the same day typed into a form then mean
+ * exactly the same instant, and whether a task reads as overdue can never depend on how its date
+ * was entered.
+ */
+function utcMidnight(value: Date): Date {
+  return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()));
+}
+
+/** The same, for a date that may be missing or deliberately cleared. */
+function utcMidnightOrNull(value: Date | null | undefined): Date | null | undefined {
+  return value == null ? value : utcMidnight(value);
 }
 
 async function nameOf(tx: Prisma.TransactionClient, userId: string): Promise<string> {

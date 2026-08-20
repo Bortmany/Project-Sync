@@ -61,7 +61,7 @@ export function isOverdue(
 }
 
 export type CompletionCheckInput = {
-  requiredDocs: { isMandatory: boolean; documentId?: string | null }[];
+  requiredDocs: { isMandatory: boolean; documentId?: string | null; name?: string }[];
   unmetDependencies: string[];
 };
 
@@ -71,9 +71,11 @@ export type CompletionCheck = { ok: boolean; blockers: string[] };
 export function canCompleteDisciplineTask(input: CompletionCheckInput): CompletionCheck {
   const blockers: string[] = [];
 
-  const missingDocs = input.requiredDocs.filter((doc) => doc.isMandatory && !doc.documentId).length;
-  if (missingDocs === 1) blockers.push("1 required document is still missing.");
-  if (missingDocs > 1) blockers.push(`${missingDocs} required documents are still missing.`);
+  const missing = input.requiredDocs.filter((doc) => doc.isMandatory && !doc.documentId);
+  const named = missing.map((doc) => doc.name).filter((name): name is string => Boolean(name));
+  const names = named.length === missing.length ? `: ${named.join(", ")}` : "";
+  if (missing.length === 1) blockers.push(`1 required document is still missing${names}.`);
+  if (missing.length > 1) blockers.push(`${missing.length} required documents are still missing${names}.`);
 
   const open = input.unmetDependencies.length;
   if (open === 1) blockers.push(`Waiting on 1 earlier task: ${input.unmetDependencies[0]}.`);

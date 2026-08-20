@@ -15,6 +15,7 @@ import {
 import { MainTaskActivity } from "@/components/activity/activity-feeds";
 import { MainTaskComments } from "@/components/comments/comment-list";
 import { MainTaskDocumentsTab } from "@/components/documents/main-task-documents";
+import { MainTaskTimelineTab } from "@/components/gantt/timeline-tab";
 import { fieldError, useAction } from "@/components/hooks/use-action";
 import {
   isManagerOn,
@@ -531,6 +532,11 @@ export function MainTaskView({ taskId }: { taskId: string }) {
                 id: "activity",
                 label: "Activity",
                 content: <MainTaskActivity mainTaskId={data.id} />,
+              },
+              {
+                id: "timeline",
+                label: "Timeline",
+                content: <MainTaskTimelineTab taskId={data.id} projectId={data.projectId} />,
               },
             ]}
           />

@@ -7,6 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { updateProject } from "@/components/actions";
 import { ProjectActivity } from "@/components/activity/activity-feeds";
 import { ProjectDocumentsTab } from "@/components/documents/project-documents";
+import { ProjectTimelineTab } from "@/components/gantt/timeline-tab";
 import { ProjectStatusBadge } from "@/components/projects/projects-view";
 import { ProjectTasksTab } from "@/components/projects/project-tasks-tab";
 import { ProjectTeamTab } from "@/components/projects/project-team-tab";
@@ -18,7 +19,6 @@ import {
   Button,
   DateInput,
   DisciplineDot,
-  EmptyState,
   ErrorBanner,
   Field,
   Input,
@@ -221,8 +221,8 @@ export function ProjectView({ projectId }: { projectId: string }) {
           },
           {
             id: "gantt",
-            label: "Gantt",
-            content: <EmptyState message="Coming in a later milestone." />,
+            label: "Timeline",
+            content: <ProjectTimelineTab project={data} />,
           },
           {
             id: "documents",
