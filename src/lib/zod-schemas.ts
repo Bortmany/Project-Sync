@@ -65,7 +65,8 @@ export const UserDTO = z.object({
   disciplineCode: z.string().nullable().optional(),
   jobTitle: z.string().nullable(),
   isActive: z.boolean(),
-  lastLoginAt: dateOut.nullable(),
+  // Only the admin user screens need sign-in history; the pickers must not carry it.
+  lastLoginAt: dateOut.nullable().optional(),
   createdAt: dateOut,
 });
 export type UserDTO = z.infer<typeof UserDTO>;
@@ -508,6 +509,8 @@ export const CommentDTO = z.object({
   mentions: z.array(z.string()),
   editedAt: dateOut.nullable(),
   createdAt: dateOut,
+  /** Tombstone: a removed comment stays in the thread with its body replaced. */
+  isDeleted: z.boolean().optional(),
 });
 export type CommentDTO = z.infer<typeof CommentDTO>;
 

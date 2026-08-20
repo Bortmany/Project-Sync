@@ -29,6 +29,11 @@ export const ACTIVITY = {
   DEPENDENCY_ADDED: "DEPENDENCY_ADDED",
   DEPENDENCY_REMOVED: "DEPENDENCY_REMOVED",
   DATES_UPDATED: "DATES_UPDATED",
+  COMMENT_ADDED: "COMMENT_ADDED",
+  COMMENT_EDITED: "COMMENT_EDITED",
+  COMMENT_DELETED: "COMMENT_DELETED",
+  DOCUMENT_UPLOADED: "DOCUMENT_UPLOADED",
+  DOCUMENT_DELETED: "DOCUMENT_DELETED",
 } as const;
 
 export type ActivityAction = (typeof ACTIVITY)[keyof typeof ACTIVITY];
@@ -36,7 +41,13 @@ export type ActivityAction = (typeof ACTIVITY)[keyof typeof ACTIVITY];
 export type AppendActivityInput = {
   actorId: string;
   projectId: string | null;
-  entityType: "Project" | "ProjectMember" | "ProjectDiscipline" | "MainTask" | "DisciplineTask";
+  entityType:
+    | "Project"
+    | "ProjectMember"
+    | "ProjectDiscipline"
+    | "MainTask"
+    | "DisciplineTask"
+    | "Document";
   entityId: string;
   action: ActivityAction;
   /** Plain English, e.g. "Ahmed al-Balushi marked Electrical review complete". */

@@ -10,7 +10,7 @@ import {
 } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { byIp, clientIp, limit } from "@/lib/rate-limit";
+import { byIp, checkOnly, clearFailures, clientIp, limit, recordFailure } from "@/lib/rate-limit";
 import { LoginInput } from "@/lib/zod-schemas";
 
 const GENERIC_FAILURE = "Incorrect email or password.";
@@ -38,8 +38,11 @@ export async function POST(request: Request) {
 
   const { email, password } = parsed.data;
 
-  // Second limiter keyed on the account, so rotating the forwarded IP doesn't buy unlimited guesses.
-  const accountThrottle = limit(`login-account:${email}`, 5, 15 * 60_000);
+  // Second limiter keyed on the account, counting FAILURES only — five bad guesses from
+  // an attacker must not lock the real owner's next correct sign-in out for the window,
+  // and a success forgives the count. Rotating the forwarded IP still buys nothing.
+  const accountKey = `login-account:${email}`;
+  const accountThrottle = checkOnly(accountKey, 5);
   if (!accountThrottle.ok) {
     return NextResponse.json(
       { ok: false, error: "Too many sign-in attempts. Please wait a few minutes and try again." },
@@ -52,6 +55,7 @@ export async function POST(request: Request) {
   if (!user || !user.isActive) {
     // Same time cost as a real account, and no address in the log — people mistype passwords into email boxes.
     await burnPasswordCheck();
+    recordFailure(accountKey, 15 * 60_000);
     logger.warn("Sign-in refused", {
       reason: user ? "inactive" : "unknown-email",
       userId: user?.id,
@@ -61,9 +65,11 @@ export async function POST(request: Request) {
 
   const passwordOk = await verifyPassword(user.passwordHash, password);
   if (!passwordOk) {
+    recordFailure(accountKey, 15 * 60_000);
     logger.warn("Sign-in refused", { reason: "wrong-password", userId: user.id });
     return NextResponse.json({ ok: false, error: GENERIC_FAILURE }, { status: 401 });
   }
+  clearFailures(accountKey);
 
   const ip = clientIp(request);
   const minted = mintSession();

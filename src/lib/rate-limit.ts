@@ -7,6 +7,10 @@ type Window = { count: number; resetAt: number };
 export interface RateLimitStore {
   /** Increments the counter for `key` inside a window of `windowMs` and returns the new count plus the window end. */
   hit(key: string, windowMs: number): Window;
+  /** The current window for `key` without incrementing, or null when none is open. */
+  peek(key: string): Window | null;
+  /** Forgets the window for `key` — e.g. clearing failed sign-in attempts after a success. */
+  reset(key: string): void;
 }
 
 /**
@@ -30,6 +34,16 @@ class MemoryStore implements RateLimitStore {
     return fresh;
   }
 
+  peek(key: string): Window | null {
+    const existing = this.windows.get(key);
+    if (!existing || existing.resetAt <= Date.now()) return null;
+    return existing;
+  }
+
+  reset(key: string): void {
+    this.windows.delete(key);
+  }
+
   private sweep(now: number): void {
     if (now - this.lastSweep < 60_000) return;
     this.lastSweep = now;
@@ -51,6 +65,24 @@ export function limit(key: string, max: number, windowMs: number): RateLimitResu
   const window = store.hit(key, windowMs);
   if (window.count <= max) return { ok: true, retryAfterSec: 0 };
   return { ok: false, retryAfterSec: Math.max(1, Math.ceil((window.resetAt - Date.now()) / 1000)) };
+}
+
+/**
+ * For failure-only counting (e.g. wrong passwords): checkOnly() gates without spending an
+ * attempt, recordFailure() spends one, clearFailures() forgives them all after a success.
+ */
+export function checkOnly(key: string, max: number): RateLimitResult {
+  const window = store.peek(key);
+  if (!window || window.count < max) return { ok: true, retryAfterSec: 0 };
+  return { ok: false, retryAfterSec: Math.max(1, Math.ceil((window.resetAt - Date.now()) / 1000)) };
+}
+
+export function recordFailure(key: string, windowMs: number): void {
+  store.hit(key, windowMs);
+}
+
+export function clearFailures(key: string): void {
+  store.reset(key);
 }
 
 /** Key for anonymous traffic: the first hop of x-forwarded-for, behind a proxy. */

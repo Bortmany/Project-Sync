@@ -9,7 +9,7 @@ This spec covers all 15 screens a builder needs. Component props/variants are co
 1. **No mandatory review-confirmation gate.** "Mark complete" on a discipline task completes it directly (subject to required-document + dependency gating). `AWAITING_REVIEW` is an *optional* hand-set status an assignee/lead may choose from the status control when work needs eyes before completion — it is never an enforced step between "Mark complete" and `COMPLETED`. Ignore any "Confirm complete / Send back" flow described below.
 2. **Upload limits ARE enforced** server-side: 25 MB per file, magic-number-verified whitelist (PDF, PNG, JPG, WebP, XLSX/DOCX/PPTX/ZIP, CSV/TXT, DWG). The dropzone must state "PDF, Office, images, CSV, DWG or ZIP — up to 25 MB" and surface the server's plain-English rejection.
 3. **New users**: the Admin sets (or generates) an initial password shown once at creation. No SSO/AD in this version (architecture leaves room for Microsoft identity later).
-4. Document delete promotes the previous revision to Latest, and deleting the only revision of a required document reopens that checklist item — as specified below (kept).
+4. **REVISED (golden rule):** individual document VERSIONS can never be deleted — the revision history is append-only, no exceptions. Only a whole document can be soft-deleted (Admin/PM), which keeps its version rows for audit and reopens any required-document checklist item it satisfied. Ignore any "deleting the Latest rev promotes the previous one" flow below.
 5. PM sees a read-only Disciplines list in Admin; only ADMIN gets Users (kept).
 6. Gantt dependency arrows: out of scope this version (kept).
 

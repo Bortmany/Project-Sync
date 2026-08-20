@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { updateProject } from "@/components/actions";
+import { ProjectActivity } from "@/components/activity/activity-feeds";
 import { ProjectStatusBadge } from "@/components/projects/projects-view";
 import { ProjectTasksTab } from "@/components/projects/project-tasks-tab";
 import { ProjectTeamTab } from "@/components/projects/project-team-tab";
@@ -235,7 +236,7 @@ export function ProjectView({ projectId }: { projectId: string }) {
           {
             id: "activity",
             label: "Activity",
-            content: <EmptyState message="Coming in a later milestone." />,
+            content: <ProjectActivity projectId={data.id} />,
           },
         ]}
       />

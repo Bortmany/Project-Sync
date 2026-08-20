@@ -76,6 +76,8 @@ In practice:
   inside a `--create-only` migration folder. Never `prisma db push` in this repo.
 - **The schema is FROZEN after Milestone 1.** Milestones 2–5 must not add, remove or alter a model,
   field, enum value or index. If something is genuinely missing, stop and ask the main session.
+- Main-session-approved amendments so far: `20260820180500_dependency_successor_index`
+  (`@@index([successorId])` on TaskDependency — completion gating queries that direction).
 
 ## Route and DTO contract (Milestones 2–5)
 
@@ -91,9 +93,15 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/tasks/[id]` | GET | — | `MainTaskDTO` |
 | `/api/tasks/[id]/gantt` | GET | — | `GanttDTO` |
 | `/api/tasks/[id]/documents` | GET | — | `DocumentDTO[]` |
-| `/api/tasks/[id]/activity` | GET | — | `ActivityItemDTO[]` |
-| `/api/tasks/[id]/comments` | GET | — | `CommentDTO[]` |
+| `/api/tasks/[id]/activity` | GET | — | `ActivityItemDTO[]` (newest first; includes its discipline tasks' rows) |
+| `/api/tasks/[id]/comments` | GET | — | `CommentDTO[]` (oldest first, each with an added `isDeleted` tombstone flag) |
 | `/api/discipline-tasks/[id]` | GET | — | `DisciplineTaskDTO` |
+| `/api/discipline-tasks/[id]/comments` | GET | — | `CommentDTO[]` (oldest first, each with an added `isDeleted` tombstone flag) |
+| `/api/discipline-tasks/[id]/activity` | GET | — | `ActivityItemDTO[]` (newest first) |
+| `/api/projects/[id]/activity` | GET | — | `ActivityItemDTO[]` (newest first, 100 max) |
+| `/api/discipline-tasks/[id]/documents` | GET | — | `DocumentDTO[]` |
+| `/api/projects/[id]/documents` | GET | — | `DocumentDTO[]` (live documents, 200 newest first) |
+| `/api/documents/[id]/versions` | GET | — | `DocumentVersionDTO[]` (every revision, newest first) |
 | `/api/disciplines` | GET | — | `DisciplineDTO[]` (the catalogue, any signed-in person) |
 | `/api/users` | GET | query: `q` (optional name or email fragment) | `UserDTO[]` (active people, 50 max) |
 | `/api/notifications` | GET | — | `NotificationDTO[]` |
@@ -129,6 +137,9 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `addDependency` | `AddDependencyInput` | `ActionResult<DisciplineTaskDTO>` |
 | `removeDependency` | `AddDependencyInput` | `ActionResult<DisciplineTaskDTO>` |
 | `createComment` | `CreateCommentInput` | `ActionResult<CommentDTO>` |
+| `editComment` | `{ id, body }` | `ActionResult<CommentDTO>` |
+| `deleteComment` | `{ id }` | `ActionResult<{ removed: true }>` (soft delete — the thread keeps a tombstone) |
+| `softDeleteDocument` (ADMIN / PM; never deletes a revision) | `{ id }` | `ActionResult<{ deleted: true }>` |
 | `markNotificationRead` | `{ id }` | `ActionResult<NotificationDTO>` |
 | `markAllNotificationsRead` | — | `ActionResult<{ count: number }>` |
 | `createUser` | `CreateUserInput` | `ActionResult<UserDTO>` |

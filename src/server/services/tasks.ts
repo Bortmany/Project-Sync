@@ -219,6 +219,7 @@ export async function updateMainTask(actor: ActorContext, input: UpdateMainTaskI
   const existing = await loadMainTask(input.id);
   assertCan(actor, "EDIT_MAIN_TASK", { projectId: existing.projectId });
   if (input.ownerId) await assertOnProject(existing.projectId, input.ownerId, "owner");
+  assertDatesOrdered(input.startDate ?? existing.startDate, input.deadline ?? existing.deadline);
 
   await prisma.$transaction(async (tx) => {
     const updated = await tx.mainTask.update({
@@ -438,6 +439,7 @@ export async function updateDisciplineTask(
   if (editingAnythingElse) {
     assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, disciplineId: existing.disciplineId });
   }
+  assertDatesOrdered(input.startDate ?? existing.startDate, input.deadline ?? existing.deadline);
 
   await prisma.$transaction(async (tx) => {
     const updated = await tx.disciplineTask.update({
@@ -592,18 +594,35 @@ export async function completeDisciplineTask(
 
   if (existing.status === "COMPLETED") return buildDisciplineTaskDTO(existing.id);
 
-  const check = canCompleteDisciplineTask({
-    requiredDocs: existing.requiredDocuments.map((doc) => ({
-      isMandatory: doc.isMandatory,
-      documentId: doc.documentId,
-    })),
-    unmetDependencies: await unmetDependencyTitles(existing.id),
-  });
-  if (!check.ok) {
-    throw new ServiceError(`This task cannot be completed yet. ${check.blockers.join(" ")}`);
-  }
-
   await prisma.$transaction(async (tx) => {
+    // The gate is judged INSIDE the transaction, after the parent lock, so a document
+    // removed or a predecessor reopened in flight can never slip a completion through.
+    await lockMainTask(tx, existing.mainTaskId);
+
+    const fresh = await tx.disciplineTask.findUniqueOrThrow({
+      where: { id: existing.id },
+      include: { requiredDocuments: true },
+    });
+    if (fresh.status === "COMPLETED") return;
+
+    const unmet = await tx.taskDependency.findMany({
+      where: {
+        successorId: existing.id,
+        predecessor: { status: { not: "COMPLETED" }, ...notDeleted },
+      },
+      select: { predecessor: { select: { title: true } } },
+    });
+    const check = canCompleteDisciplineTask({
+      requiredDocs: fresh.requiredDocuments.map((doc) => ({
+        isMandatory: doc.isMandatory,
+        documentId: doc.documentId,
+      })),
+      unmetDependencies: unmet.map((edge) => edge.predecessor.title),
+    });
+    if (!check.ok) {
+      throw new ServiceError(`This task cannot be completed yet. ${check.blockers.join(" ")}`);
+    }
+
     await tx.disciplineTask.update({
       where: { id: existing.id },
       data: { status: "COMPLETED", completedAt: new Date(), completedById: actor.userId },
@@ -766,11 +785,13 @@ export async function updateTaskDates(
   if (input.kind === "MAIN") {
     const existing = await loadMainTask(input.id);
     assertCan(actor, "EDIT_MAIN_TASK", { projectId: existing.projectId });
+    const nextStart = input.startDate === undefined ? existing.startDate : input.startDate;
+    assertDatesOrdered(nextStart, input.deadline);
 
     await prisma.$transaction(async (tx) => {
       await tx.mainTask.update({
         where: { id: existing.id },
-        data: { startDate: input.startDate ?? null, deadline: input.deadline },
+        data: { startDate: nextStart, deadline: input.deadline },
       });
       await appendActivity(tx, {
         actorId: actor.userId,
@@ -792,11 +813,13 @@ export async function updateTaskDates(
   const existing = await loadDisciplineTask(input.id);
   const projectId = existing.mainTask.projectId;
   assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, disciplineId: existing.disciplineId });
+  const nextStart = input.startDate === undefined ? existing.startDate : input.startDate;
+  assertDatesOrdered(nextStart, input.deadline);
 
   await prisma.$transaction(async (tx) => {
     await tx.disciplineTask.update({
       where: { id: existing.id },
-      data: { startDate: input.startDate ?? null, deadline: input.deadline },
+      data: { startDate: nextStart, deadline: input.deadline },
     });
     await appendActivity(tx, {
       actorId: actor.userId,
@@ -807,7 +830,7 @@ export async function updateTaskDates(
       summary: `${actor.name} moved the dates for "${existing.title}"`,
       metadata: {
         before: { startDate: existing.startDate, deadline: existing.deadline },
-        after: { startDate: input.startDate ?? null, deadline: input.deadline },
+        after: { startDate: nextStart, deadline: input.deadline },
       },
     });
   });
@@ -820,6 +843,17 @@ export async function updateTaskDates(
 /* ------------------------------------------------------------------ */
 
 /**
+ * Serializes every transaction that changes a main task's discipline tasks: the row lock
+ * makes concurrent completions/reopens queue up, so each derivation sees the other's commit.
+ */
+export async function lockMainTask(
+  tx: Prisma.TransactionClient,
+  mainTaskId: string,
+): Promise<void> {
+  await tx.$queryRaw`SELECT id FROM "MainTask" WHERE id = ${mainTaskId} FOR UPDATE`;
+}
+
+/**
  * Recalculates a main task's cached status and progress from its live discipline tasks.
  * Always called inside the transaction of the change that caused it — the two never drift apart.
  * The soft-delete filter is applied here directly because the helpers in db.ts cannot join a transaction.
@@ -830,6 +864,8 @@ export async function recomputeMainTask(
   actor: ActorContext,
   projectId: string,
 ): Promise<{ status: TaskStatusName; progressPct: number }> {
+  // Belt and braces: harmless if the caller already holds the lock, decisive if it doesn't.
+  await lockMainTask(tx, mainTaskId);
   const before = await tx.mainTask.findUniqueOrThrow({
     where: { id: mainTaskId },
     select: { title: true, status: true, progressPct: true },
@@ -1134,6 +1170,7 @@ async function enabledDisciplines(projectId: string): Promise<Set<string>> {
 async function assertOnProject(projectId: string, userId: string, what: "owner" | "assignee"): Promise<void> {
   const member = await prisma.projectMember.findUnique({
     where: { projectId_userId: { projectId, userId } },
+    include: { user: { select: { isActive: true } } },
   });
   if (!member) {
     throw new ServiceError(
@@ -1141,6 +1178,18 @@ async function assertOnProject(projectId: string, userId: string, what: "owner" 
         ? "The task owner has to be on the project. Add them as a member first."
         : "You can only assign work to someone on the project. Add them as a member first.",
     );
+  }
+  if (!member.user.isActive) {
+    throw new ServiceError(
+      "That person's account is deactivated — work given to them would sit unseen. Pick someone active.",
+    );
+  }
+}
+
+/** The resulting pair of dates must make sense whichever half of it was edited. */
+function assertDatesOrdered(startDate: Date | null | undefined, deadline: Date): void {
+  if (startDate && startDate > deadline) {
+    throw new ServiceError("A task cannot end before it starts.");
   }
 }
 

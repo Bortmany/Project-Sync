@@ -12,6 +12,8 @@ import {
   overrideMainTaskStatus,
   updateMainTask,
 } from "@/components/actions";
+import { MainTaskActivity } from "@/components/activity/activity-feeds";
+import { MainTaskComments } from "@/components/comments/comment-list";
 import { fieldError, useAction } from "@/components/hooks/use-action";
 import {
   isManager,
@@ -410,6 +412,10 @@ export function MainTaskView({ taskId }: { taskId: string }) {
 
   const data = task.data;
   const canManage = isManager(me.data);
+  const mentionable = (project.data?.members ?? []).map((member) => ({
+    userId: member.userId,
+    userName: member.userName,
+  }));
 
   return (
     <div className="space-y-5">
@@ -510,12 +516,18 @@ export function MainTaskView({ taskId }: { taskId: string }) {
               {
                 id: "comments",
                 label: "Comments",
-                content: <EmptyState message="Coming in a later milestone." />,
+                content: (
+                  <MainTaskComments
+                    mainTaskId={data.id}
+                    projectId={data.projectId}
+                    members={mentionable}
+                  />
+                ),
               },
               {
                 id: "activity",
                 label: "Activity",
-                content: <EmptyState message="Coming in a later milestone." />,
+                content: <MainTaskActivity mainTaskId={data.id} />,
               },
             ]}
           />

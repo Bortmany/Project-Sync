@@ -17,6 +17,8 @@ export {
   clearOverride,
 } from "@/server/actions/main-tasks";
 
+export { createComment, editComment, deleteComment } from "@/server/actions/comments";
+
 export {
   createDisciplineTask,
   updateDisciplineTask,

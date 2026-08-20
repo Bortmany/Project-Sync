@@ -12,6 +12,8 @@ import {
   updateDisciplineTask,
   updateDisciplineTaskStatus,
 } from "@/components/actions";
+import { DisciplineTaskActivity } from "@/components/activity/activity-feeds";
+import { DisciplineTaskComments } from "@/components/comments/comment-list";
 import { useAction } from "@/components/hooks/use-action";
 import { isLeadOrAbove, useDisciplineTask, useMe, useProject } from "@/components/hooks/use-api";
 import { formatDate } from "@/components/format";
@@ -80,6 +82,10 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
   const teammates = (project.data?.members ?? []).filter(
     (member) => member.disciplineId === data.disciplineId,
   );
+  const mentionable = (project.data?.members ?? []).map((member) => ({
+    userId: member.userId,
+    userName: member.userName,
+  }));
 
   function setStatus(status: TaskStatusName, note?: string) {
     run(() => updateDisciplineTaskStatus({ id: data.id, status, note }), {
@@ -261,9 +267,12 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
                 id: "comments",
                 label: "Comments",
                 content: (
-                  <p className="py-6 text-center text-sm text-[var(--olng-text)]">
-                    Coming in a later milestone.
-                  </p>
+                  <DisciplineTaskComments
+                    disciplineTaskId={data.id}
+                    mainTaskId={data.mainTaskId}
+                    projectId={data.projectId}
+                    members={mentionable}
+                  />
                 ),
               },
               {
@@ -274,6 +283,11 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
                     Coming in a later milestone.
                   </p>
                 ),
+              },
+              {
+                id: "activity",
+                label: "Activity",
+                content: <DisciplineTaskActivity disciplineTaskId={data.id} />,
               },
             ]}
           />

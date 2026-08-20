@@ -11,6 +11,8 @@ import { prisma } from "@/lib/db";
 import { effectiveStatus, isOverdue } from "@/lib/progress";
 import type { RoleName, TaskStatusName } from "@/lib/zod-schemas";
 import { actorForUser, type ActorContext } from "@/server/actor";
+import { seedComments } from "./seed-comments";
+import { seedDocuments } from "./seed-documents";
 import { createProject } from "@/server/services/projects";
 import {
   addDependency,
@@ -262,7 +264,14 @@ async function main() {
     await report();
     return;
   }
-  if (existing) await resetDemoProject(existing.id);
+  if (existing) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "SEED_RESET deletes audit and document history and is refused in production.",
+      );
+    }
+    await resetDemoProject(existing.id);
+  }
 
   const adminActor = await actorForUser(userIdByEmail.get(ADMIN_EMAIL) as string);
   const actors = new Map<string, ActorContext>();
@@ -363,6 +372,9 @@ async function main() {
       });
     }
   }
+
+  await seedDocuments({ projectId: project.id, userIdByEmail });
+  await seedComments({ projectId: project.id, userIdByEmail, actorFor });
 
   await report();
 }

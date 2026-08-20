@@ -48,7 +48,6 @@ export async function listUsers(query?: string): Promise<UserDTO[]> {
       disciplineId: true,
       jobTitle: true,
       isActive: true,
-      lastLoginAt: true,
       createdAt: true,
       discipline: { select: { code: true } },
     },
@@ -63,7 +62,6 @@ export async function listUsers(query?: string): Promise<UserDTO[]> {
     disciplineCode: row.discipline?.code ?? null,
     jobTitle: row.jobTitle,
     isActive: row.isActive,
-    lastLoginAt: row.lastLoginAt,
     createdAt: row.createdAt,
   }));
 

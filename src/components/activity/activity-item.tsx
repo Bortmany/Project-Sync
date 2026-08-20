@@ -30,9 +30,13 @@ export function activityHref(item: ActivityItemDTO): string | null {
 export function ActivityItem({ item }: { item: ActivityItemDTO }) {
   const href = activityHref(item);
 
+  // Audit summaries are written as full sentences ("Layla al-Riyami created…"), so the name is only
+  // added in front when the summary does not already start with it.
+  const repeatsName = Boolean(item.actorName) && item.summary.startsWith(item.actorName as string);
+
   const body: ReactNode = (
     <span className="text-sm text-[var(--olng-text)]">
-      {item.actorName ? (
+      {item.actorName && !repeatsName ? (
         <span className="font-semibold text-[var(--olng-navy)]">{item.actorName} </span>
       ) : null}
       {item.summary}

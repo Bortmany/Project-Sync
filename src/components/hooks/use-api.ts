@@ -7,6 +7,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { z } from "zod";
 import {
   ActivityItemDTO,
+  CommentDTO,
   DashboardDTO,
   DisciplineDTO,
   DisciplineTaskDTO,
@@ -28,6 +29,14 @@ export const MeDTO = UserDTO.pick({
   jobTitle: true,
 });
 export type MeDTO = z.infer<typeof MeDTO>;
+
+/**
+ * A comment as a thread row: the shared CommentDTO plus the flag that says "this one was removed",
+ * which the list renders as a muted tombstone. The server adds the same field in
+ * src/server/services/comments.ts.
+ */
+export const CommentRowDTO = CommentDTO.extend({ isDeleted: z.boolean() });
+export type CommentRowDTO = z.infer<typeof CommentRowDTO>;
 
 async function readRoute<T>(path: string, schema: z.ZodType<T>): Promise<T> {
   const response = await fetch(path, {
@@ -188,5 +197,40 @@ export function useDisciplineTask(taskId: string): UseQueryResult<DisciplineTask
   return useQuery({
     queryKey: ["discipline-task", taskId],
     queryFn: () => readRoute(`/api/discipline-tasks/${taskId}`, DisciplineTaskDTO),
+  });
+}
+
+export function useDisciplineTaskActivity(taskId: string): UseQueryResult<ActivityItemDTO[]> {
+  return useQuery({
+    queryKey: ["discipline-task", taskId, "activity"],
+    queryFn: () =>
+      readRoute(`/api/discipline-tasks/${taskId}/activity`, z.array(ActivityItemDTO)),
+  });
+}
+
+export function useProjectActivity(projectId: string): UseQueryResult<ActivityItemDTO[]> {
+  return useQuery({
+    queryKey: ["project", projectId, "activity"],
+    queryFn: () => readRoute(`/api/projects/${projectId}/activity`, z.array(ActivityItemDTO)),
+    enabled: projectId.length > 0,
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Comment threads                                                     */
+/* ------------------------------------------------------------------ */
+
+export function useMainTaskComments(taskId: string): UseQueryResult<CommentRowDTO[]> {
+  return useQuery({
+    queryKey: ["task", taskId, "comments"],
+    queryFn: () => readRoute(`/api/tasks/${taskId}/comments`, z.array(CommentRowDTO)),
+  });
+}
+
+export function useDisciplineTaskComments(taskId: string): UseQueryResult<CommentRowDTO[]> {
+  return useQuery({
+    queryKey: ["discipline-task", taskId, "comments"],
+    queryFn: () =>
+      readRoute(`/api/discipline-tasks/${taskId}/comments`, z.array(CommentRowDTO)),
   });
 }
