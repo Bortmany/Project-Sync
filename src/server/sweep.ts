@@ -57,7 +57,35 @@ export async function runSweepOnce(now: Date = new Date()): Promise<SweepResult>
   );
 }
 
-type SweepGlobal = { nexusSweepStarted?: boolean };
+type SweepGlobal = { nexusSweepStarted?: boolean; nexusSweepLast?: SweepReport };
+
+/** What /api/health says about the sweep. Reporting only — nothing in the app reads it. */
+export type SweepReport = {
+  scheduled: boolean;
+  lastRunAt: string | null;
+  lastResult: "sent" | "nothing to send" | "skipped — another instance" | "failed" | null;
+};
+
+/** The sweep's state in this process, for /api/health. Per-process by design: a report, not a fact. */
+export function sweepStatus(): SweepReport {
+  const scope = globalThis as unknown as SweepGlobal;
+  return (
+    scope.nexusSweepLast ?? {
+      scheduled: Boolean(scope.nexusSweepStarted),
+      lastRunAt: null,
+      lastResult: null,
+    }
+  );
+}
+
+function recordRun(result: SweepReport["lastResult"]): void {
+  const scope = globalThis as unknown as SweepGlobal;
+  scope.nexusSweepLast = {
+    scheduled: Boolean(scope.nexusSweepStarted),
+    lastRunAt: new Date().toISOString(),
+    lastResult: result,
+  };
+}
 
 /**
  * Starts the hourly sweep — once per process, never during a build, never when SWEEP_DISABLED=1.
@@ -78,12 +106,18 @@ export function startSweep(): void {
   const run = () => {
     void runSweepOnce()
       .then((result) => {
-        if (result.ran) {
-          const total = result.counts.approaching + result.counts.overdue;
-          if (total > 0) logger.info("Deadline sweep sent notifications", { ...result.counts });
+        if (!result.ran) {
+          recordRun("skipped — another instance");
+          return;
         }
+        const total = result.counts.approaching + result.counts.overdue;
+        recordRun(total > 0 ? "sent" : "nothing to send");
+        if (total > 0) logger.info("Deadline sweep sent notifications", { ...result.counts });
       })
-      .catch((error) => logger.error("The deadline sweep could not finish", { error }));
+      .catch((error) => {
+        recordRun("failed");
+        logger.error("The deadline sweep could not finish", { error });
+      });
   };
 
   setTimeout(run, FIRST_RUN_DELAY_MS).unref?.();

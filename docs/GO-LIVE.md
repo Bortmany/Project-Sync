@@ -88,6 +88,12 @@ and (for `SESSION_SECRET`) accept that everyone is signed out.
    - `https://<domain>/api/health` returns `{"ok":true,...}` and the `sentry` line reads what you
      expect — it names both channels separately, for example
      `"sentry":{"server":"configured","browser":"dormant"}`.
+   - The same answer carries a `sweep` line about the hourly deadline sweep in that copy of the app,
+     for example `"sweep":{"scheduled":true,"lastRunAt":"…","lastResult":"nothing to send"}`. It is
+     information only: the sweep sends reminders, and "overdue" is worked out fresh on every screen,
+     so a skipped or failed sweep never makes the app unhealthy. `lastRunAt` stays `null` for the
+     first minute after a deploy, and `"skipped — another instance"` is the normal, correct answer
+     on every copy but one when the app runs on several.
    - The deploy logs contain no "Project Nexus cannot start in production" line. If they do, the
      message names exactly which variable is wrong.
    - `curl -sD - -o /dev/null https://<domain>/login` shows `Content-Security-Policy`,

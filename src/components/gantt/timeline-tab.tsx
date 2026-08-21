@@ -3,10 +3,18 @@
 
 "use client";
 
-import { GanttChart } from "@/components/gantt/gantt-chart";
+import dynamic from "next/dynamic";
 import { useMainTaskSchedule, useMe, useProject, useProjectGantt } from "@/components/hooks/use-api";
 import { EmptyState, ErrorBanner, SkeletonRows } from "@/components/ui";
 import type { GanttDTO, ProjectDTO } from "@/lib/zod-schemas";
+
+// The chart is the heaviest thing in the app (a whole hand-drawn SVG timeline with dragging), and
+// it lives behind a tab most visits never open. Loading it only when the tab is actually shown
+// keeps it out of the project and task pages' first download.
+const GanttChart = dynamic(
+  () => import("@/components/gantt/gantt-chart").then((module) => module.GanttChart),
+  { ssr: false, loading: () => <SkeletonRows rows={6} /> },
+);
 
 const LOAD_ERROR = "Couldn't load the schedule. Try refreshing the page.";
 

@@ -363,6 +363,8 @@ model Notification {
   actor User? @relation("NotificationActor", fields: [actorId], references: [id])
 
   @@index([userId, readAt, createdAt(sort: Desc)])
+  /// The hourly sweep asks "have I already told this person about this task?" by type + link.
+  @@index([type, linkUrl])
 }
 
 /// APPEND-ONLY audit trail. Rows are only ever inserted — no update or delete path exists.

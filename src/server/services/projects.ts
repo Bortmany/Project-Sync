@@ -63,11 +63,23 @@ export async function buildProjectListItems(projects: ProjectRow[]): Promise<Pro
     include: { discipline: true },
   });
 
-  const taskLists = await Promise.all(projects.map((project) => activeMainTasks(project.id)));
+  // Cross-project read: the soft-delete filter from db.ts is applied by hand because the
+  // per-project helper would mean one query per project on this page (the dashboard does the same).
+  const allTasks = await prisma.mainTask.findMany({
+    where: { projectId: { in: projectIds }, ...notDeleted },
+    orderBy: { deadline: "asc" },
+    select: { projectId: true, deadline: true, status: true, statusOverride: true, progressPct: true },
+  });
+  const tasksByProject = new Map<string, typeof allTasks>();
+  for (const task of allTasks) {
+    const list = tasksByProject.get(task.projectId) ?? [];
+    list.push(task);
+    tasksByProject.set(task.projectId, list);
+  }
   const now = new Date();
 
-  const items = projects.map((project, index): ProjectListItemDTO => {
-    const tasks = taskLists[index];
+  const items = projects.map((project): ProjectListItemDTO => {
+    const tasks = tasksByProject.get(project.id) ?? [];
     const completed = tasks.filter(
       (task) => effectiveStatus(task.status, task.statusOverride) === "COMPLETED",
     ).length;

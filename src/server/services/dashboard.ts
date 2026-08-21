@@ -66,9 +66,12 @@ export async function getDashboardForActor(actor: ActorContext): Promise<Dashboa
       take: UPCOMING_LIMIT,
       include: { mainTask: { select: { projectId: true } } },
     }),
-    prisma.disciplineTask.findMany({
+    // Counted in the database, not in Node: the per-discipline bars only need totals, and pulling
+    // every discipline task of every project into memory to count them would grow without limit.
+    prisma.disciplineTask.groupBy({
+      by: ["disciplineId", "status"],
       where: { ...notDeleted, mainTask: { projectId: { in: projectIds }, ...notDeleted } },
-      select: { status: true, discipline: true },
+      _count: { _all: true },
     }),
     recentActivityForProjects(projectIds, 15),
   ]);
@@ -90,22 +93,31 @@ export async function getDashboardForActor(actor: ActorContext): Promise<Dashboa
     ).length,
   };
 
+  // The discipline catalogue is a handful of rows; only the ones with work on these projects.
+  const disciplines = await prisma.discipline.findMany({
+    where: { id: { in: [...new Set(disciplineRows.map((row) => row.disciplineId))] } },
+    select: { id: true, code: true, name: true, colorHex: true, sortOrder: true },
+  });
+
   const disciplineTotals = new Map<
     string,
     { code: string; name: string; colorHex: string; sortOrder: number; total: number; done: number }
   >();
-  for (const row of disciplineRows) {
-    const entry = disciplineTotals.get(row.discipline.id) ?? {
-      code: row.discipline.code,
-      name: row.discipline.name,
-      colorHex: row.discipline.colorHex,
-      sortOrder: row.discipline.sortOrder,
+  for (const discipline of disciplines) {
+    disciplineTotals.set(discipline.id, {
+      code: discipline.code,
+      name: discipline.name,
+      colorHex: discipline.colorHex,
+      sortOrder: discipline.sortOrder,
       total: 0,
       done: 0,
-    };
-    entry.total += 1;
-    if (row.status === "COMPLETED") entry.done += 1;
-    disciplineTotals.set(row.discipline.id, entry);
+    });
+  }
+  for (const row of disciplineRows) {
+    const entry = disciplineTotals.get(row.disciplineId);
+    if (!entry) continue;
+    entry.total += row._count._all;
+    if (row.status === "COMPLETED") entry.done += row._count._all;
   }
 
   const upcoming = [

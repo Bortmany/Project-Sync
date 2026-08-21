@@ -76,8 +76,15 @@ In practice:
   inside a `--create-only` migration folder. Never `prisma db push` in this repo.
 - **The schema is FROZEN after Milestone 1.** Milestones 2–5 must not add, remove or alter a model,
   field, enum value or index. If something is genuinely missing, stop and ask the main session.
-- Main-session-approved amendments so far: `20260820180500_dependency_successor_index`
-  (`@@index([successorId])` on TaskDependency — completion gating queries that direction).
+- Main-session-approved amendments so far:
+  - `20260820180500_dependency_successor_index` (`@@index([successorId])` on TaskDependency —
+    completion gating queries that direction).
+  - `20260821070011_notification_sweep_lookup_index` (`@@index([type, linkUrl])` on Notification —
+    the hourly sweep's "have I already sent this?" check filtered on those two columns with no
+    index, i.e. a full scan of the fastest-growing table every hour).
+- **Careful with `prisma migrate dev`:** the trigram search indexes are hand-written raw SQL that the
+  Prisma schema does not know about, so the generated migration will try to DROP them. Delete those
+  `DropIndex` lines from the generated `migration.sql` before it goes anywhere near a real database.
 
 ## Route and DTO contract (Milestones 2–5)
 
