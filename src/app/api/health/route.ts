@@ -1,8 +1,10 @@
-// Health check: database reachable, uploads folder writable, and whether error tracking is switched on.
+// Health check: database reachable, uploads folder writable, and whether each error-tracking
+// channel (server and browser) is switched on.
 
 import { NextResponse } from "next/server";
 import { access, constants, mkdir } from "node:fs/promises";
 import { pingDatabase } from "@/lib/db";
+import { sentryStatus } from "@/lib/error-reporting";
 import { uploadsDir } from "@/lib/upload";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +30,7 @@ export async function GET() {
       status: ok ? "ok" : "degraded",
       db: dbUp ? "up" : "down",
       dataDir: dirWritable ? "writable" : "not writable",
-      sentry: process.env.SENTRY_DSN ? "configured" : "dormant",
+      sentry: sentryStatus(),
       uptime: Math.round(process.uptime()),
     },
     { status: ok ? 200 : 503 },

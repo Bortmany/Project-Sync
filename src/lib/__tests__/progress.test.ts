@@ -121,16 +121,22 @@ describe("effectiveStatus", () => {
 describe("isOverdue", () => {
   const now = new Date("2026-08-20T12:00:00Z");
 
-  it("is overdue once the deadline has passed and the work is unfinished", () => {
-    expect(isOverdue(new Date("2026-08-19T12:00:00Z"), "IN_PROGRESS", now)).toBe(true);
+  it("is overdue once the deadline day has fully passed and the work is unfinished", () => {
+    expect(isOverdue(new Date("2026-08-19T00:00:00Z"), "IN_PROGRESS", now)).toBe(true);
   });
 
-  it("is not overdue on the exact deadline moment", () => {
-    expect(isOverdue(new Date("2026-08-20T12:00:00Z"), "IN_PROGRESS", now)).toBe(false);
+  it("is not overdue at any point during the deadline day itself", () => {
+    // Deadlines are stored at UTC midnight and mean "by the end of that day": a task due
+    // 20 Aug is not late at noon on 20 Aug.
+    expect(isOverdue(new Date("2026-08-20T00:00:00Z"), "IN_PROGRESS", now)).toBe(false);
+    expect(isOverdue(new Date("2026-08-20T00:00:00Z"), "NOT_STARTED", now)).toBe(false);
   });
 
-  it("is overdue one millisecond after the deadline", () => {
-    expect(isOverdue(new Date("2026-08-20T11:59:59.999Z"), "NOT_STARTED", now)).toBe(true);
+  it("turns overdue the moment the day after the deadline begins", () => {
+    const firstMomentOfNextDay = new Date("2026-08-20T00:00:00Z");
+    expect(isOverdue(new Date("2026-08-19T00:00:00Z"), "NOT_STARTED", firstMomentOfNextDay)).toBe(true);
+    const lastMomentOfDeadlineDay = new Date("2026-08-19T23:59:59.999Z");
+    expect(isOverdue(new Date("2026-08-19T00:00:00Z"), "NOT_STARTED", lastMomentOfDeadlineDay)).toBe(false);
   });
 
   it("is never overdue once the task is complete, even if finished late", () => {
@@ -139,16 +145,6 @@ describe("isOverdue", () => {
 
   it("is not overdue before the deadline", () => {
     expect(isOverdue(new Date("2026-09-30T00:00:00Z"), "BLOCKED", now)).toBe(false);
-  });
-
-  it("is not overdue when it is due later today", () => {
-    // The rule is a moment, not a day: a task due at 5pm is not late at noon.
-    expect(isOverdue(new Date("2026-08-20T17:00:00Z"), "NOT_STARTED", now)).toBe(false);
-    expect(isOverdue(new Date("2026-08-20T23:59:59.999Z"), "IN_PROGRESS", now)).toBe(false);
-  });
-
-  it("is overdue for something due earlier today", () => {
-    expect(isOverdue(new Date("2026-08-20T09:00:00Z"), "IN_PROGRESS", now)).toBe(true);
   });
 
   it("is overdue whatever the open status says, including awaiting review", () => {

@@ -2,9 +2,15 @@
 
 "use client";
 
+import { useEffect } from "react";
 import { Button, Card } from "@/components/ui";
+import { reportClientError } from "@/lib/report-client-error";
 
-export default function AppError({ reset }: { error: Error; reset: () => void }) {
+export default function AppError({ error, reset }: { error: Error; reset: () => void }) {
+  useEffect(() => {
+    reportClientError(error);
+  }, [error]);
+
   return (
     <Card title="Something went wrong">
       <p className="text-sm text-[var(--olng-text)]">

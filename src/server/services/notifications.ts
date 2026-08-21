@@ -137,10 +137,13 @@ export async function sweepDeadlineNotifications(
   now: Date = new Date(),
 ): Promise<SweepCounts> {
   const soon = new Date(now.getTime() + APPROACHING_WINDOW_MS);
+  // Deadlines mean "by the end of that day" (see isOverdue in src/lib/progress.ts), so a task is
+  // only overdue once its deadline day has fully passed; until then it still counts as approaching.
+  const overdueCutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
   const [approachingCandidates, overdueCandidates] = await Promise.all([
-    candidates(tx, { gte: now, lte: soon }),
-    candidates(tx, { lt: now }),
+    candidates(tx, { gt: overdueCutoff, lte: soon }),
+    candidates(tx, { lte: overdueCutoff }),
   ]);
 
   const approaching = await writeNew(tx, "DEADLINE_APPROACHING", approachingCandidates, now);

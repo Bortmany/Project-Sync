@@ -4,20 +4,21 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import argon2 from "argon2";
+import { assertSessionSecret } from "@/lib/boot-guards";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import type { RoleValue } from "@/lib/permissions";
 
 export const SESSION_COOKIE = "nexus_session";
 const SESSION_DAYS = 7;
-const MIN_SECRET_LENGTH = 32;
+
+// Production refuses to boot without a 32+ character SESSION_SECRET. Everything server-side reaches
+// this module, so the check cannot be skipped — it also runs during `next build`, which renders
+// pages and therefore needs the same secret. The DATA_DIR/volume half of the guards runs at server
+// start instead (src/instrumentation.ts), because no volume is mounted while the app is built.
+assertSessionSecret();
 
 const secret = process.env.SESSION_SECRET ?? "";
-if (process.env.NODE_ENV === "production" && secret.length < MIN_SECRET_LENGTH) {
-  throw new Error(
-    "SESSION_SECRET is missing or too short. Generate at least 32 random bytes before starting in production.",
-  );
-}
 
 /** Hashes the raw cookie token for storage — HMAC when a secret exists, plain SHA-256 in local development. */
 function hashToken(rawToken: string): string {

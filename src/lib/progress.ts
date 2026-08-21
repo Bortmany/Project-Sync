@@ -51,13 +51,20 @@ export function effectiveStatus(
   return override ?? derived;
 }
 
-/** Overdue is derived, never stored: past its deadline and not finished. */
+/** One day, in milliseconds — the grace the deadline day itself gets. */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Overdue is derived, never stored. Deadlines are saved at UTC midnight and mean "due by the end
+ * of that day", so a task only turns overdue once its whole deadline day has passed — a task due
+ * 30 Sep is not late at breakfast on 30 Sep.
+ */
 export function isOverdue(
   deadline: Date,
   status: TaskStatusValue,
   now: Date = new Date(),
 ): boolean {
-  return deadline.getTime() < now.getTime() && status !== "COMPLETED";
+  return deadline.getTime() + DAY_MS <= now.getTime() && status !== "COMPLETED";
 }
 
 export type CompletionCheckInput = {
