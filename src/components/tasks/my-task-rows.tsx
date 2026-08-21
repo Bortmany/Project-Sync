@@ -49,7 +49,7 @@ function QuickStatus({ task }: { task: MyTask }) {
       aria-label={`Status of ${task.title}`}
       value={task.status}
       disabled={pending}
-      className="w-36 shrink-0 py-1 text-xs"
+      className="w-32 shrink-0 py-1 text-xs sm:w-36"
       onChange={(event) =>
         run(
           () =>
@@ -78,13 +78,17 @@ function QuickStatus({ task }: { task: MyTask }) {
   );
 }
 
+/**
+ * One task row. On a phone the title takes the whole first line and the rest — status, priority,
+ * discipline, project and the date — wraps underneath, so nothing is pushed off the screen.
+ */
 function TaskRow({ task, rich }: { task: MyTask; rich: boolean }) {
   return (
-    <div className="flex min-h-11 items-center gap-3 rounded-[var(--radius)] px-2 py-2 hover:bg-[var(--page-bg)]">
+    <div className="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-2 rounded-[var(--radius)] px-2 py-2 hover:bg-[var(--page-bg)]">
       {rich ? <QuickStatus task={task} /> : <StatusBadge status={task.status} />}
       <Link
         href={`/discipline-tasks/${task.id}`}
-        className="min-w-0 flex-1 truncate text-sm font-semibold text-[var(--olng-navy)] hover:underline"
+        className="order-first w-full min-w-0 truncate text-sm font-semibold text-[var(--olng-navy)] hover:underline sm:order-none sm:w-auto sm:flex-1"
       >
         {task.title}
       </Link>
@@ -94,7 +98,7 @@ function TaskRow({ task, rich }: { task: MyTask; rich: boolean }) {
         {task.projectCode}
       </span>
       <span
-        className="w-24 shrink-0 text-right text-xs"
+        className="ml-auto shrink-0 text-right text-xs sm:ml-0 sm:w-24"
         style={{ color: task.isOverdue ? "var(--status-blocked)" : "var(--olng-text)" }}
       >
         {formatDate(task.deadline)}

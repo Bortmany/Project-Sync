@@ -433,7 +433,9 @@ export function MainTaskView({ taskId }: { taskId: string }) {
 
       <header className="space-y-3">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-xl font-semibold text-[var(--olng-blue)]">{data.title}</h1>
+          <h1 className="min-w-0 break-words text-xl font-semibold text-[var(--olng-blue)]">
+            {data.title}
+          </h1>
           <StatusBadge status={data.effectiveStatus} overridden={Boolean(data.statusOverride)} />
           {data.statusOverride ? (
             <span
@@ -466,7 +468,7 @@ export function MainTaskView({ taskId }: { taskId: string }) {
       </header>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
-        <div className="space-y-5">
+        <div className="min-w-0 space-y-5">
           <section className="space-y-3">
             <h2 className="text-sm font-semibold text-[var(--olng-navy)]">Discipline progress</h2>
 
@@ -478,18 +480,18 @@ export function MainTaskView({ taskId }: { taskId: string }) {
                   <li key={item.disciplineTaskId}>
                     <Link
                       href={`/discipline-tasks/${item.disciplineTaskId}`}
-                      className={`flex flex-wrap items-center gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-white p-3 hover:bg-[var(--page-bg)] ${
+                      className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[var(--radius)] border border-[var(--border)] bg-white p-3 hover:bg-[var(--page-bg)] ${
                         item.status === "BLOCKED" ? "border-l-4 border-l-[var(--status-blocked)]" : ""
                       }`}
                     >
                       <DisciplineDot colorHex={item.colorHex} code={item.code} showCode />
-                      <span className="min-w-40 flex-1 text-sm font-semibold text-[var(--olng-navy)]">
+                      <span className="w-full min-w-0 basis-full text-sm font-semibold text-[var(--olng-navy)] sm:w-auto sm:flex-1 sm:basis-40">
                         {item.title}
                       </span>
                       {item.assigneeName ? (
-                        <span className="inline-flex items-center gap-2 text-xs text-[var(--olng-text)]">
+                        <span className="inline-flex min-w-0 max-w-full items-center gap-2 text-xs text-[var(--olng-text)]">
                           <Avatar name={item.assigneeName} size={24} />
-                          {item.assigneeName}
+                          <span className="truncate">{item.assigneeName}</span>
                         </span>
                       ) : (
                         <span className="text-xs text-[var(--olng-gray)]">Unassigned</span>
@@ -542,7 +544,7 @@ export function MainTaskView({ taskId }: { taskId: string }) {
           />
         </div>
 
-        <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+        <aside className="min-w-0 space-y-4 lg:sticky lg:top-4 lg:self-start">
           <Card title="Details">
             <dl className="space-y-3 text-sm">
               <div>

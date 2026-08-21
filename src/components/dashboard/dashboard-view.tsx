@@ -100,10 +100,10 @@ export function DashboardView() {
                     className="flex min-h-9 items-center gap-3 rounded-[var(--radius)] px-1 hover:bg-[var(--page-bg)]"
                   >
                     <DisciplineDot colorHex={row.colorHex} code={row.code} />
-                    <span className="w-32 shrink-0 truncate text-sm text-[var(--olng-navy)]">
+                    <span className="w-24 shrink-0 truncate text-sm text-[var(--olng-navy)] sm:w-32">
                       {row.name}
                     </span>
-                    <span className="flex-1">
+                    <span className="min-w-0 flex-1">
                       <ProgressBar pct={row.pct} />
                     </span>
                   </Link>
@@ -142,7 +142,7 @@ export function DashboardView() {
                     href={
                       item.kind === "MAIN" ? `/tasks/${item.id}` : `/discipline-tasks/${item.id}`
                     }
-                    className="flex min-h-11 items-center gap-3 px-1 py-2 hover:bg-[var(--page-bg)]"
+                    className="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1 px-1 py-2 hover:bg-[var(--page-bg)]"
                   >
                     <span
                       className="w-16 shrink-0 text-sm font-semibold"
@@ -152,13 +152,15 @@ export function DashboardView() {
                     >
                       {formatShortDate(item.deadline)}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-sm text-[var(--olng-text)]">
+                    <span className="min-w-0 flex-1 basis-40 truncate text-sm text-[var(--olng-text)]">
                       {item.title}
                     </span>
-                    <span className="rounded-full bg-[var(--page-bg)] px-2 py-0.5 text-xs text-[var(--olng-text)]">
-                      {item.projectCode}
+                    <span className="flex shrink-0 items-center gap-2">
+                      <span className="rounded-full bg-[var(--page-bg)] px-2 py-0.5 text-xs text-[var(--olng-text)]">
+                        {item.projectCode}
+                      </span>
+                      <StatusBadge status={item.status} />
                     </span>
-                    <StatusBadge status={item.status} />
                   </Link>
                 </li>
               ))}

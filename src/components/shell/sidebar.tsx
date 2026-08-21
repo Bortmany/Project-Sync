@@ -1,42 +1,22 @@
-// Navy sidebar: 240px on desktop, an icon rail below 1024px. Admin links only appear for administrators.
+// Navy sidebar: 240px on large screens, an icon rail between the md and lg breakpoints, and hidden
+// altogether on phones — below md the menu button in the top bar opens the same list.
+// Admin links only appear for administrators.
 
 "use client";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  BellIcon,
-  DashboardIcon,
-  DisciplinesIcon,
-  PeopleIcon,
-  ProjectsIcon,
-  TasksIcon,
-} from "@/components/shell/icons";
+import { isCurrentNav, navItemsFor } from "@/components/shell/nav-items";
 import type { RoleName } from "@/lib/zod-schemas";
-
-type NavItem = { href: string; label: string; icon: React.ComponentType<{ size?: number }> };
-
-const MAIN_NAV: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: DashboardIcon },
-  { href: "/projects", label: "Projects", icon: ProjectsIcon },
-  { href: "/my-tasks", label: "My tasks", icon: TasksIcon },
-  { href: "/notifications", label: "Notifications", icon: BellIcon },
-];
-
-// Administrators only — nobody else sees these two rows at all.
-const ADMIN_NAV: NavItem[] = [
-  { href: "/admin/users", label: "Users", icon: PeopleIcon },
-  { href: "/admin/disciplines", label: "Disciplines", icon: DisciplinesIcon },
-];
 
 export function Sidebar({ role }: { role: RoleName }) {
   const pathname = usePathname();
-  const items = role === "ADMIN" ? [...MAIN_NAV, ...ADMIN_NAV] : MAIN_NAV;
+  const items = navItemsFor(role);
 
   return (
     <nav
       aria-label="Main"
-      className="flex w-16 shrink-0 flex-col gap-1 bg-[var(--olng-navy)] p-2 lg:w-60 lg:p-3"
+      className="hidden w-16 shrink-0 flex-col gap-1 bg-[var(--olng-navy)] p-2 md:flex lg:w-60 lg:p-3"
     >
       <div className="mb-4 px-2 py-3">
         <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-[var(--olng-sail)]">
@@ -47,7 +27,7 @@ export function Sidebar({ role }: { role: RoleName }) {
       </div>
 
       {items.map((item) => {
-        const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+        const active = isCurrentNav(pathname, item.href);
         const Icon = item.icon;
         return (
           <Link

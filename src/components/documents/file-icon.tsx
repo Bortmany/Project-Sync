@@ -107,7 +107,10 @@ function Glyph({ family }: { family: FileFamily }) {
 export function FileTypeIcon({ filename }: { filename: string }) {
   const family = familyOf(filename);
   return (
-    <span className="inline-flex shrink-0 items-center" style={{ color: FAMILY_COLOR[family] }}>
+    <span
+      className="relative inline-flex shrink-0 items-center"
+      style={{ color: FAMILY_COLOR[family] }}
+    >
       <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
         <path
           d="M4.5 1.5h6.5l4.5 4.5v12a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1z"

@@ -133,7 +133,9 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
           {data.disciplineName}
         </p>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-xl font-semibold text-[var(--olng-blue)]">{data.title}</h1>
+          <h1 className="min-w-0 break-words text-xl font-semibold text-[var(--olng-blue)]">
+            {data.title}
+          </h1>
           <StatusBadge status={data.status} />
           <PriorityFlag priority={data.priority} />
           {data.isMandatory ? (
@@ -195,7 +197,7 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
       ) : null}
 
       <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
-        <div className="max-w-3xl space-y-5">
+        <div className="min-w-0 max-w-3xl space-y-5">
           <Card title="What's required">
             <p className="text-sm text-[var(--olng-text)]">
               {data.description?.trim()
@@ -219,10 +221,13 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
             ) : (
               <ul className="divide-y divide-[var(--border)]">
                 {data.dependencies.map((dependency) => (
-                  <li key={dependency.id} className="flex items-center gap-3 py-2 text-sm">
+                  <li
+                    key={dependency.id}
+                    className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm"
+                  >
                     <Link
                       href={`/discipline-tasks/${dependency.id}`}
-                      className="flex-1 text-[var(--olng-blue)] hover:underline"
+                      className="min-w-0 flex-1 basis-40 text-[var(--olng-blue)] hover:underline"
                     >
                       {dependency.title}
                     </Link>
@@ -281,7 +286,8 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
               </Button>
               {!data.canComplete ? (
                 <p className="text-sm text-[var(--olng-text)]">
-                  You can&apos;t mark this complete yet: {data.blockers.join(", ")}.
+                  {/* Each blocker is already a full sentence with its own full stop — don't add another. */}
+                  You can&apos;t mark this complete yet: {data.blockers.join(" ")}
                 </p>
               ) : null}
             </div>
@@ -295,7 +301,7 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
           ) : null}
         </div>
 
-        <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+        <aside className="min-w-0 space-y-4 lg:sticky lg:top-4 lg:self-start">
           <Card title="Details">
             <dl className="space-y-3 text-sm">
               <div>

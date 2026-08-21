@@ -117,7 +117,7 @@ export function MyTasksView() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <FilterChips filters={dimensions} active={filters} onChange={setFilters} />
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <label className="text-xs text-[var(--olng-text)]" htmlFor="my-tasks-sort">
             Sort by
           </label>

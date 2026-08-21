@@ -92,3 +92,19 @@ export function SearchIcon({ size = 16, className }: IconProps) {
     </svg>
   );
 }
+
+export function MenuIcon({ size = 20, className }: IconProps) {
+  return (
+    <svg {...base(size, className)}>
+      <path d="M3 6h14M3 10h14M3 14h14" />
+    </svg>
+  );
+}
+
+export function CloseIcon({ size = 20, className }: IconProps) {
+  return (
+    <svg {...base(size, className)}>
+      <path d="M5 5l10 10M15 5L5 15" />
+    </svg>
+  );
+}

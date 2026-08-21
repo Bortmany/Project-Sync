@@ -82,7 +82,9 @@ export function DisciplineDot({
   showCode?: boolean;
 }) {
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs text-[var(--olng-text)]">
+    // `relative` keeps the screen-reader-only code pinned inside this dot. Left unpositioned it
+    // escapes to the page and adds a stray pixel of horizontal scroll on narrow screens.
+    <span className="relative inline-flex items-center gap-1.5 text-xs text-[var(--olng-text)]">
       <span
         className="inline-block h-2.5 w-2.5 rounded-full"
         style={{ backgroundColor: colorHex }}

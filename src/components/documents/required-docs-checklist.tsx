@@ -31,7 +31,10 @@ export function RequiredDocsChecklist({ task }: { task: DisciplineTaskDTO }) {
         const revision = document?.currentRevision;
 
         return (
-          <li key={requirement.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
+          <li
+            key={requirement.id}
+            className="relative flex flex-wrap items-center gap-x-3 gap-y-1 py-2"
+          >
             <span
               aria-hidden="true"
               className="w-3 text-center"
@@ -47,7 +50,7 @@ export function RequiredDocsChecklist({ task }: { task: DisciplineTaskDTO }) {
               {requirement.isSatisfied ? "Uploaded:" : "Still missing:"}
             </span>
 
-            <span className="min-w-40 flex-1 text-sm text-[var(--olng-navy)]">
+            <span className="min-w-0 flex-1 basis-40 text-sm text-[var(--olng-navy)]">
               {requirement.name}
             </span>
 

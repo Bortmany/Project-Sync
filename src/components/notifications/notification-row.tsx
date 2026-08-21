@@ -57,7 +57,7 @@ export function NotificationRow({
           ) : null}
           {item.body}
         </span>
-        <span className="mt-0.5 block text-xs text-[var(--olng-gray)]">
+        <span className="relative mt-0.5 block text-xs text-[var(--olng-gray)]">
           {item.title} · {formatRelative(item.createdAt)}
           {unread ? <span className="sr-only"> — unread</span> : null}
         </span>

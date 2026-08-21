@@ -99,10 +99,10 @@ export function Card({
 }) {
   return (
     <section
-      className={`rounded-[var(--radius)] border border-[var(--border)] bg-white ${className}`}
+      className={`min-w-0 rounded-[var(--radius)] border border-[var(--border)] bg-white ${className}`}
     >
       {title || action ? (
-        <header className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+        <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] px-4 py-3">
           {title ? (
             <h2 className="text-sm font-semibold text-[var(--olng-navy)]">{title}</h2>
           ) : (
@@ -111,7 +111,7 @@ export function Card({
           {action}
         </header>
       ) : null}
-      <div className="p-4">{children}</div>
+      <div className="min-w-0 p-4">{children}</div>
     </section>
   );
 }

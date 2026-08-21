@@ -1212,6 +1212,7 @@ export async function buildDisciplineTaskDTO(disciplineTaskId: string): Promise<
     requiredDocs: task.requiredDocuments.map((doc) => ({
       isMandatory: doc.isMandatory,
       documentId: doc.documentId,
+      name: doc.name,
     })),
     unmetDependencies: dependencies
       .filter((dependency) => dependency.status !== "COMPLETED")

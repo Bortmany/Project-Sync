@@ -58,7 +58,7 @@ export function NotificationBell() {
       {open ? (
         <div
           role="menu"
-          className="absolute right-0 z-40 mt-2 w-[360px] rounded-[var(--radius)] border border-[var(--border)] bg-white shadow-lg"
+          className="absolute right-0 z-40 mt-2 w-[360px] max-w-[calc(100vw-1rem)] rounded-[var(--radius)] border border-[var(--border)] bg-white shadow-lg"
         >
           <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2">
             <span className="text-sm font-semibold text-[var(--olng-blue)]">Notifications</span>

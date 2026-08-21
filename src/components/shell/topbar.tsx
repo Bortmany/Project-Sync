@@ -7,8 +7,10 @@ import { useState } from "react";
 import { Avatar } from "@/components/ui";
 import { SearchBox } from "@/components/search/search-box";
 import { NotificationBell } from "@/components/notifications/notification-bell";
+import { MobileNav } from "@/components/shell/mobile-nav";
+import type { RoleName } from "@/lib/zod-schemas";
 
-export function Topbar({ name, email }: { name: string; email: string }) {
+export function Topbar({ name, email, role }: { name: string; email: string; role: RoleName }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -21,7 +23,9 @@ export function Topbar({ name, email }: { name: string; email: string }) {
   }
 
   return (
-    <header className="flex h-14 items-center gap-4 border-b border-[var(--border)] bg-white px-4">
+    <header className="flex h-14 items-center gap-2 border-b border-[var(--border)] bg-white px-2 sm:gap-4 sm:px-4">
+      <MobileNav role={role} />
+
       <SearchBox />
 
       <NotificationBell />
