@@ -73,11 +73,14 @@ export async function listMainTasksForProject(
   if (tasks.length === 0) return [];
 
   const subtasks = await liveSubtasksFor(tasks.map((task) => task.id));
+  const docCounts = await requiredDocCountsFor(
+    [...subtasks.values()].flat().map((subtask) => subtask.id),
+  );
   const now = new Date();
   const needle = filters.q?.trim().toLowerCase();
 
   const items = tasks
-    .map((task) => buildListItem(task, project.code, subtasks.get(task.id) ?? [], now))
+    .map((task) => buildListItem(task, project.code, subtasks.get(task.id) ?? [], now, docCounts))
     .filter((item, index) => {
       const own = subtasks.get(tasks[index].id) ?? [];
       if (filters.status && item.effectiveStatus !== filters.status) return false;
@@ -126,9 +129,12 @@ export async function listMainTaskItems(mainTaskIds: string[]): Promise<MainTask
   if (tasks.length === 0) return [];
 
   const subtasks = await liveSubtasksFor(tasks.map((task) => task.id));
+  const docCounts = await requiredDocCountsFor(
+    [...subtasks.values()].flat().map((subtask) => subtask.id),
+  );
   const now = new Date();
   const items = tasks.map((task) =>
-    buildListItem(task, task.project.code, subtasks.get(task.id) ?? [], now),
+    buildListItem(task, task.project.code, subtasks.get(task.id) ?? [], now, docCounts),
   );
 
   return checkDtoList(MainTaskListItemSchema, items, "MainTaskListItemDTO");
@@ -1057,25 +1063,75 @@ type SubtaskRow = {
   discipline: { code: string; colorHex: string; sortOrder: number };
 };
 
+/** How many MANDATORY required documents each discipline task has, and how many are in place. */
+type RequiredDocCounts = Map<string, { total: number; satisfied: number }>;
+
+/**
+ * Mandatory required-document counts for a whole set of discipline tasks in two grouped queries —
+ * never one query per row. Optional documents are not counted: this hint has to say the same thing
+ * as the completion gate in `canCompleteDisciplineTask()`, which only ever waits on mandatory ones.
+ * "Satisfied" is a mandatory requirement with a document attached (`documentId` is not null), the
+ * same condition the gate uses.
+ */
+async function requiredDocCountsFor(disciplineTaskIds: string[]): Promise<RequiredDocCounts> {
+  const counts: RequiredDocCounts = new Map();
+  if (disciplineTaskIds.length === 0) return counts;
+
+  const [total, satisfied] = await Promise.all([
+    prisma.requiredDocument.groupBy({
+      by: ["disciplineTaskId"],
+      where: { disciplineTaskId: { in: disciplineTaskIds }, isMandatory: true },
+      _count: { _all: true },
+    }),
+    prisma.requiredDocument.groupBy({
+      by: ["disciplineTaskId"],
+      where: {
+        disciplineTaskId: { in: disciplineTaskIds },
+        isMandatory: true,
+        documentId: { not: null },
+      },
+      _count: { _all: true },
+    }),
+  ]);
+
+  for (const row of total) {
+    counts.set(row.disciplineTaskId, { total: row._count._all, satisfied: 0 });
+  }
+  for (const row of satisfied) {
+    const entry = counts.get(row.disciplineTaskId);
+    if (entry) entry.satisfied = row._count._all;
+  }
+  return counts;
+}
+
 /**
  * One card per discipline task: enough to show it and link straight through to it.
  * Overdue is derived here from the subtask's own deadline and status, never stored.
  */
-function disciplineSummary(subtasks: SubtaskRow[], now: Date = new Date()) {
+function disciplineSummary(
+  subtasks: SubtaskRow[],
+  now: Date = new Date(),
+  docCounts: RequiredDocCounts = new Map(),
+) {
   return subtasks
     .slice()
     .sort((a, b) => a.discipline.sortOrder - b.discipline.sortOrder)
-    .map((subtask) => ({
-      disciplineTaskId: subtask.id,
-      title: subtask.title,
-      assigneeName: subtask.assignee?.name ?? null,
-      deadline: subtask.deadline,
-      isOverdue: isOverdue(subtask.deadline, subtask.status, now),
-      disciplineId: subtask.disciplineId,
-      code: subtask.discipline.code,
-      colorHex: subtask.discipline.colorHex,
-      status: subtask.status,
-    }));
+    .map((subtask) => {
+      const docs = docCounts.get(subtask.id);
+      return {
+        disciplineTaskId: subtask.id,
+        title: subtask.title,
+        assigneeName: subtask.assignee?.name ?? null,
+        deadline: subtask.deadline,
+        isOverdue: isOverdue(subtask.deadline, subtask.status, now),
+        disciplineId: subtask.disciplineId,
+        code: subtask.discipline.code,
+        colorHex: subtask.discipline.colorHex,
+        status: subtask.status,
+        requiredDocsTotal: docs?.total ?? 0,
+        requiredDocsSatisfied: docs?.satisfied ?? 0,
+      };
+    });
 }
 
 function buildListItem(
@@ -1092,6 +1148,7 @@ function buildListItem(
   projectCode: string,
   subtasks: SubtaskRow[],
   now: Date,
+  docCounts: RequiredDocCounts,
 ): MainTaskListItemDTO {
   const shown = effectiveStatus(task.status, task.statusOverride);
   return {
@@ -1109,7 +1166,7 @@ function buildListItem(
       disciplineTasks: subtasks.length,
       completed: subtasks.filter((subtask) => subtask.status === "COMPLETED").length,
     },
-    disciplineSummary: disciplineSummary(subtasks, now),
+    disciplineSummary: disciplineSummary(subtasks, now, docCounts),
   };
 }
 
@@ -1132,7 +1189,8 @@ export async function buildMainTaskDTO(mainTaskId: string): Promise<MainTaskDTO>
   if (!task) throw new NotFoundError("We could not find that task.");
 
   const subtaskIds = task.disciplineTasks.map((subtask) => subtask.id);
-  const [documents, comments] = await Promise.all([
+  const [docCounts, documents, comments] = await Promise.all([
+    requiredDocCountsFor(subtaskIds),
     prisma.document.count({
       where: {
         ...notDeleted,
@@ -1170,7 +1228,7 @@ export async function buildMainTaskDTO(mainTaskId: string): Promise<MainTaskDTO>
     createdById: task.createdById,
     createdByName: task.createdBy.name,
     createdAt: task.createdAt,
-    disciplineSummary: disciplineSummary(task.disciplineTasks),
+    disciplineSummary: disciplineSummary(task.disciplineTasks, new Date(), docCounts),
     counts: {
       disciplineTasks: task.disciplineTasks.length,
       completed: task.disciplineTasks.filter((subtask) => subtask.status === "COMPLETED").length,

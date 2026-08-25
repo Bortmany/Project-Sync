@@ -45,7 +45,20 @@ export function MainTaskDocumentsTab({
         isError={documents.isError}
         onRetry={() => void documents.refetch()}
         canDelete={canDelete}
-        empty={<EmptyState message="No documents yet. Upload the first one." />}
+        empty={
+          <EmptyState
+            message="No documents yet. Upload the first one."
+            // Its own opener, so the empty state is actionable without scrolling back to the drop
+            // area. The server checks who may upload here, exactly as it does for the drop area.
+            action={
+              <UploadDropzone
+                target={{ projectId: task.projectId, mainTaskId: task.id }}
+                mode="button"
+                buttonLabel="Upload a document"
+              />
+            }
+          />
+        }
       />
     </div>
   );

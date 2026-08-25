@@ -108,3 +108,11 @@ export function CloseIcon({ size = 20, className }: IconProps) {
     </svg>
   );
 }
+
+export function ChevronRightIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size, className)}>
+      <path d="M8 5l5 5-5 5" />
+    </svg>
+  );
+}

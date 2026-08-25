@@ -2,6 +2,7 @@
 
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { NotificationRow } from "@/components/notifications/notification-row";
@@ -57,7 +58,17 @@ export function NotificationsView() {
       {list.isPending ? <SkeletonRows rows={6} height="h-12" /> : null}
 
       {!list.isPending && !list.isError && items.length === 0 ? (
-        <EmptyState message="You're all caught up. We'll let you know when something needs your attention." />
+        <EmptyState
+          message="You're all caught up. We'll let you know when something needs your attention."
+          action={
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center justify-center rounded-[var(--radius)] border border-[var(--olng-blue)] bg-white px-4 py-2 text-sm font-semibold text-[var(--olng-blue)] transition-colors hover:bg-[var(--page-bg)]"
+            >
+              Go to dashboard
+            </Link>
+          }
+        />
       ) : null}
 
       {visible.length > 0 ? (

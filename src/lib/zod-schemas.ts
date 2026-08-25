@@ -243,6 +243,13 @@ const DisciplineSummaryItem = z.object({
   code: z.string(),
   colorHex: z.string(),
   status: TaskStatusSchema,
+  /**
+   * MANDATORY required documents only — the same set the completion gate looks at, so the row's
+   * "2/3 documents" hint and "you can't complete this yet" always agree. Optional documents are
+   * deliberately not counted here.
+   */
+  requiredDocsTotal: z.number().int().min(0),
+  requiredDocsSatisfied: z.number().int().min(0),
 });
 
 export const MainTaskDTO = z.object({
@@ -670,3 +677,88 @@ export function toFieldErrors(error: z.ZodError): Record<string, string[]> {
   }
   return out;
 }
+
+/* ------------------------------------------------------------------ */
+/* Sidebar: favorites, the personal list, and My tasks                 */
+/* ------------------------------------------------------------------ */
+
+export const FavoriteTargetSchema = z.enum(["PROJECT", "MAIN_TASK", "DISCIPLINE_TASK"]);
+export type FavoriteTargetName = z.infer<typeof FavoriteTargetSchema>;
+
+export const ToggleFavoriteInput = z.object({
+  targetType: FavoriteTargetSchema,
+  targetId: id,
+});
+export type ToggleFavoriteInput = z.infer<typeof ToggleFavoriteInput>;
+
+/**
+ * One shortcut in the sidebar, carrying everything the link needs so the client never asks again:
+ * PROJECT → `/projects/{targetId}`, MAIN_TASK → `/tasks/{targetId}`,
+ * DISCIPLINE_TASK → `/discipline-tasks/{targetId}`. `projectCode` is shown beside all three.
+ */
+export const FavoriteDTO = z.object({
+  id: id,
+  targetType: FavoriteTargetSchema,
+  targetId: id,
+  title: z.string(),
+  projectCode: z.string().nullable(),
+  /** The project the favorite belongs to — null only if the project has since gone. */
+  projectId: id.nullable(),
+  /** The parent main task, for a discipline task favorite. Null for the other two kinds. */
+  mainTaskId: id.nullable(),
+  createdAt: dateOut,
+});
+export type FavoriteDTO = z.infer<typeof FavoriteDTO>;
+
+export const CreatePersonalTaskInput = z.object({ title: shortText });
+export type CreatePersonalTaskInput = z.infer<typeof CreatePersonalTaskInput>;
+
+export const TogglePersonalTaskInput = z.object({ id: id });
+export type TogglePersonalTaskInput = z.infer<typeof TogglePersonalTaskInput>;
+
+export const DeletePersonalTaskInput = z.object({ id: id });
+export type DeletePersonalTaskInput = z.infer<typeof DeletePersonalTaskInput>;
+
+/** A line on a person's own to-do list. Private to them and never part of the audit trail. */
+export const PersonalTaskDTO = z.object({
+  id: id,
+  title: z.string(),
+  done: z.boolean(),
+  completedAt: dateOut.nullable(),
+  createdAt: dateOut,
+});
+export type PersonalTaskDTO = z.infer<typeof PersonalTaskDTO>;
+
+/** The dashboard's "my tasks" row plus the start date the full My tasks screen shows. */
+export const MyTaskItemDTO = z.object({
+  id: id,
+  title: z.string(),
+  projectCode: z.string(),
+  mainTaskId: id,
+  disciplineCode: z.string(),
+  disciplineColorHex: z.string(),
+  status: TaskStatusSchema,
+  priority: PrioritySchema,
+  startDate: dateOut.nullable(),
+  deadline: dateOut,
+  isOverdue: z.boolean(),
+});
+export type MyTaskItemDTO = z.infer<typeof MyTaskItemDTO>;
+
+/**
+ * Everything assigned to the signed-in person, completed work included. `totals` are counted in the
+ * database over all of it, so they stay true even when the list itself has been cut short
+ * (`truncated`).
+ */
+export const MyTasksDTO = z.object({
+  tasks: z.array(MyTaskItemDTO),
+  totals: z.object({
+    NOT_STARTED: z.number().int(),
+    IN_PROGRESS: z.number().int(),
+    BLOCKED: z.number().int(),
+    AWAITING_REVIEW: z.number().int(),
+    COMPLETED: z.number().int(),
+  }),
+  truncated: z.boolean(),
+});
+export type MyTasksDTO = z.infer<typeof MyTasksDTO>;

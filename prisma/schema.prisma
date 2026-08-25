@@ -65,22 +65,24 @@ model User {
 
   discipline Discipline? @relation(fields: [disciplineId], references: [id])
 
-  sessions             Session[]
-  createdProjects      Project[]            @relation("ProjectCreatedBy")
+  sessions              Session[]
+  createdProjects       Project[]           @relation("ProjectCreatedBy")
   disciplineLeaderships ProjectDiscipline[] @relation("ProjectDisciplineLead")
-  memberships          ProjectMember[]
-  createdMainTasks     MainTask[]           @relation("MainTaskCreatedBy")
-  ownedMainTasks       MainTask[]           @relation("MainTaskOwner")
-  overriddenMainTasks  MainTask[]           @relation("MainTaskOverriddenBy")
-  assignedTasks        DisciplineTask[]     @relation("DisciplineTaskAssignee")
-  tasksAssignedByMe    DisciplineTask[]     @relation("DisciplineTaskAssignedBy")
-  tasksCompletedByMe   DisciplineTask[]     @relation("DisciplineTaskCompletedBy")
-  uploadedDocuments    Document[]           @relation("DocumentUploadedBy")
-  uploadedVersions     DocumentVersion[]    @relation("DocumentVersionUploadedBy")
-  comments             Comment[]
-  notifications        Notification[]       @relation("NotificationRecipient")
-  actedNotifications   Notification[]       @relation("NotificationActor")
-  activityLogs         ActivityLog[]
+  memberships           ProjectMember[]
+  createdMainTasks      MainTask[]          @relation("MainTaskCreatedBy")
+  ownedMainTasks        MainTask[]          @relation("MainTaskOwner")
+  overriddenMainTasks   MainTask[]          @relation("MainTaskOverriddenBy")
+  assignedTasks         DisciplineTask[]    @relation("DisciplineTaskAssignee")
+  tasksAssignedByMe     DisciplineTask[]    @relation("DisciplineTaskAssignedBy")
+  tasksCompletedByMe    DisciplineTask[]    @relation("DisciplineTaskCompletedBy")
+  uploadedDocuments     Document[]          @relation("DocumentUploadedBy")
+  uploadedVersions      DocumentVersion[]   @relation("DocumentVersionUploadedBy")
+  comments              Comment[]
+  notifications         Notification[]      @relation("NotificationRecipient")
+  actedNotifications    Notification[]      @relation("NotificationActor")
+  activityLogs          ActivityLog[]
+  favorites             Favorite[]
+  personalTasks         PersonalTask[]
 
   @@index([isActive])
 }
@@ -136,6 +138,7 @@ model Project {
   mainTasks   MainTask[]
   documents   Document[]
   activity    ActivityLog[]
+  favorites   Favorite[]
 
   @@index([status])
   @@index([deletedAt])
@@ -195,14 +198,15 @@ model MainTask {
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 
-  project       Project @relation(fields: [projectId], references: [id])
-  createdBy     User    @relation("MainTaskCreatedBy", fields: [createdById], references: [id])
-  owner         User?   @relation("MainTaskOwner", fields: [ownerId], references: [id])
-  overriddenBy  User?   @relation("MainTaskOverriddenBy", fields: [overriddenById], references: [id])
+  project      Project @relation(fields: [projectId], references: [id])
+  createdBy    User    @relation("MainTaskCreatedBy", fields: [createdById], references: [id])
+  owner        User?   @relation("MainTaskOwner", fields: [ownerId], references: [id])
+  overriddenBy User?   @relation("MainTaskOverriddenBy", fields: [overriddenById], references: [id])
 
   disciplineTasks DisciplineTask[]
   documents       Document[]
   comments        Comment[]
+  favorites       Favorite[]
 
   @@index([projectId, deletedAt])
   @@index([projectId, deadline])
@@ -240,6 +244,7 @@ model DisciplineTask {
   comments          Comment[]
   predecessorEdges  TaskDependency[]   @relation("DependencySuccessor")
   successorEdges    TaskDependency[]   @relation("DependencyPredecessor")
+  favorites         Favorite[]
 
   @@index([mainTaskId, deletedAt])
   @@index([assigneeId, status, deadline])
@@ -385,4 +390,43 @@ model ActivityLog {
   @@index([projectId, createdAt(sort: Desc)])
   @@index([entityType, entityId, createdAt(sort: Desc)])
   @@index([actorId, createdAt(sort: Desc)])
+}
+
+/// A person's own shortcuts in the sidebar. Exactly one of projectId / mainTaskId /
+/// disciplineTaskId is set — enforced in the database by the `favorite_one_target` CHECK
+/// constraint added in the favorites_and_personal_tasks migration.
+/// Personal preference, not project work: no ActivityLog row is ever written for one.
+model Favorite {
+  id               String   @id @default(cuid())
+  userId           String
+  projectId        String?
+  mainTaskId       String?
+  disciplineTaskId String?
+  createdAt        DateTime @default(now())
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project        Project?        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  mainTask       MainTask?       @relation(fields: [mainTaskId], references: [id], onDelete: Cascade)
+  disciplineTask DisciplineTask? @relation(fields: [disciplineTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+  @@unique([userId, mainTaskId])
+  @@unique([userId, disciplineTaskId])
+  @@index([userId, createdAt])
+}
+
+/// A person's private to-do list in the sidebar. Never shared, never audited — it is not project work.
+model PersonalTask {
+  id          String    @id @default(cuid())
+  userId      String
+  title       String
+  done        Boolean   @default(false)
+  sortOrder   Int       @default(0)
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, sortOrder])
 }

@@ -11,6 +11,7 @@ import { formatShortDate } from "@/components/format";
 import {
   Card,
   DisciplineDot,
+  EmptyState,
   ErrorBanner,
   ProgressBar,
   Skeleton,
@@ -70,10 +71,18 @@ export function DashboardView() {
               <SkeletonRows rows={4} />
             </div>
           ) : data.myTasks.length === 0 ? (
-            <p className="py-6 text-center text-sm text-[var(--olng-text)]">
-              No tasks assigned to you yet. Once you&apos;re added to a discipline task, it&apos;ll
-              show up here.
-            </p>
+            <EmptyState
+              compact
+              message="No tasks assigned to you yet. Once you're added to a discipline task, it'll show up here."
+              action={
+                <Link
+                  href="/projects"
+                  className="inline-flex items-center justify-center rounded-[var(--radius)] border border-[var(--olng-blue)] bg-white px-4 py-2 text-sm font-semibold text-[var(--olng-blue)] transition-colors hover:bg-[var(--page-bg)]"
+                >
+                  View projects
+                </Link>
+              }
+            />
           ) : (
             <MyTaskGroups tasks={data.myTasks.slice(0, 8)} />
           )}

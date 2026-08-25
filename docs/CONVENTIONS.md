@@ -82,6 +82,12 @@ In practice:
   - `20260821070011_notification_sweep_lookup_index` (`@@index([type, linkUrl])` on Notification —
     the hourly sweep's "have I already sent this?" check filtered on those two columns with no
     index, i.e. a full scan of the fastest-growing table every hour).
+  - `20260825075156_favorites_and_personal_tasks` (two new models for the sidebar: `Favorite` —
+    a person's starred project / main task / discipline task, cascading from all four owners, with
+    a hand-written `favorite_one_target` CHECK constraint so exactly one target column is ever set;
+    and `PersonalTask` — a person's private to-do list. Both are personal preference data, owned by
+    one person and read by nobody else. Additive only: no existing model, field, enum value or index
+    was changed. The generated migration's five trigram `DropIndex` lines were deleted by hand.)
 - **Careful with `prisma migrate dev`:** the trigram search indexes are hand-written raw SQL that the
   Prisma schema does not know about, so the generated migration will try to DROP them. Delete those
   `DropIndex` lines from the generated `migration.sql` before it goes anywhere near a real database.
@@ -121,6 +127,10 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/auth/logout` | POST | — | `{ signedOut: true }` |
 | `/api/auth/me` | GET | — | signed-in user |
 | `/api/health` | GET | — | health JSON |
+| `/api/my-tasks` | GET | — | `MyTasksDTO` (everything assigned to the signed-in person, completed included, 200 max with `truncated`; `totals` counted in the database over all of it) |
+| `/api/my-tasks/gantt` | GET | — | `GanttDTO` (only the signed-in person's discipline tasks, grouped under their main tasks) |
+| `/api/favorites` | GET | — | `FavoriteDTO[]` (the signed-in person's own shortcuts, newest first, 50 max; deleted targets are skipped) |
+| `/api/personal-tasks` | GET | — | `PersonalTaskDTO[]` (the signed-in person's own list, open items first, 200 max) |
 
 Server actions live in `src/server/actions`. Each takes its `*Input` type and returns
 `ActionResult<*DTO>`:
@@ -156,6 +166,10 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `createDiscipline` | `CreateDisciplineInput` | `ActionResult<DisciplineDTO>` |
 | `updateDiscipline` | `UpdateDisciplineInput` | `ActionResult<DisciplineDTO>` |
 | `updateTaskDates` (Gantt drag) | `UpdateTaskDatesInput` | `ActionResult<MainTaskDTO \| DisciplineTaskDTO>` |
+| `toggleFavorite` (stars or un-stars in one press; only something you may see; no audit row) | `ToggleFavoriteInput` | `ActionResult<{ favorited: boolean }>` |
+| `createPersonalTask` (own list only; no audit row) | `CreatePersonalTaskInput` | `ActionResult<PersonalTaskDTO>` |
+| `togglePersonalTask` (own list only — someone else's item does not exist) | `TogglePersonalTaskInput` | `ActionResult<PersonalTaskDTO>` |
+| `deletePersonalTask` (own list only; a private jotting has no audit trail to keep) | `DeletePersonalTaskInput` | `ActionResult<{ removed: true }>` |
 
 ## Notifications and the deadline sweep
 
@@ -166,6 +180,10 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 - **Marking a notification read writes no `ActivityLog` row.** Read state is a personal preference,
   not project work; the audit trail records project work only. This is the one documented exception
   to house rule 1.
+- **Favorites and personal to-do items write no `ActivityLog` row either**, for exactly the same
+  reason: starring a project and jotting a private reminder are personal preferences, not project
+  work. Same documented exception, same rule — everything else in `src/server/services` still
+  appends its audit row inside the transaction.
 - **The sweep** (`src/server/sweep.ts`, started by `src/instrumentation.ts` in the Node runtime only,
   once per process — first run ~60 seconds after boot, then hourly) sends `DEADLINE_APPROACHING` for
   open tasks due inside 48 hours and `OVERDUE` for open tasks past their deadline: discipline tasks
@@ -222,3 +240,10 @@ About the two seed steps:
 4. **Audit-log gaps** — a mutation that does not append an `ActivityLog` row in the same transaction.
 5. **Conventions drift** — redefined DTO types, raw `findMany` in a listing, `console.log`, new hex
    colours, a schema change after Milestone 1.
+
+## Notes
+
+- `disciplineSummary[].requiredDocsTotal` / `requiredDocsSatisfied` count **mandatory** required
+  documents only, so the "1/2 documents" hint on a discipline row always says the same thing as the
+  completion gate. They are filled by two grouped queries per read (`requiredDocCountsFor()` in
+  `src/server/services/tasks.ts`) — never one query per row.

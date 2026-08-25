@@ -8,6 +8,8 @@ import { actorForUser, type ActorContext } from "@/server/actor";
 const TABLES = [
   "ActivityLog",
   "Notification",
+  "Favorite",
+  "PersonalTask",
   "TaskDependency",
   "RequiredDocument",
   "DocumentVersion",

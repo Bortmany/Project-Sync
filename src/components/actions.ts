@@ -43,3 +43,12 @@ export {
   completeDisciplineTask,
   reopenDisciplineTask,
 } from "@/server/actions/discipline-tasks";
+
+// The sidebar's personal corner: starred shortcuts and a private to-do list. Neither is audited.
+export { toggleFavorite } from "@/server/actions/favorites";
+
+export {
+  createPersonalTask,
+  togglePersonalTask,
+  deletePersonalTask,
+} from "@/server/actions/personal-tasks";

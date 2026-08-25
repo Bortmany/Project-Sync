@@ -24,6 +24,7 @@ import {
   useProject,
 } from "@/components/hooks/use-api";
 import { formatDate, toDateInputValue } from "@/components/format";
+import { ChevronRightIcon } from "@/components/shell/icons";
 import {
   Avatar,
   Breadcrumb,
@@ -448,6 +449,7 @@ export function MainTaskView({ taskId }: { taskId: string }) {
             </span>
           ) : null}
           <PriorityFlag priority={data.priority} />
+          {/* Room is left at the end of this row for a star button, added separately. */}
         </div>
 
         <div className="max-w-md space-y-1">
@@ -467,20 +469,46 @@ export function MainTaskView({ taskId }: { taskId: string }) {
         </p>
       </header>
 
+      {/*
+        The action bar. Everything someone running this task can do sits directly under the header,
+        the same way the discipline-task page works, instead of hiding in the right rail below the
+        fold. The dialogs themselves stay mounted further down.
+      */}
+      {canManage ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-white p-3">
+          <Button variant="secondary" onClick={() => setEditOpen(true)}>
+            Edit details
+          </Button>
+          <Button variant="secondary" onClick={() => setOverrideOpen(true)}>
+            Override status
+          </Button>
+          <Button className="sm:ml-auto" onClick={() => setAddOpen(true)}>
+            Add discipline task
+          </Button>
+        </div>
+      ) : null}
+
       <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
         <div className="min-w-0 space-y-5">
           <section className="space-y-3">
             <h2 className="text-sm font-semibold text-[var(--olng-navy)]">Discipline progress</h2>
 
             {data.disciplineSummary.length === 0 ? (
-              <EmptyState message="No discipline tasks yet. Add one to get the work moving." />
+              <EmptyState
+                message="No discipline tasks yet. Add one to get the work moving."
+                action={
+                  canManage ? (
+                    <Button onClick={() => setAddOpen(true)}>+ Add discipline task</Button>
+                  ) : undefined
+                }
+              />
             ) : (
               <ul className="space-y-2">
                 {data.disciplineSummary.map((item) => (
                   <li key={item.disciplineTaskId}>
                     <Link
                       href={`/discipline-tasks/${item.disciplineTaskId}`}
-                      className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[var(--radius)] border border-[var(--border)] bg-white p-3 hover:bg-[var(--page-bg)] ${
+                      className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[var(--radius)] border border-[var(--border)] bg-white p-3 transition-colors hover:border-[var(--olng-blue)] hover:bg-[var(--page-bg)] ${
                         item.status === "BLOCKED" ? "border-l-4 border-l-[var(--status-blocked)]" : ""
                       }`}
                     >
@@ -504,7 +532,24 @@ export function MainTaskView({ taskId }: { taskId: string }) {
                       >
                         {formatDate(item.deadline)}
                       </span>
+                      {item.requiredDocsTotal > 0 ? (
+                        <span
+                          className="text-xs"
+                          style={{
+                            // Red only while documents are genuinely still missing. A completed
+                            // task is settled, so its count is just a fact, not a warning.
+                            color:
+                              item.requiredDocsSatisfied < item.requiredDocsTotal &&
+                              item.status !== "COMPLETED"
+                                ? "var(--status-blocked)"
+                                : "var(--olng-gray)",
+                          }}
+                        >
+                          {item.requiredDocsSatisfied}/{item.requiredDocsTotal} documents
+                        </span>
+                      ) : null}
                       <StatusBadge status={item.status} />
+                      <ChevronRightIcon className="shrink-0 text-[var(--olng-gray)]" />
                     </Link>
                   </li>
                 ))}
@@ -586,21 +631,6 @@ export function MainTaskView({ taskId }: { taskId: string }) {
             </dl>
           </Card>
 
-          {canManage ? (
-            <Card title="Actions">
-              <div className="flex flex-col gap-2">
-                <Button variant="secondary" onClick={() => setEditOpen(true)}>
-                  Edit details
-                </Button>
-                <Button variant="secondary" onClick={() => setOverrideOpen(true)}>
-                  Override status
-                </Button>
-                <Button variant="secondary" onClick={() => setAddOpen(true)}>
-                  Add discipline task
-                </Button>
-              </div>
-            </Card>
-          ) : null}
         </aside>
       </div>
 

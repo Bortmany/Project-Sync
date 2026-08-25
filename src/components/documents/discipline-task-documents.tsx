@@ -30,7 +30,19 @@ export function DisciplineTaskDocuments({
         isError={documents.isError}
         onRetry={() => void documents.refetch()}
         canDelete={canDelete}
-        empty={<EmptyState message="No documents yet. Upload the first one." />}
+        empty={
+          <EmptyState
+            message="No documents yet. Upload the first one."
+            action={
+              <UploadDropzone
+                target={{ projectId: task.projectId, disciplineTaskId: task.id }}
+                extraKeys={[["task", task.mainTaskId]]}
+                mode="button"
+                buttonLabel="Upload a document"
+              />
+            }
+          />
+        }
       />
     </div>
   );

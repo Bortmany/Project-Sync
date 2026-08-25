@@ -11,6 +11,7 @@ import { ServiceError } from "@/server/errors";
 import { getProjectForActor } from "@/server/services/projects";
 import {
   addDependency,
+  buildMainTaskDTO,
   completeDisciplineTask,
   createMainTask,
   overrideMainTaskStatus,
@@ -357,5 +358,73 @@ describe("the audit trail", () => {
 
     // Same rows, same contents, nothing removed.
     expect(after).toEqual(before);
+  });
+});
+
+describe("the discipline rows count the documents the completion gate waits for", () => {
+  /** A real document on this discipline task, then attached to the requirement it satisfies. */
+  async function satisfy(requirementId: string, disciplineTaskId: string) {
+    const document = await prisma.document.create({
+      data: {
+        projectId: fixture.projectId,
+        disciplineTaskId,
+        title: "Foundation load calculation report",
+        uploadedById: fixture.engineerActor.userId,
+      },
+    });
+    await prisma.requiredDocument.update({
+      where: { id: requirementId },
+      data: { documentId: document.id, satisfiedAt: new Date() },
+    });
+  }
+
+  it("counts mandatory documents only, satisfied against total", async () => {
+    const mainTask = await makeMainTask(2, ["With documents", "Without documents"]);
+    const subtasks = await subtaskIdsByTitle(mainTask.id);
+    const withDocs = subtasks.get("With documents") as string;
+
+    const first = await prisma.requiredDocument.create({
+      data: { disciplineTaskId: withDocs, name: "Load calculation", isMandatory: true },
+    });
+    await prisma.requiredDocument.create({
+      data: { disciplineTaskId: withDocs, name: "Stress report", isMandatory: true },
+    });
+    // Optional documents are never part of the count: the gate never waits for them.
+    await prisma.requiredDocument.create({
+      data: { disciplineTaskId: withDocs, name: "Site photographs", isMandatory: false },
+    });
+    await satisfy(first.id, withDocs);
+
+    const dto = await buildMainTaskDTO(mainTask.id);
+    const counted = dto.disciplineSummary.find((item) => item.disciplineTaskId === withDocs);
+    expect(counted?.requiredDocsSatisfied).toBe(1);
+    expect(counted?.requiredDocsTotal).toBe(2);
+
+    // A task with no required documents at all reads as zero, not as missing.
+    const none = dto.disciplineSummary.find(
+      (item) => item.disciplineTaskId === subtasks.get("Without documents"),
+    );
+    expect(none?.requiredDocsSatisfied).toBe(0);
+    expect(none?.requiredDocsTotal).toBe(0);
+  });
+
+  it("never counts an optional document, even when it is satisfied", async () => {
+    const mainTask = await makeMainTask(1, ["Optional only"]);
+    const subtasks = await subtaskIdsByTitle(mainTask.id);
+    const taskId = subtasks.get("Optional only") as string;
+
+    const optional = await prisma.requiredDocument.create({
+      data: { disciplineTaskId: taskId, name: "Site photographs", isMandatory: false },
+    });
+    await satisfy(optional.id, taskId);
+
+    const dto = await buildMainTaskDTO(mainTask.id);
+    const counted = dto.disciplineSummary[0];
+    expect(counted.requiredDocsTotal).toBe(0);
+    expect(counted.requiredDocsSatisfied).toBe(0);
+
+    // And the count agrees with the gate: nothing mandatory is missing, so this can be completed.
+    const completed = await completeDisciplineTask(fixture.engineerActor, { id: taskId });
+    expect(completed.status).toBe("COMPLETED");
   });
 });

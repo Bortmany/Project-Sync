@@ -41,7 +41,41 @@ import {
   Tabs,
   Textarea,
 } from "@/components/ui";
-import type { TaskStatusName } from "@/lib/zod-schemas";
+import type { RequiredDocumentDTO, TaskStatusName } from "@/lib/zod-schemas";
+
+/**
+ * The one-line count on the "What's required" card. Mandatory documents lead, because they are what
+ * the completion gate waits for; optional ones follow in muted text so they never look like a
+ * blocker. Nothing is shown when the task has no checklist at all.
+ */
+function RequiredDocsCount({ documents }: { documents: RequiredDocumentDTO[] }) {
+  if (documents.length === 0) return null;
+
+  const mandatory = documents.filter((document) => document.isMandatory);
+  const optional = documents.filter((document) => !document.isMandatory);
+  const optionalDone = optional.filter((document) => document.isSatisfied).length;
+
+  if (mandatory.length === 0) {
+    return (
+      <span className="text-xs text-[var(--olng-gray)]">
+        {optionalDone} of {optional.length} optional
+      </span>
+    );
+  }
+
+  const mandatoryDone = mandatory.filter((document) => document.isSatisfied).length;
+  return (
+    <span className="text-xs text-[var(--olng-text)]">
+      {mandatoryDone} of {mandatory.length} complete
+      {optional.length > 0 ? (
+        <span className="text-[var(--olng-gray)]">
+          {" · "}
+          {optionalDone}/{optional.length} optional
+        </span>
+      ) : null}
+    </span>
+  );
+}
 
 export function DisciplineTaskView({ taskId }: { taskId: string }) {
   const me = useMe();
@@ -249,7 +283,10 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
 
       <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
         <div className="min-w-0 max-w-3xl space-y-5">
-          <Card title="What's required">
+          <Card
+            title="What's required"
+            action={<RequiredDocsCount documents={data.requiredDocuments} />}
+          >
             <p className="text-sm text-[var(--olng-text)]">
               {data.description?.trim()
                 ? data.description
