@@ -1,10 +1,17 @@
-// The Timeline tab, in its two homes: a whole project, or one main task and its disciplines.
-// Both fetch the same GanttDTO and hand it to the same chart.
+// The Timeline tab, in its three homes: a whole project, one main task and its disciplines, or the
+// signed-in person's own work on the My tasks screen. All three fetch the same GanttDTO and hand it
+// to the same chart.
 
 "use client";
 
 import dynamic from "next/dynamic";
-import { useMainTaskSchedule, useMe, useProject, useProjectGantt } from "@/components/hooks/use-api";
+import {
+  useMainTaskSchedule,
+  useMe,
+  useMyTasksGantt,
+  useProject,
+  useProjectGantt,
+} from "@/components/hooks/use-api";
 import { EmptyState, ErrorBanner, SkeletonRows } from "@/components/ui";
 import type { GanttDTO, ProjectDTO } from "@/lib/zod-schemas";
 
@@ -26,6 +33,7 @@ function Schedule({
   onRetry,
   queryKey,
   emptyMessage,
+  readOnly = false,
 }: {
   gantt: GanttDTO | undefined;
   project: ProjectDTO | undefined;
@@ -34,6 +42,8 @@ function Schedule({
   onRetry: () => void;
   queryKey: readonly unknown[];
   emptyMessage: string;
+  /** Look, don't touch — no bar can be dragged or edited. */
+  readOnly?: boolean;
 }) {
   const me = useMe();
 
@@ -41,7 +51,17 @@ function Schedule({
   if (isPending || !gantt) return <SkeletonRows rows={6} />;
   if (gantt.mainTasks.length === 0) return <EmptyState message={emptyMessage} />;
 
-  return <GanttChart gantt={gantt} project={project} me={me.data} queryKey={queryKey} />;
+  // The chart works out row by row whether a bar may be dragged, from who you are and what the
+  // project says (`editable` on each row). Leaving both out is what makes a schedule read-only —
+  // no viewer means no permission on any row, so no bar moves and no edit dialog opens.
+  return (
+    <GanttChart
+      gantt={gantt}
+      project={readOnly ? undefined : project}
+      me={readOnly ? undefined : me.data}
+      queryKey={queryKey}
+    />
+  );
 }
 
 /** Every main task on the project, with its discipline tasks beneath it. */
@@ -57,6 +77,27 @@ export function ProjectTimelineTab({ project }: { project: ProjectDTO }) {
       onRetry={() => void gantt.refetch()}
       queryKey={["project", project.id, "gantt"]}
       emptyMessage="No tasks to schedule yet. Create a main task to see it on the timeline."
+    />
+  );
+}
+
+/**
+ * The signed-in person's own discipline work, under the main tasks it belongs to. Read-only: this
+ * is a view of your workload, and dates are changed on the project or task that owns them.
+ */
+export function MyTasksTimeline() {
+  const gantt = useMyTasksGantt();
+
+  return (
+    <Schedule
+      gantt={gantt.data}
+      project={undefined}
+      isPending={gantt.isPending}
+      isError={gantt.isError}
+      onRetry={() => void gantt.refetch()}
+      queryKey={["my-tasks", "gantt"]}
+      emptyMessage="Nothing assigned to you to schedule yet."
+      readOnly
     />
   );
 }

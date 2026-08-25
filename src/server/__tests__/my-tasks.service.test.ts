@@ -67,6 +67,28 @@ describe("the list", () => {
     expect(mine.tasks.some((task) => task.status === "COMPLETED")).toBe(true);
   });
 
+  it("never lets finished work crowd out work that is still open", async () => {
+    const mainTask = await makeMainTaskWith("Design review", ["Finished long ago", "Still open"]);
+    const ids = await subtaskIdsByTitle(mainTask.id);
+    const finishedId = ids.get("Finished long ago") as string;
+    await updateDisciplineTaskStatus(fixture.engineerActor, {
+      id: finishedId,
+      status: "COMPLETED",
+    });
+    // Age the finished one so that a single read ordered by deadline would put it first.
+    await prisma.disciplineTask.update({
+      where: { id: finishedId },
+      data: { deadline: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000) },
+    });
+
+    const titles = (await listMyTasks(fixture.engineerActor)).tasks.map((task) => task.title);
+
+    expect(titles).toContain("Still open");
+    expect(titles).toContain("Finished long ago");
+    // Open work is read in its own window, so history can never take its place on the list.
+    expect(titles.indexOf("Still open")).toBeLessThan(titles.indexOf("Finished long ago"));
+  });
+
   it("carries the start date and the project code the screen shows", async () => {
     const mainTask = await makeMainTaskWith("Design review", ["Only one"]);
     const id = (await subtaskIdsByTitle(mainTask.id)).get("Only one") as string;
@@ -214,6 +236,21 @@ describe("the personal timeline", () => {
 
     expect(gantt.mainTasks.map((task) => task.id)).toEqual([mine.id]);
     expect(gantt.mainTasks[0].disciplineTasks.map((task) => task.title)).toEqual(["Mine"]);
+  });
+
+  it("leaves out work finished long ago — the timeline is bounded", async () => {
+    const mainTask = await makeMainTaskWith("Design review", ["Recent", "Finished last year"]);
+    const ids = await subtaskIdsByTitle(mainTask.id);
+    const oldId = ids.get("Finished last year") as string;
+    await updateDisciplineTaskStatus(fixture.engineerActor, { id: oldId, status: "COMPLETED" });
+    await prisma.disciplineTask.update({
+      where: { id: oldId },
+      data: { deadline: new Date(Date.now() - 200 * 24 * 60 * 60 * 1000) },
+    });
+
+    const gantt = await ganttForMyTasks(fixture.engineerActor);
+
+    expect(gantt.mainTasks[0].disciplineTasks.map((task) => task.title)).toEqual(["Recent"]);
   });
 
   it("is empty for someone with no work at all", async () => {

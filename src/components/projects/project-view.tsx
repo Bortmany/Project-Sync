@@ -13,6 +13,7 @@ import { ProjectTasksTab } from "@/components/projects/project-tasks-tab";
 import { ProjectTeamTab } from "@/components/projects/project-team-tab";
 import { fieldError, useAction } from "@/components/hooks/use-action";
 import { isManager, isManagerOn, useMe, useProject } from "@/components/hooks/use-api";
+import { FavoriteStar } from "@/components/shell/favorite-star";
 import { formatDate, toDateInputValue } from "@/components/format";
 import {
   Breadcrumb,
@@ -176,6 +177,7 @@ export function ProjectView({ projectId }: { projectId: string }) {
             {data.code}
           </span>
           <ProjectStatusBadge status={data.status} />
+          <FavoriteStar targetType="PROJECT" targetId={data.id} />
           {canManage ? (
             <Button variant="ghost" onClick={() => setEditOpen(true)}>
               Edit

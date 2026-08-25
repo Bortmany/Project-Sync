@@ -36,6 +36,17 @@ export async function assertCanViewProject(actor: ActorContext, projectId: strin
   assertCan(actor, "VIEW_PROJECT", { projectId });
 }
 
+/**
+ * The projects this person may see, as ids mapped to their codes for display. Same answer as
+ * assertCanViewProject, asked once for a whole listing instead of row by row: an administrator sees
+ * every live project, everybody else only the ones they are a member of. Cross-project listings
+ * ("my tasks", the sidebar's shortcuts) filter against this set.
+ */
+export async function visibleProjects(actor: ActorContext): Promise<Map<string, string>> {
+  const projects = actor.role === "ADMIN" ? await activeProjects() : await activeProjectsForUser(actor.userId);
+  return new Map(projects.map((project) => [project.id, project.code]));
+}
+
 /** Projects the signed-in person may see: their own memberships, or all of them for an administrator. */
 export async function listProjectsForActor(actor: ActorContext): Promise<ProjectListItemDTO[]> {
   const projects = actor.role === "ADMIN" ? await activeProjects() : await activeProjectsForUser(actor.userId);

@@ -23,6 +23,7 @@ import {
   useMe,
   useProject,
 } from "@/components/hooks/use-api";
+import { FavoriteStar } from "@/components/shell/favorite-star";
 import { formatDate, toDateInputValue } from "@/components/format";
 import { ChevronRightIcon } from "@/components/shell/icons";
 import {
@@ -449,7 +450,7 @@ export function MainTaskView({ taskId }: { taskId: string }) {
             </span>
           ) : null}
           <PriorityFlag priority={data.priority} />
-          {/* Room is left at the end of this row for a star button, added separately. */}
+          <FavoriteStar targetType="MAIN_TASK" targetId={data.id} />
         </div>
 
         <div className="max-w-md space-y-1">

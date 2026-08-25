@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import { SailMotif } from "@/components/ui/sail-motif";
 import { LoginForm } from "./login-form";
+import { LoginHero } from "./login-hero";
 
 export const metadata = { title: "Sign in — Project Nexus" };
 
@@ -20,6 +21,7 @@ export default async function LoginPage() {
         }}
       >
         <SailMotif className="pointer-events-none absolute inset-0 h-full w-full" />
+        <LoginHero />
         <div className="relative">
           <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[var(--olng-sail)]">
             Oman LNG

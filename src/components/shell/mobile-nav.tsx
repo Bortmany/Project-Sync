@@ -1,19 +1,34 @@
 // Phone navigation: a menu button in the top bar that slides the same navy nav list in from the
 // left. Only shown below the md breakpoint — from md up the sidebar rail is back and this is gone.
+//
+// The overlay is roomy, so groups are simply shown open: no chevrons to press, every destination
+// visible at once. The rows themselves are the shared NavRow, so the phone menu and the sidebar can
+// never look different.
 
 "use client";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { CloseIcon, MenuIcon } from "@/components/shell/icons";
-import { isCurrentNav, navItemsFor } from "@/components/shell/nav-items";
+import {
+  childrenFor,
+  favoriteShortcuts,
+  isCurrentChild,
+  isCurrentNav,
+  navItemsFor,
+} from "@/components/shell/nav-items";
+import { NavRow, NavSectionLabel } from "@/components/shell/nav-row";
+import { favoriteHref, useFavorites } from "@/components/hooks/use-favorites";
 import type { RoleName } from "@/lib/zod-schemas";
 
 export function MobileNav({ role }: { role: RoleName }) {
   const pathname = usePathname();
+  const search = useSearchParams();
   const [open, setOpen] = useState(false);
   const items = navItemsFor(role);
+  const favorites = useFavorites();
+  // Starred tasks only — starred projects are the Projects drop-down, exactly as on the sidebar.
+  const starred = favoriteShortcuts(favorites.data ?? []);
 
   // Moving to another page closes the menu behind you.
   useEffect(() => {
@@ -50,7 +65,7 @@ export function MobileNav({ role }: { role: RoleName }) {
         >
           <nav
             aria-label="Main"
-            className="flex h-full w-64 max-w-[80vw] flex-col gap-1 bg-[var(--olng-navy)] p-3"
+            className="flex h-full w-64 max-w-[80vw] flex-col gap-1 overflow-y-auto bg-[var(--olng-navy)] p-3"
           >
             <div className="mb-4 flex items-start justify-between gap-2 px-2 py-2">
               <div>
@@ -70,23 +85,53 @@ export function MobileNav({ role }: { role: RoleName }) {
             </div>
 
             {items.map((item) => {
-              const active = isCurrentNav(pathname, item.href);
-              const Icon = item.icon;
+              const children = childrenFor(item, favorites.data ?? []);
+              const activeChild = children.find((child) =>
+                isCurrentChild(pathname, search, child.href),
+              );
+
               return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setOpen(false)}
-                  aria-current={active ? "page" : undefined}
-                  className={`flex min-h-11 items-center gap-3 rounded-[var(--radius)] px-3 py-2 text-sm transition-colors ${
-                    active
-                      ? "border-l-2 border-[var(--olng-sail)] bg-[var(--olng-mid)] text-white"
-                      : "border-l-2 border-transparent text-white/75 hover:bg-[var(--olng-mid)] hover:text-white"
-                  }`}
-                >
-                  <Icon size={18} />
-                  <span>{item.label}</span>
-                </Link>
+                <div key={item.href}>
+                  {item.href === "/projects" && starred.length > 0 ? (
+                    <div className="mb-2">
+                      <NavSectionLabel>Favorites</NavSectionLabel>
+                      {starred.map((favorite) => (
+                        <NavRow
+                          key={favorite.id}
+                          href={favoriteHref(favorite)}
+                          label={favorite.title}
+                          active={isCurrentNav(pathname, favoriteHref(favorite))}
+                          subItem
+                          touch
+                          dotColor="var(--olng-gray)"
+                          onClick={() => setOpen(false)}
+                        />
+                      ))}
+                      <div className="mt-3 border-t border-white/10" />
+                    </div>
+                  ) : null}
+
+                  <NavRow
+                    href={item.href}
+                    label={item.label}
+                    icon={item.icon}
+                    active={isCurrentNav(pathname, item.href) && !activeChild}
+                    touch
+                    onClick={() => setOpen(false)}
+                  />
+
+                  {children.map((child) => (
+                    <NavRow
+                      key={child.href}
+                      href={child.href}
+                      label={child.label}
+                      active={isCurrentChild(pathname, search, child.href)}
+                      subItem
+                      touch
+                      onClick={() => setOpen(false)}
+                    />
+                  ))}
+                </div>
               );
             })}
           </nav>

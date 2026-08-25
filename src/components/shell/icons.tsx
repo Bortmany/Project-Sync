@@ -116,3 +116,20 @@ export function ChevronRightIcon({ size = 16, className }: IconProps) {
     </svg>
   );
 }
+
+export function ChevronDownIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size, className)}>
+      <path d="M5 8l5 5 5-5" />
+    </svg>
+  );
+}
+
+/** The favorite star: an outline when it is off, the same shape filled in when it is on. */
+export function StarIcon({ size = 18, className, filled = false }: IconProps & { filled?: boolean }) {
+  return (
+    <svg {...base(size, className)} fill={filled ? "currentColor" : "none"}>
+      <path d="M10 2.8l2.2 4.5 5 .7-3.6 3.5.9 4.9-4.5-2.3-4.5 2.3.9-4.9L2.8 8l5-.7z" />
+    </svg>
+  );
+}

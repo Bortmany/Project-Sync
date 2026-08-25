@@ -24,6 +24,7 @@ import {
   useMe,
   useProject,
 } from "@/components/hooks/use-api";
+import { FavoriteStar } from "@/components/shell/favorite-star";
 import { formatDate } from "@/components/format";
 import {
   Avatar,
@@ -177,6 +178,7 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
               Mandatory
             </span>
           ) : null}
+          <FavoriteStar targetType="DISCIPLINE_TASK" targetId={data.id} />
         </div>
         <p
           className="text-sm"

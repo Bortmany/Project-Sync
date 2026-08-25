@@ -62,6 +62,8 @@ function QuickStatus({ task }: { task: MyTask }) {
             failure: "Couldn't update this task. Try again.",
             onSuccess: () => {
               void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+              // The My tasks screen reads its own route, so it needs telling as well.
+              void queryClient.invalidateQueries({ queryKey: ["my-tasks"] });
               void queryClient.invalidateQueries({ queryKey: ["discipline-task", task.id] });
               void queryClient.invalidateQueries({ queryKey: ["task", task.mainTaskId] });
             },
@@ -107,6 +109,17 @@ function TaskRow({ task, rich }: { task: MyTask; rich: boolean }) {
   );
 }
 
+/** A plain run of task rows, divided by a hairline — the body of every group on this screen. */
+export function MyTaskList({ tasks, rich = false }: { tasks: MyTask[]; rich?: boolean }) {
+  return (
+    <div className="divide-y divide-[var(--border)]">
+      {tasks.map((task) => (
+        <TaskRow key={task.id} task={task} rich={rich} />
+      ))}
+    </div>
+  );
+}
+
 export function MyTaskGroups({ tasks, rich = false }: { tasks: MyTask[]; rich?: boolean }) {
   const buckets = group(tasks);
 
@@ -118,11 +131,7 @@ export function MyTaskGroups({ tasks, rich = false }: { tasks: MyTask[]; rich?: 
             <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--olng-gray)]">
               {DUE_BUCKET_LABEL[bucket]} ({buckets[bucket].length})
             </h3>
-            <div className="divide-y divide-[var(--border)]">
-              {buckets[bucket].map((task) => (
-                <TaskRow key={task.id} task={task} rich={rich} />
-              ))}
-            </div>
+            <MyTaskList tasks={buckets[bucket]} rich={rich} />
           </section>
         ),
       )}

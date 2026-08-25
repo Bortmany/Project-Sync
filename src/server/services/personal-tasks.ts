@@ -44,16 +44,18 @@ function toDTO(row: PersonalTaskRow): PersonalTaskDTO {
 const SELECT = { id: true, title: true, done: true, completedAt: true, createdAt: true } as const;
 
 /**
- * This person's list: still-open items first, newest first, then the done ones with the most
- * recently finished at the top.
+ * This person's list: still-open items first, newest added at the top, then the done ones.
  */
 export async function listPersonalTasks(actor: ActorContext): Promise<PersonalTaskDTO[]> {
   const rows = await prisma.personalTask.findMany({
     where: { userId: actor.userId },
-    // `done` sorts false before true in Postgres, so open items lead. Inside each group:
-    // most recently finished first for the done ones, newest first for the open ones (whose
-    // completedAt is always null, so that key does nothing to them).
-    orderBy: [{ done: "asc" }, { completedAt: "desc" }, { createdAt: "desc" }],
+    // `done` sorts false before true in Postgres, so open items lead. Inside each group the list
+    // follows `sortOrder`, which createPersonalTask sets to one below the current lowest — so a new
+    // line lands at the top and everything keeps the position it was given. `createdAt` desc only
+    // breaks ties (older rows all sitting at the default 0). Ticking a line off drops it into the
+    // done group but leaves its place there: for a scratchpad, keeping a familiar order is friendlier
+    // than reshuffling by the moment it was finished, and it means one query, not two.
+    orderBy: [{ done: "asc" }, { sortOrder: "asc" }, { createdAt: "desc" }],
     take: LIST_LIMIT,
     select: SELECT,
   });

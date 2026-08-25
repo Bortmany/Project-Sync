@@ -2,11 +2,12 @@
 //
 // The rules being proved: one button both stars and un-stars, you cannot star work in a project you
 // are not on, one person's shortcuts are invisible to everybody else, a deleted target quietly
-// disappears from the list instead of dangling — and the database itself refuses a favorite that
-// points at two things at once.
+// disappears from the list instead of dangling, leaving a project takes its stars out of the
+// sidebar with it — and the database itself refuses a favorite that points at two things at once.
 
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
+import { actorForUser } from "@/server/actor";
 import { listFavorites, toggleFavorite } from "@/server/services/favorites";
 import { createMainTask } from "@/server/services/tasks";
 import {
@@ -177,6 +178,40 @@ describe("listing favorites", () => {
     expect(list.map((row) => row.title)).toEqual(["Still here"]);
     // The row itself is untouched — only the reading of it skips over.
     expect(await prisma.favorite.count({ where: { userId: fixture.pmActor.userId } })).toBe(2);
+  });
+
+  it("drops shortcuts to a project the person has since left — all three kinds", async () => {
+    const mainTask = await makeMainTask("Vendor drawing review");
+    const subtaskId = (await subtaskIdsByTitle(mainTask.id)).get("Mechanical check") as string;
+    await toggleFavorite(fixture.engineerActor, {
+      targetType: "PROJECT",
+      targetId: fixture.projectId,
+    });
+    await toggleFavorite(fixture.engineerActor, { targetType: "MAIN_TASK", targetId: mainTask.id });
+    await toggleFavorite(fixture.engineerActor, {
+      targetType: "DISCIPLINE_TASK",
+      targetId: subtaskId,
+    });
+    expect(await listFavorites(fixture.engineerActor)).toHaveLength(3);
+
+    await prisma.projectMember.deleteMany({
+      where: { projectId: fixture.projectId, userId: fixture.engineerActor.userId },
+    });
+    const afterLeaving = await actorForUser(fixture.engineerActor.userId);
+
+    expect(await listFavorites(afterLeaving)).toEqual([]);
+    // The stars themselves are untouched — only this person's view of them changed.
+    expect(await prisma.favorite.count({ where: { userId: fixture.engineerActor.userId } })).toBe(3);
+  });
+
+  it("still shows an administrator every starred project, member or not", async () => {
+    await toggleFavorite(fixture.adminActor, { targetType: "PROJECT", targetId: fixture.projectId });
+    await prisma.projectMember.deleteMany({
+      where: { projectId: fixture.projectId, userId: fixture.adminActor.userId },
+    });
+
+    const admin = await actorForUser(fixture.adminActor.userId);
+    expect((await listFavorites(admin)).map((row) => row.targetType)).toEqual(["PROJECT"]);
   });
 
   it("keeps one person's shortcuts out of another person's list", async () => {

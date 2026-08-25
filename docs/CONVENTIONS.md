@@ -127,10 +127,10 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/auth/logout` | POST | — | `{ signedOut: true }` |
 | `/api/auth/me` | GET | — | signed-in user |
 | `/api/health` | GET | — | health JSON |
-| `/api/my-tasks` | GET | — | `MyTasksDTO` (everything assigned to the signed-in person, completed included, 200 max with `truncated`; `totals` counted in the database over all of it) |
-| `/api/my-tasks/gantt` | GET | — | `GanttDTO` (only the signed-in person's discipline tasks, grouped under their main tasks) |
-| `/api/favorites` | GET | — | `FavoriteDTO[]` (the signed-in person's own shortcuts, newest first, 50 max; deleted targets are skipped) |
-| `/api/personal-tasks` | GET | — | `PersonalTaskDTO[]` (the signed-in person's own list, open items first, 200 max) |
+| `/api/my-tasks` | GET | — | `MyTasksDTO` (everything assigned to the signed-in person: up to 200 open tasks by deadline **plus** the 50 most recently completed, read in two windows so history never crowds out live work, with `truncated`; `totals` counted in the database over all of it) |
+| `/api/my-tasks/gantt` | GET | — | `GanttDTO` (only the signed-in person's discipline tasks, grouped under their main tasks; bounded — open work plus work whose deadline fell inside the last 90 days, 300 bars max) |
+| `/api/favorites` | GET | — | `FavoriteDTO[]` (the signed-in person's own shortcuts, newest first, 50 max; deleted targets and anything in a project they may no longer see are skipped) |
+| `/api/personal-tasks` | GET | — | `PersonalTaskDTO[]` (the signed-in person's own list, open items first, then by `sortOrder` so newly added lines lead, 200 max) |
 
 Server actions live in `src/server/actions`. Each takes its `*Input` type and returns
 `ActionResult<*DTO>`:

@@ -76,8 +76,8 @@ describe("the list itself", () => {
     const second = await createPersonalTask(fixture.engineerActor, { title: "Second" });
     const third = await createPersonalTask(fixture.engineerActor, { title: "Third" });
 
-    // Three presses can land in the same millisecond, so the ages are set by hand rather than
-    // trusting the clock to separate them.
+    // The list order comes from sortOrder, but the ages are still set by hand so the tie-break key
+    // cannot quietly decide the answer if three presses land in the same millisecond.
     const hoursAgo = (hours: number) => new Date(Date.now() - hours * 60 * 60 * 1000);
     await prisma.personalTask.update({ where: { id: first.id }, data: { createdAt: hoursAgo(3) } });
     await prisma.personalTask.update({ where: { id: second.id }, data: { createdAt: hoursAgo(2) } });
@@ -88,6 +88,29 @@ describe("the list itself", () => {
     const list = await listPersonalTasks(fixture.engineerActor);
     expect(list.map((row) => row.title)).toEqual(["Third", "Second", "First"]);
     expect(list.map((row) => row.done)).toEqual([false, false, true]);
+  });
+
+  it("keeps a newly added line at the top, by the position it was given", async () => {
+    await createPersonalTask(fixture.engineerActor, { title: "First" });
+    await createPersonalTask(fixture.engineerActor, { title: "Second" });
+    await createPersonalTask(fixture.engineerActor, { title: "Third" });
+
+    // Every line gets the same timestamp, so only sortOrder can decide the order — this is what
+    // proves the position each line is given is really the one it is listed in.
+    await prisma.personalTask.updateMany({
+      where: { userId: fixture.engineerActor.userId },
+      data: { createdAt: new Date(Date.now() - 60 * 60 * 1000) },
+    });
+
+    const list = await listPersonalTasks(fixture.engineerActor);
+    expect(list.map((row) => row.title)).toEqual(["Third", "Second", "First"]);
+
+    const sortOrders = await prisma.personalTask.findMany({
+      where: { userId: fixture.engineerActor.userId },
+      orderBy: { sortOrder: "asc" },
+      select: { sortOrder: true },
+    });
+    expect(sortOrders.map((row) => row.sortOrder)).toEqual([-3, -2, -1]);
   });
 
   it("shows nothing but this person's own lines", async () => {

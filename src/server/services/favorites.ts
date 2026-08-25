@@ -14,7 +14,7 @@ import { FavoriteDTO as FavoriteSchema } from "@/lib/zod-schemas";
 import type { ActorContext } from "@/server/actor";
 import { NotFoundError } from "@/server/errors";
 import { checkDtoList } from "@/server/serialize";
-import { assertCanViewProject } from "@/server/services/projects";
+import { assertCanViewProject, visibleProjects } from "@/server/services/projects";
 
 /** The most shortcuts the sidebar will hold. Older stars stay in the database. */
 const LIST_LIMIT = 50;
@@ -100,14 +100,19 @@ export async function toggleFavorite(
 }
 
 /**
- * This person's shortcuts, newest first. Anything whose target has since been deleted is left out
- * quietly — a dangling star is not an error worth showing anybody.
+ * This person's shortcuts, newest first. Anything whose target has since been deleted — or now sits
+ * in a project this person may no longer see — is left out quietly: a dangling star is not an error
+ * worth showing anybody, and a star must never outlive the permission that earned it.
  *
  * The soft-delete helpers in db.ts do not cover this listing (Favorite has no deletedAt of its own
  * and the rows span three different targets), so the filter is applied by hand on each relation,
- * the same way the dashboard does its cross-project reads.
+ * the same way the dashboard does its cross-project reads. Visibility is answered once for the whole
+ * listing with `visibleProjects` (an administrator sees every project, as everywhere else) rather
+ * than project by project.
  */
 export async function listFavorites(actor: ActorContext): Promise<FavoriteDTO[]> {
+  const visible = await visibleProjects(actor);
+
   const rows = await prisma.favorite.findMany({
     where: { userId: actor.userId },
     orderBy: { createdAt: "desc" },
@@ -145,7 +150,7 @@ export async function listFavorites(actor: ActorContext): Promise<FavoriteDTO[]>
 
   for (const row of rows) {
     if (row.project) {
-      if (row.project.deletedAt) continue;
+      if (row.project.deletedAt || !visible.has(row.project.id)) continue;
       items.push({
         id: row.id,
         targetType: "PROJECT",
@@ -161,6 +166,7 @@ export async function listFavorites(actor: ActorContext): Promise<FavoriteDTO[]>
 
     if (row.mainTask) {
       if (row.mainTask.deletedAt || row.mainTask.project.deletedAt) continue;
+      if (!visible.has(row.mainTask.project.id)) continue;
       items.push({
         id: row.id,
         targetType: "MAIN_TASK",
@@ -177,6 +183,7 @@ export async function listFavorites(actor: ActorContext): Promise<FavoriteDTO[]>
     if (row.disciplineTask) {
       const parent = row.disciplineTask.mainTask;
       if (row.disciplineTask.deletedAt || parent.deletedAt || parent.project.deletedAt) continue;
+      if (!visible.has(parent.project.id)) continue;
       items.push({
         id: row.id,
         targetType: "DISCIPLINE_TASK",

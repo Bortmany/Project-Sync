@@ -16,6 +16,8 @@ import {
   GanttDTO,
   MainTaskDTO,
   MainTaskListItemDTO,
+  MyTasksDTO,
+  PersonalTaskDTO,
   ProjectDTO,
   ProjectListItemDTO,
   SearchResultsDTO,
@@ -179,6 +181,37 @@ export function useDashboard(): UseQueryResult<DashboardDTO> {
     queryFn: () => readRoute("/api/dashboard", DashboardDTO),
   });
 }
+
+/**
+ * Everything assigned to the signed-in person, completed work included, with true counts per status.
+ * The dashboard keeps its own smaller feed (useDashboard) — this is the My tasks screen's own route.
+ */
+export function useMyTasks(): UseQueryResult<MyTasksDTO> {
+  return useQuery({
+    queryKey: ["my-tasks"],
+    queryFn: () => readRoute("/api/my-tasks", MyTasksDTO),
+  });
+}
+
+/** The same personal work as a schedule, for the read-only Timeline view of My tasks. */
+export function useMyTasksGantt(enabled = true): UseQueryResult<GanttDTO> {
+  return useQuery({
+    queryKey: ["my-tasks", "gantt"],
+    queryFn: () => readRoute("/api/my-tasks/gantt", GanttDTO),
+    enabled,
+  });
+}
+
+/** The private scratchpad list: open items first, then the ones already ticked off. */
+export function usePersonalTasks(): UseQueryResult<PersonalTaskDTO[]> {
+  return useQuery({
+    queryKey: PERSONAL_TASKS_KEY,
+    queryFn: () => readRoute("/api/personal-tasks", z.array(PersonalTaskDTO)),
+  });
+}
+
+/** One key for the personal list, so every add, tick and delete refreshes the same query. */
+export const PERSONAL_TASKS_KEY = ["personal-tasks"] as const;
 
 export function useProjects(): UseQueryResult<ProjectListItemDTO[]> {
   return useQuery({
