@@ -162,36 +162,87 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
         </p>
       </header>
 
-      {canControl ? (
-        <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-white p-3">
-          <StatusBadge status={data.status} />
-          <label className="text-xs text-[var(--olng-text)]" htmlFor="discipline-status">
-            Change status
-          </label>
-          <Select
-            id="discipline-status"
-            className="w-52"
-            value={data.status}
-            disabled={pending}
-            onChange={(event) => {
-              const next = event.target.value as TaskStatusName;
-              if (next === "BLOCKED") {
-                setBlockOpen(true);
-                return;
-              }
-              setStatus(next);
-            }}
-          >
-            <option value="NOT_STARTED">Not started</option>
-            <option value="IN_PROGRESS">In progress</option>
-            <option value="BLOCKED">Blocked</option>
-            <option value="AWAITING_REVIEW">Awaiting review</option>
-            {data.status === "COMPLETED" ? <option value="COMPLETED">Completed</option> : null}
-          </Select>
+      {/*
+        The action bar. Everything about finishing this piece of work — the status control, the
+        Mark complete button, and the plain-English reason when it is refused — sits here, directly
+        under the header, so nobody has to scroll past the comments to close out their task.
+      */}
+      {canControl || data.status === "COMPLETED" ? (
+        <div className="space-y-2 rounded-[var(--radius)] border border-[var(--border)] bg-white p-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {canControl ? (
+              <>
+                <label className="text-xs text-[var(--olng-text)]" htmlFor="discipline-status">
+                  Change status
+                </label>
+                {/* Select fills its container, so the width is set here rather than on the field. */}
+                <div className="w-full sm:w-52">
+                  <Select
+                    id="discipline-status"
+                    value={data.status}
+                    disabled={pending}
+                    onChange={(event) => {
+                      const next = event.target.value as TaskStatusName;
+                      if (next === "BLOCKED") {
+                        setBlockOpen(true);
+                        return;
+                      }
+                      setStatus(next);
+                    }}
+                  >
+                    <option value="NOT_STARTED">Not started</option>
+                    <option value="IN_PROGRESS">In progress</option>
+                    <option value="BLOCKED">Blocked</option>
+                    <option value="AWAITING_REVIEW">Awaiting review</option>
+                    {data.status === "COMPLETED" ? (
+                      <option value="COMPLETED">Completed</option>
+                    ) : null}
+                  </Select>
+                </div>
+              </>
+            ) : null}
+
+            {canControl && data.status !== "COMPLETED" ? (
+              <Button
+                className="min-h-11 w-full sm:ml-auto sm:w-auto"
+                loading={pending}
+                disabled={!data.canComplete || pending}
+                onClick={() =>
+                  run(() => completeDisciplineTask({ id: data.id }), {
+                    success: "Marked complete.",
+                    failure: "Couldn't mark this complete. Try again.",
+                    onSuccess: refresh,
+                  })
+                }
+              >
+                Mark complete
+              </Button>
+            ) : null}
+
+            {canControl && data.status === "COMPLETED" ? (
+              <Button
+                variant="secondary"
+                className="w-full sm:ml-auto sm:w-auto"
+                onClick={() => setReopenOpen(true)}
+                disabled={pending}
+              >
+                Reopen
+              </Button>
+            ) : null}
+          </div>
+
+          {canControl && data.status !== "COMPLETED" && !data.canComplete ? (
+            <p className="text-sm text-[var(--olng-text)]">
+              {/* Each blocker is already a full sentence with its own full stop — don't add another. */}
+              You can&apos;t mark this complete yet: {data.blockers.join(" ")}
+            </p>
+          ) : null}
+
           {data.status === "COMPLETED" ? (
-            <Button variant="secondary" onClick={() => setReopenOpen(true)} disabled={pending}>
-              Reopen
-            </Button>
+            <p className="text-sm text-[var(--status-completed)]">
+              Completed{data.completedByName ? ` by ${data.completedByName}` : ""}
+              {data.completedAt ? ` on ${formatDate(data.completedAt)}` : ""}.
+            </p>
           ) : null}
         </div>
       ) : null}
@@ -268,37 +319,6 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
             ]}
           />
 
-          {canControl && data.status !== "COMPLETED" ? (
-            <div className="space-y-2">
-              <Button
-                className="min-h-11 w-full"
-                loading={pending}
-                disabled={!data.canComplete || pending}
-                onClick={() =>
-                  run(() => completeDisciplineTask({ id: data.id }), {
-                    success: "Marked complete.",
-                    failure: "Couldn't mark this complete. Try again.",
-                    onSuccess: refresh,
-                  })
-                }
-              >
-                Mark complete
-              </Button>
-              {!data.canComplete ? (
-                <p className="text-sm text-[var(--olng-text)]">
-                  {/* Each blocker is already a full sentence with its own full stop — don't add another. */}
-                  You can&apos;t mark this complete yet: {data.blockers.join(" ")}
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-
-          {data.status === "COMPLETED" ? (
-            <p className="text-sm text-[var(--status-completed)]">
-              Completed{data.completedByName ? ` by ${data.completedByName}` : ""}
-              {data.completedAt ? ` on ${formatDate(data.completedAt)}` : ""}.
-            </p>
-          ) : null}
         </div>
 
         <aside className="min-w-0 space-y-4 lg:sticky lg:top-4 lg:self-start">
