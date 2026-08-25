@@ -12,21 +12,20 @@ change that moved the code.
 
 | # | Gate | State today |
 |---|---|---|
-| 1 | **Privacy policy and terms pages written and linked** | ❌ **Not written.** This is a hard gate — see below. |
+| 1 | **Privacy policy and terms pages written and linked** | ✅ `/privacy` and `/terms`, linked from the login page and every signed-in page footer — see below |
 | 2 | Production secrets set and strong (`SESSION_SECRET` 32+, `DATABASE_URL`, `DATA_DIR`) | ✅ The app refuses to start without them |
 | 3 | Security headers and a Content-Security-Policy on every response | ✅ Verified against a running production build |
 | 4 | Error tracking decided: Sentry keyed, or knowingly left dormant | ✅ Dormant by default, one env var away |
 | 5 | Database automatic backups turned **on** in Railway **and one restore actually tested** | ❌ Do this before launch (section 5) |
 | 6 | `DATA_DIR` on a mounted volume, and a copy-out routine agreed | ❌ Do this at deploy time (section 4) |
-| 7 | Health check pointed at `/api/health` | ❌ Set during deploy (section 3) |
+| 7 | Health check pointed at `/api/health` | ✅ Checked into `railway.json`; confirm it in the dashboard on first setup (section 3) |
 | 8 | Demo/seed accounts removed from the production database | ❌ Never run `npm run seed` against production |
 | 9 | The golden-rule tests green on the deployed commit (`npm run verify`) | ✅ Part of every change |
 
-### Gate 1 — privacy and terms (still to be written)
+### Gate 1 — privacy and terms (written)
 
-**The app must not take real users until the privacy and terms pages exist.** Oman's Personal Data
-Protection Law (Royal Decree 6/2022) applies. The pages must describe what this app *actually*
-stores, which today is:
+The app has a real privacy notice at `/privacy` and terms of use at `/terms` — plain server pages,
+publicly reachable with no sign-in, following what this app *actually* stores:
 
 - **People:** name, work email, job title, role, discipline, password (hashed with argon2 — never
   readable), whether the account is active.
@@ -34,13 +33,16 @@ stores, which today is:
   when the session expires.
 - **Work:** projects, tasks, comments, uploaded documents and every revision of them, plus an
   append-only audit trail of who did what and when. Audit entries and document revisions are never
-  edited or deleted — say so plainly, because staff have a right to know their actions are recorded
-  permanently.
+  edited or deleted — the pages say so plainly, because staff have a right to know their actions are
+  recorded permanently.
 - **Notifications:** what each person was alerted about and whether they have read it.
+- **A personal to-do list**, added in the last UI round — private to each person, no audit trail
+  (documented deviation), and now covered in the data inventory above.
 
-The pages carry the honest note that they are a template pending professional review. Because this
-is an internal tool for employees, "download my data" and "delete my account" are handled by an
-administrator rather than self-service — state that on the privacy page, and name who to ask.
+Both pages carry an honest note that they are a template pending professional review, and are not yet
+reviewed by Oman LNG legal or compliance — do that before relying on them for real launch. Because
+this is an internal tool for employees, "download my data" and "delete my account" are handled by
+**your Project Nexus administrator** rather than self-service — the privacy page says so by name.
 
 **Rule that outlives this file:** if a change starts storing a new piece of personal information, the
 privacy page changes in the *same* change.
@@ -69,6 +71,14 @@ and (for `SESSION_SECRET`) accept that everyone is signed out.
 
 ## 3. Deploying to Railway (the house pattern)
 
+The repo carries a checked-in `railway.json` — Nixpacks build, `npm start`, the `/api/health` health
+check, restart-on-failure, and the `npx prisma migrate deploy` pre-deploy command are all already
+declared there, so Railway picks them up on its own instead of needing to be typed into the dashboard
+by hand. `npm install` now also runs `prisma generate` itself (a `postinstall` script), which is what
+lets a clean Nixpacks checkout build at all — the generated Prisma client lives in gitignored
+`src/generated/` and previously only existed after someone had manually run `prisma generate` or
+`npm run verify` locally.
+
 1. **Create the project** in Railway and connect this repository, deploying from `main`.
 2. **Add a Postgres 16 database** to the same project. Railway sets `DATABASE_URL` for you — check
    the app service actually references it.
@@ -78,12 +88,13 @@ and (for `SESSION_SECRET`) accept that everyone is signed out.
 4. **Add the variables** from section 2.
 5. **Add a Volume** mounted at `/data`, and set `DATA_DIR=/data` (section 4). Do this *before* the
    first real upload.
-6. **Set the pre-deploy command** to `npx prisma migrate deploy`. This repo uses Prisma migrations —
+6. **Confirm the pre-deploy command** reads `npx prisma migrate deploy` in the Railway dashboard — it
+   comes from `railway.json`, but check it landed on first setup. This repo uses Prisma migrations —
    never `prisma db push` here, unlike some of the other apps.
-7. **Build and start**: `npm run build` and `npm start` (Railway's Next.js defaults). Railway sets
+7. **Build and start**: Railway runs `npm run build` and `npm start` per `railway.json`. Railway sets
    `PORT`; Next picks it up.
-8. **Point the health check** at `/api/health`. It answers `200` when the database is reachable and
-   the uploads folder is writable, `503` otherwise.
+8. **Confirm the health check** reads `/api/health` in the dashboard — also from `railway.json`. It
+   answers `200` when the database is reachable and the uploads folder is writable, `503` otherwise.
 9. **First deploy checks**, in order:
    - `https://<domain>/api/health` returns `{"ok":true,...}` and the `sentry` line reads what you
      expect — it names both channels separately, for example
@@ -190,7 +201,8 @@ the document count makes the copy-out awkward.
 
 Named here so nobody assumes otherwise:
 
-- **Privacy and terms pages** — gate 1 above, still to be written.
+- **A legal review of the privacy and terms pages** — gate 1 above is written and linked, but it is a
+  template. Have Oman LNG legal or compliance review the actual wording before relying on it.
 - **Self-service "download my data" / "delete my account"** — this is an internal staff tool with
   admin-created accounts; an administrator deactivates a person, and the audit trail stays by design.
   If the app ever takes non-staff users, both become required.

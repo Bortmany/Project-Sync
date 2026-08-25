@@ -1,5 +1,6 @@
 // The signed-in shell: everything inside here requires a session.
 
+import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { Sidebar } from "@/components/shell/sidebar";
 import { Topbar } from "@/components/shell/topbar";
@@ -15,6 +16,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <div className="flex min-w-0 flex-1 flex-col">
           <Topbar name={user.name} email={user.email} role={user.role} />
           <main className="min-w-0 flex-1 p-4 sm:p-6">{children}</main>
+          <footer className="border-t border-[var(--olng-sand)] px-4 py-3 text-xs text-[var(--olng-gray)] sm:px-6">
+            <Link href="/privacy" className="underline-offset-2 hover:underline">
+              Privacy notice
+            </Link>{" "}
+            &middot;{" "}
+            <Link href="/terms" className="underline-offset-2 hover:underline">
+              Terms of use
+            </Link>
+          </footer>
         </div>
       </div>
     </Providers>

@@ -63,9 +63,9 @@ In practice:
 11. **Secrets in env only.** `SESSION_SECRET` must be 32+ characters; the app refuses to boot in
     production without it. New integrations stay dormant until their env var is set and are reported
     in `/api/health`.
-12. **Privacy:** if a change starts storing a new piece of personal data, the privacy page is part of
-    the same change (see the engineering standards, section 6). The privacy and terms pages are still
-    to be written before the first real users — that is a launch gate, not a nice-to-have.
+12. **Privacy:** if a change starts storing a new piece of personal data, the privacy page (`/privacy`,
+    alongside `/terms`) is part of the same change (see the engineering standards, section 6). Both
+    pages are a template pending a real legal review before launch — see `docs/GO-LIVE.md` gate 1.
 
 ## Migration pattern
 

@@ -1,5 +1,6 @@
 // Login screen: navy sail-motif hero on the left, the sign-in form on the right. Accounts are created by an admin.
 
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import { SailMotif } from "@/components/ui/sail-motif";
@@ -42,6 +43,15 @@ export default async function LoginPage() {
           <div className="mt-6">
             <LoginForm />
           </div>
+          <p className="mt-6 text-xs text-[var(--olng-gray)]">
+            <Link href="/privacy" className="underline-offset-2 hover:underline">
+              Privacy notice
+            </Link>{" "}
+            &middot;{" "}
+            <Link href="/terms" className="underline-offset-2 hover:underline">
+              Terms of use
+            </Link>
+          </p>
         </div>
       </section>
     </main>
