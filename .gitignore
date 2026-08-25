@@ -1,0 +1,25 @@
+# dependencies
+node_modules/
+
+# next.js
+.next/
+out/
+next-env.d.ts
+
+# environment
+.env
+.env.local
+
+# uploaded files (local data volume)
+data/
+
+# tests
+coverage/
+
+# prisma generated client
+src/generated/
+
+# tooling noise
+.claude/skills/
+.DS_Store
+*.tsbuildinfo
