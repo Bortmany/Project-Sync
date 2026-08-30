@@ -17,7 +17,7 @@ export default async function AdminUsersPage() {
   if (!actor) redirect("/login");
   if (!can(actor, "MANAGE_USERS")) return <NoAccess />;
 
-  const [users, disciplines] = await Promise.all([listAllUsers(actor), listDisciplines()]);
+  const [users, disciplines] = await Promise.all([listAllUsers(actor), listDisciplines(actor)]);
 
   return <AdminUsersView users={users} disciplines={disciplines} />;
 }

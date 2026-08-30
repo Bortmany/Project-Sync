@@ -1,4 +1,4 @@
-// Project Nexus — complete data model. FROZEN after Milestone 1: schema changes need main-session approval.
+// Tielora — complete data model. FROZEN after Milestone 1: schema changes need main-session approval.
 
 generator client {
   provider = "prisma-client"
@@ -50,8 +50,28 @@ enum NotificationType {
   OVERRIDE_APPLIED
 }
 
+/// One customer company. EVERY tenant-owned row reaches its organisation through this model:
+/// a User, a Discipline and a Project each carry a required orgId, and everything else hangs off
+/// one of those three. Nothing is ever shared between organisations.
+model Organization {
+  id     String @id @default(cuid())
+  name   String
+  /// The company's handle, unique across the whole product and derived from its name at signup.
+  slug   String @unique
+  /// Which discipline template the company started from: OIL_AND_GAS, CONSTRUCTION or GENERIC.
+  industryTemplate String
+  createdAt        DateTime @default(now())
+
+  users       User[]
+  disciplines Discipline[]
+  projects    Project[]
+}
+
 model User {
   id           String    @id @default(cuid())
+  orgId        String
+  /// Globally unique on purpose: one email address signs in to exactly one organisation, so the
+  /// sign-in form never has to ask which company you meant.
   email        String    @unique // always stored lowercased
   name         String
   passwordHash String
@@ -63,7 +83,8 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  discipline Discipline? @relation(fields: [disciplineId], references: [id])
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  discipline   Discipline?  @relation(fields: [disciplineId], references: [id])
 
   sessions              Session[]
   createdProjects       Project[]           @relation("ProjectCreatedBy")
@@ -85,6 +106,7 @@ model User {
   personalTasks         PersonalTask[]
 
   @@index([isActive])
+  @@index([orgId, isActive])
 }
 
 model Session {
@@ -105,23 +127,31 @@ model Session {
 
 model Discipline {
   id        String   @id @default(cuid())
-  code      String   @unique
+  orgId     String
+  code      String
   name      String
   colorHex  String
   sortOrder Int
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
   users              User[]
   projectDisciplines ProjectDiscipline[]
   projectMembers     ProjectMember[]
   disciplineTasks    DisciplineTask[]
+
+  // Per organisation, not global: two companies may both run a "Civil" discipline.
+  @@unique([orgId, code])
+  @@unique([orgId, name])
 }
 
 model Project {
   id          String        @id @default(cuid())
+  orgId       String
   name        String
-  code        String        @unique
+  code        String
   description String
   status      ProjectStatus @default(ACTIVE)
   startDate   DateTime?
@@ -131,7 +161,8 @@ model Project {
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
-  createdBy User @relation("ProjectCreatedBy", fields: [createdById], references: [id])
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation("ProjectCreatedBy", fields: [createdById], references: [id])
 
   disciplines ProjectDiscipline[]
   members     ProjectMember[]
@@ -140,8 +171,11 @@ model Project {
   activity    ActivityLog[]
   favorites   Favorite[]
 
+  // Per organisation, not global: two companies may both run a project called "PH-1".
+  @@unique([orgId, code])
   @@index([status])
   @@index([deletedAt])
+  @@index([orgId, deletedAt])
 }
 
 model ProjectDiscipline {

@@ -12,7 +12,7 @@ export type ActorContext = Actor & { name: string; email: string };
 export async function actorForUser(userId: string): Promise<ActorContext> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, name: true, email: true, role: true, isActive: true },
+    select: { id: true, orgId: true, name: true, email: true, role: true, isActive: true },
   });
   if (!user || !user.isActive) throw new NotFoundError("We could not find that person.");
 
@@ -23,6 +23,7 @@ export async function actorForUser(userId: string): Promise<ActorContext> {
 
   return {
     userId: user.id,
+    orgId: user.orgId,
     role: user.role,
     name: user.name,
     email: user.email,

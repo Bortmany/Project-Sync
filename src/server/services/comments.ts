@@ -33,6 +33,8 @@ export type CommentListItemDTO = CommentDTO & { isDeleted: boolean };
 /** Where a comment lives: which task, which project, and what to call it in the audit trail. */
 type CommentTarget = {
   projectId: string;
+  /** The company the project belongs to — read from the row, never assumed. */
+  orgId: string;
   mainTaskId: string | null;
   disciplineTaskId: string | null;
   /** The main task the comment ultimately sits under — used for links and notifications. */
@@ -54,7 +56,7 @@ export async function listComments(
   actor: ActorContext,
   target: { mainTaskId?: string | null; disciplineTaskId?: string | null },
 ): Promise<CommentListItemDTO[]> {
-  const where = await resolveTarget(target.mainTaskId ?? null, target.disciplineTaskId ?? null);
+  const where = await resolveTarget(actor, target.mainTaskId ?? null, target.disciplineTaskId ?? null);
   await assertCanViewProject(actor, where.projectId);
 
   // Deliberately not activeComments() from src/lib/db.ts: a removed comment still belongs in the
@@ -89,7 +91,7 @@ export async function listActivity(
 
   if (target.mainTaskId) {
     const mainTask = await prisma.mainTask.findFirst({
-      where: { id: target.mainTaskId, ...notDeleted },
+      where: { id: target.mainTaskId, ...notDeleted, project: { orgId: actor.orgId } },
       select: { id: true, projectId: true },
     });
     if (!mainTask) throw new NotFoundError("We could not find that task.");
@@ -105,7 +107,11 @@ export async function listActivity(
 
   if (target.disciplineTaskId) {
     const task = await prisma.disciplineTask.findFirst({
-      where: { id: target.disciplineTaskId, ...notDeleted },
+      where: {
+        id: target.disciplineTaskId,
+        ...notDeleted,
+        mainTask: { project: { orgId: actor.orgId } },
+      },
       select: { id: true, mainTask: { select: { projectId: true } } },
     });
     if (!task) throw new NotFoundError("We could not find that task.");
@@ -125,14 +131,14 @@ export async function createComment(
   actor: ActorContext,
   input: CreateCommentInput,
 ): Promise<CommentDTO> {
-  const target = await resolveTarget(input.mainTaskId ?? null, input.disciplineTaskId ?? null);
-  assertCan(actor, "COMMENT", { projectId: target.projectId });
+  const target = await resolveTarget(actor, input.mainTaskId ?? null, input.disciplineTaskId ?? null);
+  assertCan(actor, "COMMENT", { projectId: target.projectId, orgId: target.orgId });
 
   const body = input.body.trim();
   if (body.length === 0) throw new ServiceError("Write something first.");
 
   const mentions = [...new Set(input.mentions ?? [])];
-  await assertMentionsAreMembers(target.projectId, mentions);
+  await assertMentionsAreMembers(actor, target.projectId, mentions);
 
   const commentId = await prisma.$transaction(async (tx) => {
     const comment = await tx.comment.create({
@@ -160,11 +166,10 @@ export async function createComment(
 
   const mentioned = mentions.filter((userId) => userId !== actor.userId);
   if (mentioned.length > 0) {
-    await notify(mentioned, "MENTIONED", {
+    await notify(actor, mentioned, "MENTIONED", {
       title: "You were mentioned in a comment",
       body: `${actor.name} mentioned you on "${target.title}".`,
       linkUrl: target.linkUrl,
-      actorId: actor.userId,
     });
   }
 
@@ -172,11 +177,10 @@ export async function createComment(
     (userId) => userId !== actor.userId && !mentioned.includes(userId),
   );
   if (followers.length > 0) {
-    await notify(followers, "COMMENT_ADDED", {
+    await notify(actor, followers, "COMMENT_ADDED", {
       title: "New comment on your task",
       body: `${actor.name} commented on "${target.title}".`,
       linkUrl: target.linkUrl,
-      actorId: actor.userId,
     });
   }
 
@@ -188,9 +192,9 @@ export async function editComment(
   actor: ActorContext,
   input: { id: string; body: string },
 ): Promise<CommentDTO> {
-  const existing = await loadComment(input.id);
-  const target = await resolveTarget(existing.mainTaskId, existing.disciplineTaskId);
-  assertCan(actor, "COMMENT", { projectId: target.projectId });
+  const existing = await loadComment(actor, input.id);
+  const target = await resolveTarget(actor, existing.mainTaskId, existing.disciplineTaskId);
+  assertCan(actor, "COMMENT", { projectId: target.projectId, orgId: target.orgId });
 
   if (existing.deletedAt) throw new ServiceError("That comment was removed, so it cannot be edited.");
   if (existing.authorId !== actor.userId && actor.role !== "ADMIN") {
@@ -226,9 +230,9 @@ export async function deleteComment(
   actor: ActorContext,
   input: { id: string },
 ): Promise<{ removed: true; projectId: string; mainTaskId: string; disciplineTaskId: string | null }> {
-  const existing = await loadComment(input.id);
-  const target = await resolveTarget(existing.mainTaskId, existing.disciplineTaskId);
-  assertCan(actor, "COMMENT", { projectId: target.projectId });
+  const existing = await loadComment(actor, input.id);
+  const target = await resolveTarget(actor, existing.mainTaskId, existing.disciplineTaskId);
+  assertCan(actor, "COMMENT", { projectId: target.projectId, orgId: target.orgId });
 
   const scope = {
     removed: true as const,
@@ -265,10 +269,11 @@ export async function deleteComment(
 
 /** Which project and task a comment belongs to — the actions use it to refresh the right pages. */
 export async function commentScope(
+  actor: ActorContext,
   commentId: string,
 ): Promise<{ projectId: string; mainTaskId: string; disciplineTaskId: string | null }> {
-  const comment = await loadComment(commentId);
-  const target = await resolveTarget(comment.mainTaskId, comment.disciplineTaskId);
+  const comment = await loadComment(actor, commentId);
+  const target = await resolveTarget(actor, comment.mainTaskId, comment.disciplineTaskId);
   return {
     projectId: target.projectId,
     mainTaskId: target.parentMainTaskId,
@@ -296,14 +301,24 @@ async function readActivity(
   return items;
 }
 
-async function loadComment(id: string) {
-  const comment = await prisma.comment.findUnique({ where: { id } });
+/** A comment in another company's thread does not exist here — the gate is the parent task's project. */
+async function loadComment(actor: ActorContext, id: string) {
+  const comment = await prisma.comment.findFirst({
+    where: {
+      id,
+      OR: [
+        { mainTask: { project: { orgId: actor.orgId } } },
+        { disciplineTask: { mainTask: { project: { orgId: actor.orgId } } } },
+      ],
+    },
+  });
   if (!comment) throw new NotFoundError("We could not find that comment.");
   return comment;
 }
 
 /** Works out the task a comment hangs off, refusing anything that names both or neither. */
 async function resolveTarget(
+  actor: ActorContext,
   mainTaskId: string | null,
   disciplineTaskId: string | null,
 ): Promise<CommentTarget> {
@@ -313,13 +328,20 @@ async function resolveTarget(
 
   if (mainTaskId) {
     const task = await prisma.mainTask.findFirst({
-      where: { id: mainTaskId, ...notDeleted },
-      select: { id: true, projectId: true, title: true, ownerId: true },
+      where: { id: mainTaskId, ...notDeleted, project: { orgId: actor.orgId } },
+      select: {
+        id: true,
+        projectId: true,
+        title: true,
+        ownerId: true,
+        project: { select: { orgId: true } },
+      },
     });
     if (!task) throw new NotFoundError("We could not find that task.");
 
     return {
       projectId: task.projectId,
+      orgId: task.project.orgId,
       mainTaskId: task.id,
       disciplineTaskId: null,
       parentMainTaskId: task.id,
@@ -332,12 +354,18 @@ async function resolveTarget(
   }
 
   const task = await prisma.disciplineTask.findFirst({
-    where: { id: disciplineTaskId as string, ...notDeleted },
+    where: {
+      id: disciplineTaskId as string,
+      ...notDeleted,
+      mainTask: { project: { orgId: actor.orgId } },
+    },
     select: {
       id: true,
       title: true,
       assigneeId: true,
-      mainTask: { select: { id: true, projectId: true, ownerId: true } },
+      mainTask: {
+        select: { id: true, projectId: true, ownerId: true, project: { select: { orgId: true } } },
+      },
     },
   });
   if (!task) throw new NotFoundError("We could not find that task.");
@@ -348,6 +376,7 @@ async function resolveTarget(
 
   return {
     projectId: task.mainTask.projectId,
+    orgId: task.mainTask.project.orgId,
     mainTaskId: null,
     disciplineTaskId: task.id,
     parentMainTaskId: task.mainTask.id,
@@ -360,11 +389,15 @@ async function resolveTarget(
 }
 
 /** Nobody can be mentioned into a project they are not on — that would leak the task to them. */
-async function assertMentionsAreMembers(projectId: string, userIds: string[]): Promise<void> {
+async function assertMentionsAreMembers(
+  actor: ActorContext,
+  projectId: string,
+  userIds: string[],
+): Promise<void> {
   if (userIds.length === 0) return;
 
   const members = await prisma.projectMember.findMany({
-    where: { projectId, userId: { in: userIds } },
+    where: { projectId, userId: { in: userIds }, user: { orgId: actor.orgId } },
     select: { userId: true, user: { select: { isActive: true } } },
   });
   const allowed = new Set(
@@ -374,7 +407,7 @@ async function assertMentionsAreMembers(projectId: string, userIds: string[]): P
   if (refused.length === 0) return;
 
   const people = await prisma.user.findMany({
-    where: { id: { in: refused } },
+    where: { id: { in: refused }, orgId: actor.orgId },
     select: { name: true },
   });
   const names = people.map((person) => person.name).join(", ");

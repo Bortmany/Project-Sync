@@ -52,6 +52,37 @@ export const LoginInput = z.object({
 });
 export type LoginInput = z.infer<typeof LoginInput>;
 
+/** The discipline sets a brand-new company can start from. The lists live in src/server/industry-templates.ts. */
+export const IndustryTemplateSchema = z.enum(["OIL_AND_GAS", "CONSTRUCTION", "GENERIC"]);
+export type IndustryTemplateName = z.infer<typeof IndustryTemplateSchema>;
+
+/**
+ * Signing a new company up: the company itself and the person who will run it, in one form.
+ * The password rule is the same 12-character minimum an administrator's "create user" form uses.
+ */
+export const SignupInput = z.object({
+  organizationName: z.string().trim().min(2, "Tell us your company's name.").max(120),
+  industryTemplate: IndustryTemplateSchema,
+  name: z.string().trim().min(1, "Tell us your name.").max(200),
+  email: z.string().trim().toLowerCase().email("Use an email address like name@company.com.").max(200),
+  password: z
+    .string()
+    .min(12, "Use at least 12 characters — a short sentence works well.")
+    .max(200),
+});
+export type SignupInput = z.infer<typeof SignupInput>;
+
+/** What signup hands back once the company, its disciplines and its first administrator exist. */
+export const SignupResultDTO = z.object({
+  id: id,
+  name: z.string(),
+  role: RoleSchema,
+  organizationId: id,
+  organizationName: z.string(),
+  organizationSlug: z.string(),
+});
+export type SignupResultDTO = z.infer<typeof SignupResultDTO>;
+
 /* ------------------------------------------------------------------ */
 /* Users                                                               */
 /* ------------------------------------------------------------------ */

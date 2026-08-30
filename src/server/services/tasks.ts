@@ -69,7 +69,7 @@ export async function listMainTasksForProject(
     where: { id: projectId },
     select: { code: true },
   });
-  const tasks = await activeMainTasks(projectId);
+  const tasks = await activeMainTasks(actor.orgId, projectId);
   if (tasks.length === 0) return [];
 
   const subtasks = await liveSubtasksFor(tasks.map((task) => task.id));
@@ -99,7 +99,7 @@ export async function listMainTasksForProject(
 
 /** One main task in full. */
 export async function getMainTaskForActor(actor: ActorContext, mainTaskId: string): Promise<MainTaskDTO> {
-  const task = await loadMainTask(mainTaskId);
+  const task = await loadMainTask(actor, mainTaskId);
   await assertCanViewProject(actor, task.projectId);
   return buildMainTaskDTO(mainTaskId);
 }
@@ -109,7 +109,7 @@ export async function getDisciplineTaskForActor(
   actor: ActorContext,
   disciplineTaskId: string,
 ): Promise<DisciplineTaskDTO> {
-  const task = await loadDisciplineTask(disciplineTaskId);
+  const task = await loadDisciplineTask(actor, disciplineTaskId);
   await assertCanViewProject(actor, task.mainTask.projectId);
   return buildDisciplineTaskDTO(disciplineTaskId);
 }
@@ -143,12 +143,12 @@ export async function listMainTaskItems(mainTaskIds: string[]): Promise<MainTask
 /** The whole project on one timeline: every live main task with the discipline tasks beneath it. */
 export async function ganttForProject(actor: ActorContext, projectId: string): Promise<GanttDTO> {
   await assertCanViewProject(actor, projectId);
-  return buildGantt(await activeMainTasks(projectId));
+  return buildGantt(await activeMainTasks(actor.orgId, projectId));
 }
 
 /** One main task on a timeline, with its own discipline tasks. Same shape as the project view. */
 export async function ganttForMainTask(actor: ActorContext, mainTaskId: string): Promise<GanttDTO> {
-  const task = await loadMainTask(mainTaskId);
+  const task = await loadMainTask(actor, mainTaskId);
   await assertCanViewProject(actor, task.projectId);
   return buildGantt([task]);
 }
@@ -196,9 +196,11 @@ async function buildGantt(tasks: GanttTaskRow[]): Promise<GanttDTO> {
 
 /** Creates a main task and, optionally, the discipline tasks that deliver it. */
 export async function createMainTask(actor: ActorContext, input: CreateMainTaskInput): Promise<MainTaskDTO> {
-  const project = await prisma.project.findFirst({ where: { id: input.projectId, ...notDeleted } });
+  const project = await prisma.project.findFirst({
+    where: { id: input.projectId, orgId: actor.orgId, ...notDeleted },
+  });
   if (!project) throw new NotFoundError("We could not find that project.");
-  assertCan(actor, "CREATE_MAIN_TASK", { projectId: project.id });
+  assertCan(actor, "CREATE_MAIN_TASK", { projectId: project.id, orgId: project.orgId });
 
   const disciplineIds = [...new Set(input.disciplineTasks.map((task) => task.disciplineId))];
   const enabled = await enabledDisciplines(project.id);
@@ -285,11 +287,10 @@ export async function createMainTask(actor: ActorContext, input: CreateMainTaskI
     .map((task) => task.assigneeId)
     .filter((id): id is string => Boolean(id) && id !== actor.userId);
   if (assignees.length > 0) {
-    await notify(assignees, "ASSIGNED", {
+    await notify(actor, assignees, "ASSIGNED", {
       title: "New work assigned to you",
       body: `${actor.name} assigned you a discipline task under "${input.title}".`,
       linkUrl: `/tasks/${mainTaskId}`,
-      actorId: actor.userId,
     });
   }
 
@@ -298,8 +299,8 @@ export async function createMainTask(actor: ActorContext, input: CreateMainTaskI
 
 /** Changes a main task's own details. Never its status or progress — those are derived. */
 export async function updateMainTask(actor: ActorContext, input: UpdateMainTaskInput): Promise<MainTaskDTO> {
-  const existing = await loadMainTask(input.id);
-  assertCan(actor, "EDIT_MAIN_TASK", { projectId: existing.projectId });
+  const existing = await loadMainTask(actor, input.id);
+  assertCan(actor, "EDIT_MAIN_TASK", { projectId: existing.projectId, orgId: existing.project.orgId });
   if (input.ownerId) await assertOnProject(existing.projectId, input.ownerId, "owner");
   const nextStart = utcMidnightOrNull(input.startDate);
   const nextDeadline = input.deadline === undefined ? undefined : utcMidnight(input.deadline);
@@ -343,8 +344,8 @@ export async function overrideMainTaskStatus(
   actor: ActorContext,
   input: OverrideStatusInput,
 ): Promise<MainTaskDTO> {
-  const existing = await loadMainTask(input.id);
-  assertCan(actor, "OVERRIDE_MAIN_TASK_STATUS", { projectId: existing.projectId });
+  const existing = await loadMainTask(actor, input.id);
+  assertCan(actor, "OVERRIDE_MAIN_TASK_STATUS", { projectId: existing.projectId, orgId: existing.project.orgId });
 
   const reason = input.reason.trim();
   if (reason.length < 5) throw new ServiceError("Give a short reason (at least 5 characters).");
@@ -375,11 +376,10 @@ export async function overrideMainTaskStatus(
     });
   });
 
-  await notify(await projectAudience(existing.projectId, actor.userId), "OVERRIDE_APPLIED", {
+  await notify(actor, await projectAudience(existing.projectId, actor.userId), "OVERRIDE_APPLIED", {
     title: "A task status was overridden",
     body: `${actor.name} set "${existing.title}" to ${statusWords(input.status)}. Reason: ${reason}`,
     linkUrl: `/tasks/${existing.id}`,
-    actorId: actor.userId,
   });
 
   return buildMainTaskDTO(existing.id);
@@ -387,8 +387,8 @@ export async function overrideMainTaskStatus(
 
 /** Removes an override so the main task goes back to telling the truth of its discipline tasks. */
 export async function clearOverride(actor: ActorContext, input: { id: string }): Promise<MainTaskDTO> {
-  const existing = await loadMainTask(input.id);
-  assertCan(actor, "OVERRIDE_MAIN_TASK_STATUS", { projectId: existing.projectId });
+  const existing = await loadMainTask(actor, input.id);
+  assertCan(actor, "OVERRIDE_MAIN_TASK_STATUS", { projectId: existing.projectId, orgId: existing.project.orgId });
   if (!existing.statusOverride) throw new ServiceError("That task does not have an override to remove.");
 
   await prisma.$transaction(async (tx) => {
@@ -423,9 +423,10 @@ export async function createDisciplineTask(
   actor: ActorContext,
   input: CreateDisciplineTaskInput,
 ): Promise<DisciplineTaskDTO> {
-  const mainTask = await loadMainTask(input.mainTaskId);
+  const mainTask = await loadMainTask(actor, input.mainTaskId);
   assertCan(actor, "CREATE_DISCIPLINE_TASK", {
     projectId: mainTask.projectId,
+    orgId: mainTask.project.orgId,
     disciplineId: input.disciplineId,
   });
 
@@ -491,11 +492,10 @@ export async function createDisciplineTask(
   });
 
   if (input.assigneeId && input.assigneeId !== actor.userId) {
-    await notify([input.assigneeId], "ASSIGNED", {
+    await notify(actor, [input.assigneeId], "ASSIGNED", {
       title: "New work assigned to you",
       body: `${actor.name} assigned you "${input.title}".`,
       linkUrl: `/discipline-tasks/${taskId}`,
-      actorId: actor.userId,
     });
   }
 
@@ -507,8 +507,9 @@ export async function updateDisciplineTask(
   actor: ActorContext,
   input: UpdateDisciplineTaskInput,
 ): Promise<DisciplineTaskDTO> {
-  const existing = await loadDisciplineTask(input.id);
+  const existing = await loadDisciplineTask(actor, input.id);
   const projectId = existing.mainTask.projectId;
+  const orgId = existing.mainTask.project.orgId;
 
   const reassigning = input.assigneeId !== undefined && (input.assigneeId ?? null) !== existing.assigneeId;
   const editingAnythingElse = Object.keys(input).some((key) => key !== "id" && key !== "assigneeId");
@@ -516,13 +517,14 @@ export async function updateDisciplineTask(
   if (reassigning) {
     assertCan(actor, "ASSIGN_DISCIPLINE_TASK", {
       projectId,
+      orgId,
       disciplineId: existing.disciplineId,
       assigneeId: existing.assigneeId,
     });
     if (input.assigneeId) await assertOnProject(projectId, input.assigneeId, "assignee");
   }
   if (editingAnythingElse) {
-    assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, disciplineId: existing.disciplineId });
+    assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, orgId, disciplineId: existing.disciplineId });
   }
   const nextStart = utcMidnightOrNull(input.startDate);
   const nextDeadline = input.deadline === undefined ? undefined : utcMidnight(input.deadline);
@@ -586,11 +588,10 @@ export async function updateDisciplineTask(
   });
 
   if (reassigning && input.assigneeId && input.assigneeId !== actor.userId) {
-    await notify([input.assigneeId], "ASSIGNED", {
+    await notify(actor, [input.assigneeId], "ASSIGNED", {
       title: "Work handed to you",
       body: `${actor.name} assigned you "${input.title ?? existing.title}".`,
       linkUrl: `/discipline-tasks/${existing.id}`,
-      actorId: actor.userId,
     });
   }
 
@@ -602,11 +603,13 @@ export async function updateDisciplineTaskStatus(
   actor: ActorContext,
   input: UpdateTaskStatusInput,
 ): Promise<DisciplineTaskDTO> {
-  const existing = await loadDisciplineTask(input.id);
+  const existing = await loadDisciplineTask(actor, input.id);
   const projectId = existing.mainTask.projectId;
+  const orgId = existing.mainTask.project.orgId;
 
   assertCan(actor, "UPDATE_DISCIPLINE_TASK_STATUS", {
     projectId,
+    orgId,
     disciplineId: existing.disciplineId,
     assigneeId: existing.assigneeId,
   });
@@ -653,11 +656,10 @@ export async function updateDisciplineTaskStatus(
     await recomputeMainTask(tx, existing.mainTaskId, actor, projectId);
   });
 
-  await notify(await taskAudience(existing.id, actor.userId), "STATUS_CHANGED", {
+  await notify(actor, await taskAudience(existing.id, actor.userId), "STATUS_CHANGED", {
     title: "A task moved",
     body: `${actor.name} moved "${existing.title}" to ${statusWords(input.status)}.`,
     linkUrl: `/discipline-tasks/${existing.id}`,
-    actorId: actor.userId,
   });
 
   return buildDisciplineTaskDTO(existing.id);
@@ -672,11 +674,13 @@ export async function completeDisciplineTask(
   input: { id: string },
   note?: string,
 ): Promise<DisciplineTaskDTO> {
-  const existing = await loadDisciplineTask(input.id);
+  const existing = await loadDisciplineTask(actor, input.id);
   const projectId = existing.mainTask.projectId;
+  const orgId = existing.mainTask.project.orgId;
 
   assertCan(actor, "COMPLETE_DISCIPLINE_TASK", {
     projectId,
+    orgId,
     disciplineId: existing.disciplineId,
     assigneeId: existing.assigneeId,
   });
@@ -735,11 +739,10 @@ export async function completeDisciplineTask(
 
   // A lost race (someone else completed it first) writes nothing, so it must announce nothing.
   if (completedNow) {
-    await notify(await taskAudience(existing.id, actor.userId), "STATUS_CHANGED", {
+    await notify(actor, await taskAudience(existing.id, actor.userId), "STATUS_CHANGED", {
       title: "A task was completed",
       body: `${actor.name} marked "${existing.title}" complete.`,
       linkUrl: `/discipline-tasks/${existing.id}`,
-      actorId: actor.userId,
     });
   }
 
@@ -751,11 +754,13 @@ export async function reopenDisciplineTask(
   actor: ActorContext,
   input: { id: string; reason: string },
 ): Promise<DisciplineTaskDTO> {
-  const existing = await loadDisciplineTask(input.id);
+  const existing = await loadDisciplineTask(actor, input.id);
   const projectId = existing.mainTask.projectId;
+  const orgId = existing.mainTask.project.orgId;
 
   assertCan(actor, "UPDATE_DISCIPLINE_TASK_STATUS", {
     projectId,
+    orgId,
     disciplineId: existing.disciplineId,
     assigneeId: existing.assigneeId,
   });
@@ -784,11 +789,10 @@ export async function reopenDisciplineTask(
     await recomputeMainTask(tx, existing.mainTaskId, actor, projectId);
   });
 
-  await notify(await taskAudience(existing.id, actor.userId), "STATUS_CHANGED", {
+  await notify(actor, await taskAudience(existing.id, actor.userId), "STATUS_CHANGED", {
     title: "A completed task was reopened",
     body: `${actor.name} reopened "${existing.title}". Reason: ${reason}`,
     linkUrl: `/discipline-tasks/${existing.id}`,
-    actorId: actor.userId,
   });
 
   return buildDisciplineTaskDTO(existing.id);
@@ -796,11 +800,12 @@ export async function reopenDisciplineTask(
 
 /** Says "this task waits on that one". Both must sit under the same main task, and loops are refused. */
 export async function addDependency(actor: ActorContext, input: AddDependencyInput): Promise<DisciplineTaskDTO> {
-  const successor = await loadDisciplineTask(input.successorId);
-  const predecessor = await loadDisciplineTask(input.predecessorId);
+  const successor = await loadDisciplineTask(actor, input.successorId);
+  const predecessor = await loadDisciplineTask(actor, input.predecessorId);
   const projectId = successor.mainTask.projectId;
+  const orgId = successor.mainTask.project.orgId;
 
-  assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, disciplineId: successor.disciplineId });
+  assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, orgId, disciplineId: successor.disciplineId });
 
   if (predecessor.id === successor.id) throw new ServiceError("A task cannot wait on itself.");
   if (predecessor.mainTaskId !== successor.mainTaskId) {
@@ -846,9 +851,10 @@ export async function removeDependency(
   actor: ActorContext,
   input: AddDependencyInput,
 ): Promise<DisciplineTaskDTO> {
-  const successor = await loadDisciplineTask(input.successorId);
+  const successor = await loadDisciplineTask(actor, input.successorId);
   const projectId = successor.mainTask.projectId;
-  assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, disciplineId: successor.disciplineId });
+  const orgId = successor.mainTask.project.orgId;
+  assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, orgId, disciplineId: successor.disciplineId });
 
   const edge = await prisma.taskDependency.findUnique({
     where: { predecessorId_successorId: { predecessorId: input.predecessorId, successorId: successor.id } },
@@ -880,8 +886,8 @@ export async function updateTaskDates(
   input: UpdateTaskDatesInput,
 ): Promise<MainTaskDTO | DisciplineTaskDTO> {
   if (input.kind === "MAIN") {
-    const existing = await loadMainTask(input.id);
-    assertCan(actor, "EDIT_MAIN_TASK", { projectId: existing.projectId });
+    const existing = await loadMainTask(actor, input.id);
+    assertCan(actor, "EDIT_MAIN_TASK", { projectId: existing.projectId, orgId: existing.project.orgId });
     const nextStart =
       utcMidnightOrNull(input.startDate === undefined ? existing.startDate : input.startDate) ?? null;
     const deadline = utcMidnight(input.deadline);
@@ -909,9 +915,10 @@ export async function updateTaskDates(
     return buildMainTaskDTO(existing.id);
   }
 
-  const existing = await loadDisciplineTask(input.id);
+  const existing = await loadDisciplineTask(actor, input.id);
   const projectId = existing.mainTask.projectId;
-  assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, disciplineId: existing.disciplineId });
+  const orgId = existing.mainTask.project.orgId;
+  assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, orgId, disciplineId: existing.disciplineId });
   const nextStart =
     utcMidnightOrNull(input.startDate === undefined ? existing.startDate : input.startDate) ?? null;
   const deadline = utcMidnight(input.deadline);
@@ -1006,17 +1013,28 @@ export async function recomputeMainTask(
 /* Loaders, serializers and small helpers                              */
 /* ------------------------------------------------------------------ */
 
-async function loadMainTask(id: string) {
-  const task = await prisma.mainTask.findFirst({ where: { id, ...notDeleted } });
+/**
+ * The tenant gate for every main task in this file: a task in another company's project is not
+ * refused, it does not exist. The project's own orgId comes back with it so the permission check
+ * below is made against the row's organisation, never against an assumption.
+ */
+async function loadMainTask(actor: ActorContext, id: string) {
+  const task = await prisma.mainTask.findFirst({
+    where: { id, ...notDeleted, project: { orgId: actor.orgId } },
+    include: { project: { select: { orgId: true } } },
+  });
   if (!task) throw new NotFoundError("We could not find that task.");
   return task;
 }
 
-async function loadDisciplineTask(id: string) {
+/** The same gate for a discipline task, reached through its main task's project. */
+async function loadDisciplineTask(actor: ActorContext, id: string) {
   const task = await prisma.disciplineTask.findFirst({
-    where: { id, ...notDeleted },
+    where: { id, ...notDeleted, mainTask: { project: { orgId: actor.orgId } } },
     include: {
-      mainTask: { select: { id: true, projectId: true, title: true } },
+      mainTask: {
+        select: { id: true, projectId: true, title: true, project: { select: { orgId: true } } },
+      },
       requiredDocuments: true,
     },
   });

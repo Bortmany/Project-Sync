@@ -68,6 +68,7 @@ export async function uploadDocumentVersion(
 
   assertCan(actor, "UPLOAD_DOCUMENT", {
     projectId: target.projectId,
+    orgId: target.orgId,
     disciplineId: target.disciplineId,
     assigneeId: assigneeCtx,
   });
@@ -205,7 +206,7 @@ export async function listDocumentsForMainTask(
   mainTaskId: string,
 ): Promise<DocumentDTO[]> {
   const mainTask = await prisma.mainTask.findFirst({
-    where: { id: mainTaskId, ...notDeleted },
+    where: { id: mainTaskId, ...notDeleted, project: { orgId: actor.orgId } },
     select: { id: true, projectId: true },
   });
   if (!mainTask) throw new NotFoundError("We could not find that task.");
@@ -217,7 +218,7 @@ export async function listDocumentsForMainTask(
   });
   const subtaskIds = new Set(subtasks.map((subtask) => subtask.id));
 
-  const rows = (await activeDocuments(mainTask.projectId)).filter(
+  const rows = (await activeDocuments(actor.orgId, mainTask.projectId)).filter(
     (row) =>
       row.mainTaskId === mainTask.id ||
       (row.disciplineTaskId !== null && subtaskIds.has(row.disciplineTaskId)),
@@ -232,13 +233,13 @@ export async function listDocumentsForDisciplineTask(
   disciplineTaskId: string,
 ): Promise<DocumentDTO[]> {
   const task = await prisma.disciplineTask.findFirst({
-    where: { id: disciplineTaskId, ...notDeleted },
+    where: { id: disciplineTaskId, ...notDeleted, mainTask: { project: { orgId: actor.orgId } } },
     select: { id: true, mainTask: { select: { projectId: true } } },
   });
   if (!task) throw new NotFoundError("We could not find that task.");
   await assertCanViewProject(actor, task.mainTask.projectId);
 
-  const rows = (await activeDocuments(task.mainTask.projectId)).filter(
+  const rows = (await activeDocuments(actor.orgId, task.mainTask.projectId)).filter(
     (row) => row.disciplineTaskId === task.id,
   );
   return toDocumentDTOs(rows);
@@ -250,7 +251,7 @@ export async function listDocumentsForProject(
   projectId: string,
 ): Promise<DocumentDTO[]> {
   await assertCanViewProject(actor, projectId);
-  const rows = (await activeDocuments(projectId)).slice(0, PROJECT_DOCUMENT_CAP);
+  const rows = (await activeDocuments(actor.orgId, projectId)).slice(0, PROJECT_DOCUMENT_CAP);
   return toDocumentDTOs(rows);
 }
 
@@ -259,7 +260,7 @@ export async function listVersions(
   actor: ActorContext,
   documentId: string,
 ): Promise<DocumentVersionDTO[]> {
-  const document = await loadDocument(documentId);
+  const document = await loadDocument(actor, documentId);
   await assertCanViewProject(actor, document.projectId);
 
   const versions = await prisma.documentVersion.findMany({
@@ -276,8 +277,8 @@ export async function getVersionForDownload(
   actor: ActorContext,
   versionId: string,
 ): Promise<{ absolutePath: string; originalFilename: string; mimeType: string; sizeBytes: number }> {
-  const version = await prisma.documentVersion.findUnique({
-    where: { id: versionId },
+  const version = await prisma.documentVersion.findFirst({
+    where: { id: versionId, document: { project: { orgId: actor.orgId } } },
     include: { document: { select: { projectId: true, deletedAt: true } } },
   });
   if (!version) throw new NotFoundError("We could not find that file.");
@@ -307,8 +308,11 @@ export async function softDeleteDocument(
   actor: ActorContext,
   input: { id: string },
 ): Promise<{ deleted: true; projectId: string; mainTaskId: string | null; disciplineTaskId: string | null }> {
-  const document = await loadDocument(input.id);
-  assertCan(actor, "DELETE_DOCUMENT", { projectId: document.projectId });
+  const document = await loadDocument(actor, input.id);
+  assertCan(actor, "DELETE_DOCUMENT", {
+    projectId: document.projectId,
+    orgId: document.project.orgId,
+  });
 
   await prisma.$transaction(async (tx) => {
     // Locking the document row first serialises this against an upload satisfying the same
@@ -403,6 +407,8 @@ export async function softDeleteDocument(
 
 type UploadTarget = {
   projectId: string;
+  /** The organisation the project belongs to, read from the project row itself. */
+  orgId: string;
   /** Set when this upload is a new revision of a document that already exists. */
   documentId: string | null;
   mainTaskId: string | null;
@@ -422,22 +428,23 @@ async function resolveTarget(actor: ActorContext, meta: UploadMeta): Promise<Upl
   if (targets.length !== 1) throw new ServiceError(ONE_TARGET);
 
   const project = await prisma.project.findFirst({
-    where: { id: meta.projectId, ...notDeleted },
-    select: { id: true },
+    where: { id: meta.projectId, orgId: actor.orgId, ...notDeleted },
+    select: { id: true, orgId: true },
   });
   if (!project) throw new NotFoundError("We could not find that project.");
 
   if (meta.documentId) {
-    const document = await loadDocument(meta.documentId);
+    const document = await loadDocument(actor, meta.documentId);
     if (document.projectId !== project.id) {
       throw new ServiceError("That document belongs to a different project.");
     }
     const base = document.disciplineTaskId
-      ? await disciplineTaskTarget(project.id, document.disciplineTaskId)
+      ? await disciplineTaskTarget(project, document.disciplineTaskId)
       : document.mainTaskId
-        ? await mainTaskTarget(project.id, document.mainTaskId)
+        ? await mainTaskTarget(project, document.mainTaskId)
         : {
             projectId: project.id,
+            orgId: project.orgId,
             mainTaskId: null,
             disciplineTaskId: null,
             disciplineId: null,
@@ -449,22 +456,28 @@ async function resolveTarget(actor: ActorContext, meta: UploadMeta): Promise<Upl
   }
 
   if (meta.disciplineTaskId) {
-    return { ...(await disciplineTaskTarget(project.id, meta.disciplineTaskId)), documentId: null };
+    return { ...(await disciplineTaskTarget(project, meta.disciplineTaskId)), documentId: null };
   }
 
-  return { ...(await mainTaskTarget(project.id, meta.mainTaskId as string)), documentId: null };
+  return { ...(await mainTaskTarget(project, meta.mainTaskId as string)), documentId: null };
 }
 
-async function mainTaskTarget(projectId: string, mainTaskId: string): Promise<Omit<UploadTarget, "documentId">> {
+type TargetProject = { id: string; orgId: string };
+
+async function mainTaskTarget(
+  project: TargetProject,
+  mainTaskId: string,
+): Promise<Omit<UploadTarget, "documentId">> {
   const task = await prisma.mainTask.findFirst({
-    where: { id: mainTaskId, ...notDeleted },
+    where: { id: mainTaskId, ...notDeleted, project: { orgId: project.orgId } },
     select: { id: true, projectId: true, ownerId: true },
   });
   if (!task) throw new NotFoundError("We could not find that task.");
-  if (task.projectId !== projectId) throw new ServiceError("That task is not part of this project.");
+  if (task.projectId !== project.id) throw new ServiceError("That task is not part of this project.");
 
   return {
-    projectId,
+    projectId: project.id,
+    orgId: project.orgId,
     mainTaskId: task.id,
     disciplineTaskId: null,
     disciplineId: null,
@@ -475,11 +488,15 @@ async function mainTaskTarget(projectId: string, mainTaskId: string): Promise<Om
 }
 
 async function disciplineTaskTarget(
-  projectId: string,
+  project: TargetProject,
   disciplineTaskId: string,
 ): Promise<Omit<UploadTarget, "documentId">> {
   const task = await prisma.disciplineTask.findFirst({
-    where: { id: disciplineTaskId, ...notDeleted },
+    where: {
+      id: disciplineTaskId,
+      ...notDeleted,
+      mainTask: { project: { orgId: project.orgId } },
+    },
     select: {
       id: true,
       disciplineId: true,
@@ -488,12 +505,13 @@ async function disciplineTaskTarget(
     },
   });
   if (!task) throw new NotFoundError("We could not find that task.");
-  if (task.mainTask.projectId !== projectId) {
+  if (task.mainTask.projectId !== project.id) {
     throw new ServiceError("That task is not part of this project.");
   }
 
   return {
-    projectId,
+    projectId: project.id,
+    orgId: project.orgId,
     mainTaskId: null,
     disciplineTaskId: task.id,
     disciplineId: task.disciplineId,
@@ -510,8 +528,11 @@ async function resolveRequiredDocument(
 ): Promise<{ id: string; name: string } | null> {
   if (!meta.requiredDocumentId) return null;
 
-  const item = await prisma.requiredDocument.findUnique({
-    where: { id: meta.requiredDocumentId },
+  const item = await prisma.requiredDocument.findFirst({
+    where: {
+      id: meta.requiredDocumentId,
+      disciplineTask: { mainTask: { project: { orgId: target.orgId } } },
+    },
     select: { id: true, name: true, disciplineTaskId: true },
   });
   if (!item) throw new NotFoundError("We could not find that required document.");
@@ -628,8 +649,15 @@ export async function toDocumentDTOs(rows: DocumentRow[]): Promise<DocumentDTO[]
   return checkDtoList(DocumentSchema, items, "DocumentDTO");
 }
 
-async function loadDocument(documentId: string) {
-  const document = await prisma.document.findFirst({ where: { id: documentId, ...notDeleted } });
+/**
+ * The tenant gate for documents: a document in another company's project does not exist here.
+ * Its project's orgId rides along so the permission check is made against the row's own company.
+ */
+async function loadDocument(actor: ActorContext, documentId: string) {
+  const document = await prisma.document.findFirst({
+    where: { id: documentId, ...notDeleted, project: { orgId: actor.orgId } },
+    include: { project: { select: { orgId: true } } },
+  });
   if (!document) throw new NotFoundError("We could not find that document.");
   return document;
 }
@@ -650,11 +678,10 @@ async function notifyWatchers(actor: ActorContext, target: UploadTarget, filenam
   recipients.delete(actor.userId);
   if (recipients.size === 0) return;
 
-  await notify([...recipients], "DOCUMENT_UPLOADED", {
+  await notify(actor, [...recipients], "DOCUMENT_UPLOADED", {
     title: "A new document was uploaded",
     body: `${actor.name} uploaded ${filename}.`,
     linkUrl: target.linkUrl,
-    actorId: actor.userId,
   });
 }
 

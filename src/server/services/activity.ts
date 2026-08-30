@@ -8,6 +8,7 @@ import { checkDtoList } from "@/server/serialize";
 
 /** The vocabulary of audit actions. Keep new entries short, upper case and past tense. */
 export const ACTIVITY = {
+  ORG_CREATED: "ORG_CREATED",
   PROJECT_CREATED: "PROJECT_CREATED",
   PROJECT_UPDATED: "PROJECT_UPDATED",
   MEMBER_ADDED: "MEMBER_ADDED",
@@ -48,6 +49,8 @@ export type AppendActivityInput = {
   actorId: string;
   projectId: string | null;
   entityType:
+    // The organisation itself — the very first audit row a company ever has, written at signup.
+    | "Organization"
     | "Project"
     | "ProjectMember"
     | "ProjectDiscipline"

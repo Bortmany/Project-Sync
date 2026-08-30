@@ -212,3 +212,10 @@ Named here so nobody assumes otherwise:
 - **Shared rate limiting** — limits are counted per process (`src/lib/rate-limit.ts`). Fine on one
   instance; if the app is ever scaled to several, add the Redis store behind `RateLimitStore`.
 - **Email or SMS notifications** — notifications live in the app only.
+- **Hiding whether an email address already has an account** — public signup answers a duplicate
+  address with "that email address already has a Tielora account", so a caller can learn that an
+  address is registered somewhere on the product. That is an accepted round-one tradeoff of one
+  address signing in to one company: the alternative (always claiming success) leaves a real person
+  who forgot they had signed up with no way forward. It is limited to five signups an hour per IP
+  address, and no company name, person or data is revealed with it. Revisit if signup ever gets an
+  email-confirmation step, which would let the answer move into the inbox.

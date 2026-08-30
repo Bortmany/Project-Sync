@@ -1,4 +1,5 @@
-// Seed: the eight disciplines, a demo administrator, a demo team and one fully worked demo project.
+// Seed: one demo organisation, its eight disciplines, a demo administrator, a demo team and one
+// fully worked demo project.
 //
 // Everything after the people is created THROUGH THE SERVICE LAYER, so the demo data has real audit
 // rows, real derived progress and real gating — nothing is written straight into the tables.
@@ -36,6 +37,12 @@ const DISCIPLINES = [
   { code: "REL", name: "Reliability", colorHex: "#B08D57", sortOrder: 7 },
   { code: "INSP", name: "Inspection", colorHex: "#7A6A8A", sortOrder: 8 },
 ];
+
+// The demo company every seeded person and project belongs to. Real companies arrive through
+// /api/auth/signup; this one exists so a fresh checkout has something to look at.
+const ORG_NAME = "Tielora Demo";
+const ORG_SLUG = "tielora-demo";
+const ORG_TEMPLATE = "OIL_AND_GAS";
 
 // Demo credentials for local development only — never use these anywhere real.
 const ADMIN_EMAIL = "admin@omanlng.example";
@@ -255,10 +262,13 @@ const out = (line: string) => process.stdout.write(`${line}\n`);
 async function main() {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not set. Copy .env.example to .env.");
 
-  const disciplineIdByCode = await seedDisciplines();
-  const userIdByEmail = await seedPeople(disciplineIdByCode);
+  const org = await seedOrganization();
+  const disciplineIdByCode = await seedDisciplines(org.id);
+  const userIdByEmail = await seedPeople(org.id, disciplineIdByCode);
 
-  const existing = await prisma.project.findUnique({ where: { code: PROJECT_CODE } });
+  const existing = await prisma.project.findUnique({
+    where: { orgId_code: { orgId: org.id, code: PROJECT_CODE } },
+  });
   if (existing && process.env.SEED_RESET !== "1") {
     out(`The demo project ${PROJECT_CODE} is already here, so nothing was rebuilt.`);
     out("Run SEED_RESET=1 npm run seed to rebuild it from scratch (development data only).");
@@ -380,20 +390,34 @@ async function main() {
   await report();
 }
 
-async function seedDisciplines(): Promise<Map<string, string>> {
+/** The demo company itself. Everything else the seed writes belongs to it. */
+async function seedOrganization(): Promise<{ id: string }> {
+  const org = await prisma.organization.upsert({
+    where: { slug: ORG_SLUG },
+    update: { name: ORG_NAME },
+    create: { name: ORG_NAME, slug: ORG_SLUG, industryTemplate: ORG_TEMPLATE },
+    select: { id: true },
+  });
+  return org;
+}
+
+async function seedDisciplines(orgId: string): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   for (const discipline of DISCIPLINES) {
     const row = await prisma.discipline.upsert({
-      where: { code: discipline.code },
+      where: { orgId_code: { orgId, code: discipline.code } },
       update: { name: discipline.name, colorHex: discipline.colorHex, sortOrder: discipline.sortOrder },
-      create: discipline,
+      create: { ...discipline, orgId },
     });
     map.set(row.code, row.id);
   }
   return map;
 }
 
-async function seedPeople(disciplineIdByCode: Map<string, string>): Promise<Map<string, string>> {
+async function seedPeople(
+  orgId: string,
+  disciplineIdByCode: Map<string, string>,
+): Promise<Map<string, string>> {
   const passwordHash = await argon2.hash(DEMO_PASSWORD, { type: argon2.argon2id });
   const map = new Map<string, string>();
 
@@ -401,6 +425,7 @@ async function seedPeople(disciplineIdByCode: Map<string, string>): Promise<Map<
     where: { email: ADMIN_EMAIL },
     update: { role: "ADMIN", isActive: true },
     create: {
+      orgId,
       email: ADMIN_EMAIL,
       name: "Nexus Administrator",
       passwordHash,
@@ -416,6 +441,7 @@ async function seedPeople(disciplineIdByCode: Map<string, string>): Promise<Map<
       where: { email: person.email },
       update: { name: person.name, role: person.role, disciplineId, jobTitle: person.jobTitle, isActive: true },
       create: {
+        orgId,
         email: person.email,
         name: person.name,
         passwordHash,
@@ -461,7 +487,9 @@ async function resetDemoProject(projectId: string): Promise<void> {
 
 /** Prints what is now in the database, plus the demo logins. */
 async function report(): Promise<void> {
-  const project = await prisma.project.findUnique({ where: { code: PROJECT_CODE } });
+  const project = await prisma.project.findFirst({
+    where: { code: PROJECT_CODE, organization: { slug: ORG_SLUG } },
+  });
   if (!project) {
     out("No demo project found.");
     return;
@@ -473,7 +501,7 @@ async function report(): Promise<void> {
     include: { _count: { select: { disciplineTasks: true } } },
   });
   const [users, activity] = await Promise.all([
-    prisma.user.count({ where: { isActive: true } }),
+    prisma.user.count({ where: { orgId: project.orgId, isActive: true } }),
     prisma.activityLog.count({ where: { projectId: project.id } }),
   ]);
 

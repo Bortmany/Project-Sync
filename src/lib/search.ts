@@ -1,6 +1,11 @@
 // Global search: one query per kind of thing, all of them limited to the projects the signed-in
-// person may see. An administrator searches every project; everyone else searches only the projects
-// they are a member of, so a search can never reveal work someone is not on.
+// person may see. An administrator searches every project IN THEIR OWN COMPANY; everyone else
+// searches only the projects they are a member of, so a search can never reveal work someone is not
+// on — and never anything belonging to another customer.
+//
+// The tenant filter is not repeated per query on purpose: every group below is reached through
+// `projectIds`, which comes from the org-scoped helpers in src/lib/db.ts, and the one group that is
+// not (people) is filtered by organisation inside listUsers().
 //
 // The queries use case-insensitive "contains" (Postgres ILIKE), which the trigram indexes added in
 // prisma/migrations/20260820173145_search_trgm_indexes keep quick on partial words.
@@ -37,7 +42,9 @@ export async function searchEverything(
 
   // The scope: the same projects the projects list would show this person.
   const visibleProjects =
-    actor.role === "ADMIN" ? await activeProjects() : await activeProjectsForUser(actor.userId);
+    actor.role === "ADMIN"
+      ? await activeProjects(actor.orgId)
+      : await activeProjectsForUser(actor.orgId, actor.userId);
   const projectIds = visibleProjects.map((project) => project.id);
 
   const like = { contains: needle, mode: "insensitive" as const };
@@ -98,8 +105,10 @@ export async function searchEverything(
             createdAt: true,
           },
         }),
-    // People are a shared directory, readable by anyone signed in (same rule as /api/users).
-    listUsers(needle),
+    // People are a shared directory, readable by anyone signed in — inside their own company only
+    // (same rule as /api/users). This is the one group in a search that is not reached through a
+    // project, so it carries the organisation filter itself.
+    listUsers(actor, needle),
   ]);
 
   const [projects, mainTasks, documents] = await Promise.all([

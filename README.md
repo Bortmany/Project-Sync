@@ -6,7 +6,12 @@ Electrical, Instrumentation, Civil, Process, HSE, Reliability, Inspection) with 
 documents, dependencies, comments and a full audit trail. A main task's status and progress are
 always calculated from its discipline tasks — never typed in by hand.
 
-It is a private, admin-invite-only tool. There is no public signup.
+Since the Milestone 1 SaaS conversion it serves **many companies from one database** under the name
+**Tielora**: a company signs itself up at `POST /api/auth/signup`, gets its disciplines from an
+industry template and an administrator of its own, and adds everyone else from the Admin section.
+No person of any role ever sees another company's data — that rule, and where it is enforced, is the
+first section of `docs/CONVENTIONS.md`. The screens still say Project Nexus; the rebrand and the
+signup pages are a later milestone.
 
 Read [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) before changing anything — it is this repo's law.
 Design tokens and screen patterns are in [`docs/design-notes.md`](docs/design-notes.md). Launch gates

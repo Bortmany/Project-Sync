@@ -5,10 +5,40 @@ baseline in `Agents/docs/engineering-standards.md` wherever the two differ.
 
 ## What this app is
 
-Project Nexus is Oman LNG's internal coordination platform for multidisciplinary engineering work: a
-project holds main tasks, each main task is delivered by discipline tasks (Mechanical, Electrical,
-Instrumentation, Civil, Process, HSE, Reliability, Inspection) with required documents, dependencies,
-comments and a full audit trail. It is a private, admin-invite-only tool — there is no public signup.
+Tielora is a multi-company coordination platform for multidisciplinary engineering work: a project
+holds main tasks, each main task is delivered by discipline tasks (Mechanical, Electrical,
+Instrumentation, Civil, Process, HSE, Reliability, Inspection — the set depends on the company's
+industry template) with required documents, dependencies, comments and a full audit trail.
+
+It was Project Nexus, one company's internal tool. Since the Milestone 1 SaaS conversion it serves
+many companies from one database: a company signs itself up at `/api/auth/signup`, gets its
+disciplines from an industry template and an administrator of its own, and adds everyone else from
+the Admin section. The screens still say Project Nexus in places — the rebrand is a later milestone.
+
+## THE TENANT RULE (read this before the golden rule)
+
+> No person, of any role, ever sees or changes anything belonging to another organisation. An ADMIN
+> is the administrator of their OWN company only.
+
+Three columns carry the whole thing — `User.orgId`, `Discipline.orgId`, `Project.orgId` — and every
+other model reaches its organisation through one of them. In practice:
+
+- `getSessionUser()` and every `ActorContext` carry `orgId`. It always comes from the session, never
+  from a request body, a query string or a form.
+- **The helpers in `src/lib/db.ts` take `orgId` as their first argument** and filter on it. A listing
+  written through them cannot forget the tenant — the compiler asks for it.
+- **`assertCan` refuses across organisations before it considers any role.** `PermissionContext`
+  makes `orgId` mandatory whenever `projectId` is given, and the `orgId` passed is the TARGET row's,
+  read from the row itself. Admins are refused like everyone else.
+- Every service loader (`projectInOrg`, `loadMainTask`, `loadDisciplineTask`, `loadDocument`,
+  `loadComment`, the comment target resolver) filters by the actor's organisation, so another
+  company's row is **not found** rather than forbidden — an outsider never learns an id is real.
+- `notify()` takes the actor and filters recipients by their organisation: a fan-out cannot leave it.
+- The hourly sweep notifies a task's own assignee or owner, who is always a member of that task's
+  project and therefore in the same organisation. Proved in `org-isolation.service.test.ts`.
+
+**Any change touching this area adds or extends a test in
+`src/server/__tests__/org-isolation.service.test.ts` in the same change.**
 
 ## THE GOLDEN RULE (the core guarantee)
 
@@ -82,6 +112,24 @@ In practice:
   - `20260821070011_notification_sweep_lookup_index` (`@@index([type, linkUrl])` on Notification —
     the hourly sweep's "have I already sent this?" check filtered on those two columns with no
     index, i.e. a full scan of the fastest-growing table every hour).
+  - `20260830090000_organizations_multi_tenant` (the SaaS conversion — the approved Milestone 1
+    amendment. New `Organization` model (name, unique `slug`, `industryTemplate`); a required
+    `orgId` with a cascading relation on `User`, `Discipline` and `Project`. Two constraints were
+    **converted** from global to per-organisation — `Discipline.code` and `Project.code`
+    (`@@unique([orgId, code])`) — so two companies may both run a "CIVIL" discipline or a "PH-1"
+    project. `@@unique([orgId, name])` on Discipline is **brand new**: a discipline name was never
+    unique before, and it now stops one company holding two disciplines both called "Civil".
+    `User.email` stays globally unique on purpose: one address signs in to one company, so the
+    sign-in form never has to ask which. `ActivityLog.projectId` was already nullable, which is what
+    lets the organisation-level `ORG_CREATED` row exist. The generated diff's five trigram
+    `DropIndex` lines were deleted by hand; the two that remain — `Discipline_code_key`,
+    `Project_code_key` — are deliberate, being exactly the global uniqueness that became
+    per-organisation. **On a populated install** the migration adds each `orgId` nullable, moves
+    everything already there into one "Legacy workspace" organisation, then makes the columns
+    required; an empty database creates no such organisation. The step that can still fail there is
+    the new `@@unique([orgId, name])`: two disciplines sharing a name (or a code, or two projects
+    sharing a code) were legal before and clash once they sit in the same legacy company, so those
+    duplicates have to be cleaned up by hand before the migration will apply.)
   - `20260825075156_favorites_and_personal_tasks` (two new models for the sidebar: `Favorite` —
     a person's starred project / main task / discipline task, cascading from all four owners, with
     a hand-written `favorite_one_target` CHECK constraint so exactly one target column is ever set;
@@ -123,6 +171,7 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/dashboard` | GET | — | `DashboardDTO` |
 | `/api/uploads` | POST | multipart: `file`, `projectId`, `mainTaskId?` \| `disciplineTaskId?`, `documentId?`, `requiredDocumentId?`, `title?`, `category?`, `note?` (validated by `UploadMeta`) | `DocumentVersionDTO` |
 | `/api/documents/versions/[versionId]/download` | GET | — | file stream |
+| `/api/auth/signup` | POST | `SignupInput` | `SignupResultDTO` + session cookie (public; `byIp` limited to 5 an hour) |
 | `/api/auth/login` | POST | `LoginInput` | session cookie |
 | `/api/auth/logout` | POST | — | `{ signedOut: true }` |
 | `/api/auth/me` | GET | — | signed-in user |
@@ -160,7 +209,7 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `softDeleteDocument` (ADMIN / PM; never deletes a revision) | `{ id }` | `ActionResult<{ deleted: true }>` |
 | `markNotificationRead` (own notification only — someone else's is refused) | `{ id }` | `ActionResult<NotificationDTO>` |
 | `markAllNotificationsRead` (the signed-in person's unread only) | — | `ActionResult<{ count: number }>` |
-| `createUser` | `CreateUserInput` | `ActionResult<UserDTO>` |
+| `createUser` (always into the actor's own organisation) | `CreateUserInput` | `ActionResult<UserDTO>` |
 | `updateUser` | `UpdateUserInput` | `ActionResult<UserDTO>` |
 | `deactivateUser` | `{ id }` | `ActionResult<UserDTO>` |
 | `createDiscipline` | `CreateDisciplineInput` | `ActionResult<DisciplineDTO>` |
@@ -217,6 +266,15 @@ npm run build
 
 `npm run verify` chains the middle steps against the current `DATABASE_URL`.
 
+After any migration, check the trigram indexes really did survive on **both** databases:
+
+```
+psql "$DATABASE_URL"      -c "SELECT indexname FROM pg_indexes WHERE indexname LIKE '%trgm%';"
+psql "$DATABASE_URL_TEST" -c "SELECT indexname FROM pg_indexes WHERE indexname LIKE '%trgm%';"
+```
+
+Five rows each: Project_name, MainTask_title, DisciplineTask_title, Document_title, User_name.
+
 About the two seed steps:
 
 - `npm run seed` is safe to run again and again. It refreshes the disciplines and the demo people,
@@ -231,14 +289,17 @@ About the two seed steps:
 
 ## Review priorities for `code-reviewer`
 
-1. **Golden-rule violations** — a status or progress value written by hand, a completion that skips a
+1. **Tenant leaks** — a query with no organisation filter, an `assertCan` given the actor's own
+   `orgId` instead of the target row's, a loader that finds a row before checking whose it is, a
+   listing that bypasses the helpers in `src/lib/db.ts`.
+2. **Golden-rule violations** — a status or progress value written by hand, a completion that skips a
    mandatory document or open dependency, an override without a recorded reason, an updated or
    deleted `DocumentVersion` / `ActivityLog` row.
-2. **Missing server-side authorisation or scoping** — a route without `assertCan`, a query that is
+3. **Missing server-side authorisation or scoping** — a route without `assertCan`, a query that is
    not limited to the signed-in person's projects.
-3. **Unvalidated input** — a body, query or form read without a zod parse; an upload trusted by name.
-4. **Audit-log gaps** — a mutation that does not append an `ActivityLog` row in the same transaction.
-5. **Conventions drift** — redefined DTO types, raw `findMany` in a listing, `console.log`, new hex
+4. **Unvalidated input** — a body, query or form read without a zod parse; an upload trusted by name.
+5. **Audit-log gaps** — a mutation that does not append an `ActivityLog` row in the same transaction.
+6. **Conventions drift** — redefined DTO types, raw `findMany` in a listing, `console.log`, new hex
    colours, a schema change after Milestone 1.
 
 ## Notes

@@ -4,7 +4,6 @@
 
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
-import { ForbiddenError } from "@/lib/permissions";
 import type { NotificationDTO } from "@/lib/zod-schemas";
 import { NotificationDTO as NotificationSchema } from "@/lib/zod-schemas";
 import type { ActorContext } from "@/server/actor";
@@ -66,20 +65,21 @@ export async function unreadCount(actor: ActorContext): Promise<number> {
   return prisma.notification.count({ where: { userId: actor.userId, readAt: null } });
 }
 
-/** Marks one notification read. Only ever your own — someone else's is refused, not silently ignored. */
+/**
+ * Marks one notification read. Only ever your own: somebody else's is **not found**, the same
+ * answer the tenant rule gives everywhere else, so guessing ids never reveals that one is real.
+ */
 export async function markNotificationRead(
   actor: ActorContext,
   input: { id: string },
 ): Promise<NotificationDTO> {
-  const existing = await prisma.notification.findUnique({
-    where: { id: input.id },
+  // Ownership is part of the lookup, not a check after it: a row belonging to anybody else simply
+  // does not come back.
+  const existing = await prisma.notification.findFirst({
+    where: { id: input.id, userId: actor.userId },
     select: { id: true, userId: true, readAt: true },
   });
   if (!existing) throw new NotFoundError("We could not find that notification.");
-  if (existing.userId !== actor.userId) {
-    // There is no notification-specific permission action; this is a plain ownership check.
-    throw new ForbiddenError("VIEW_PROJECT", "That notification belongs to someone else.");
-  }
 
   if (!existing.readAt) {
     await prisma.notification.update({

@@ -1,4 +1,7 @@
-// The Admin section: the people directory and the discipline catalogue. Administrators only.
+// The Admin section: the people directory and the discipline catalogue. Administrators only —
+// and an administrator administers THEIR OWN COMPANY. Every read and every write below is filtered
+// by the actor's orgId, and a new account is created inside the actor's organisation; there is no
+// way through this file to see, change or create a person or a discipline anywhere else.
 // Every mutation: assertCan → transaction → audit row in the same transaction → typed DTO.
 // Passwords are hashed before they reach the database and never appear in an audit row or a log.
 
@@ -74,6 +77,7 @@ export async function listAllUsers(actor: ActorContext): Promise<UserDTO[]> {
   assertCan(actor, "MANAGE_USERS");
 
   const rows = await prisma.user.findMany({
+    where: { orgId: actor.orgId },
     orderBy: [{ isActive: "desc" }, { name: "asc" }],
     select: USER_SELECT,
   });
@@ -85,7 +89,10 @@ export async function listAllUsers(actor: ActorContext): Promise<UserDTO[]> {
 export async function listDisciplinesForAdmin(actor: ActorContext): Promise<DisciplineDTO[]> {
   assertCan(actor, "MANAGE_DISCIPLINES");
 
-  const rows = await prisma.discipline.findMany({ orderBy: { sortOrder: "asc" } });
+  const rows = await prisma.discipline.findMany({
+    where: { orgId: actor.orgId },
+    orderBy: { sortOrder: "asc" },
+  });
   const items = rows.map((row) => ({
     id: row.id,
     code: row.code,
@@ -102,6 +109,7 @@ export async function listDisciplinesForAdmin(actor: ActorContext): Promise<Disc
 /* ------------------------------------------------------------------ */
 
 async function assertDisciplineChoice(
+  actor: ActorContext,
   role: RoleName,
   disciplineId: string | null | undefined,
 ): Promise<void> {
@@ -112,17 +120,23 @@ async function assertDisciplineChoice(
   }
   if (!disciplineId) return;
 
-  const discipline = await prisma.discipline.findUnique({
-    where: { id: disciplineId },
+  const discipline = await prisma.discipline.findFirst({
+    where: { id: disciplineId, orgId: actor.orgId },
     select: { id: true },
   });
   if (!discipline) throw new NotFoundError("We could not find that discipline.");
 }
 
-/** Creates an account. There is no signup — this is the only way a person gets into the app. */
+/**
+ * Creates an account inside the administrator's own company. Signup creates the FIRST person in a
+ * company; this is how every colleague after them gets in. The new account's orgId is taken from
+ * the actor, never from the form — there is no way to add someone to another organisation.
+ */
 export async function createUser(actor: ActorContext, input: CreateUserInput): Promise<UserDTO> {
   assertCan(actor, "MANAGE_USERS");
 
+  // Email addresses are unique across the whole product — one address signs in to one company —
+  // so the answer to "is this taken?" cannot be narrowed to this organisation.
   const clash = await prisma.user.findUnique({ where: { email: input.email }, select: { id: true } });
   if (clash) {
     throw new ServiceError("A user with this email already exists.", {
@@ -130,12 +144,13 @@ export async function createUser(actor: ActorContext, input: CreateUserInput): P
     });
   }
 
-  await assertDisciplineChoice(input.role, input.disciplineId);
+  await assertDisciplineChoice(actor, input.role, input.disciplineId);
   const passwordHash = await hashPassword(input.password);
 
   const created = await prisma.$transaction(async (tx) => {
     const user = await tx.user.create({
       data: {
+        orgId: actor.orgId,
         email: input.email,
         name: input.name,
         passwordHash,
@@ -166,13 +181,16 @@ export async function createUser(actor: ActorContext, input: CreateUserInput): P
 export async function updateUser(actor: ActorContext, input: UpdateUserInput): Promise<UserDTO> {
   assertCan(actor, "MANAGE_USERS");
 
-  const existing = await prisma.user.findUnique({ where: { id: input.id }, select: USER_SELECT });
+  const existing = await prisma.user.findFirst({
+    where: { id: input.id, orgId: actor.orgId },
+    select: USER_SELECT,
+  });
   if (!existing) throw new NotFoundError("We could not find that person.");
 
   const nextRole = input.role ?? existing.role;
   const nextDisciplineId =
     input.disciplineId === undefined ? existing.disciplineId : input.disciplineId;
-  await assertDisciplineChoice(nextRole, nextDisciplineId);
+  await assertDisciplineChoice(actor, nextRole, nextDisciplineId);
 
   // Nobody locks themselves out: neither by dropping their own administrator role...
   if (existing.id === actor.userId && nextRole !== "ADMIN") {
@@ -186,7 +204,10 @@ export async function updateUser(actor: ActorContext, input: UpdateUserInput): P
   const nextIsActive = input.isActive ?? existing.isActive;
   const wasActiveAdmin = existing.role === "ADMIN" && existing.isActive;
   if (wasActiveAdmin && (nextRole !== "ADMIN" || !nextIsActive)) {
-    const activeAdmins = await prisma.user.count({ where: { role: "ADMIN", isActive: true } });
+    // "The last administrator" is counted inside this company only.
+    const activeAdmins = await prisma.user.count({
+      where: { orgId: actor.orgId, role: "ADMIN", isActive: true },
+    });
     if (activeAdmins <= 1) {
       throw new ServiceError(
         "This is the only administrator who can sign in. Give someone else administrator access first.",
@@ -249,7 +270,10 @@ export async function updateUser(actor: ActorContext, input: UpdateUserInput): P
 export async function deactivateUser(actor: ActorContext, input: { id: string }): Promise<UserDTO> {
   assertCan(actor, "MANAGE_USERS");
 
-  const existing = await prisma.user.findUnique({ where: { id: input.id }, select: USER_SELECT });
+  const existing = await prisma.user.findFirst({
+    where: { id: input.id, orgId: actor.orgId },
+    select: USER_SELECT,
+  });
   if (!existing) throw new NotFoundError("We could not find that person.");
   if (existing.id === actor.userId) {
     throw new ServiceError("You cannot deactivate your own account.");
@@ -283,6 +307,11 @@ export async function deactivateUser(actor: ActorContext, input: { id: string })
 /* Disciplines                                                         */
 /* ------------------------------------------------------------------ */
 
+/** One refusal, worded once, with the field the form should highlight. */
+function fail(message: string, field: "code" | "name"): never {
+  throw new ServiceError(message, { [field]: [message] });
+}
+
 function assertPaletteColor(colorHex: string): void {
   if (isPaletteColor(colorHex)) return;
   throw new ServiceError(
@@ -299,19 +328,22 @@ export async function createDiscipline(
   assertCan(actor, "MANAGE_DISCIPLINES");
   assertPaletteColor(input.colorHex);
 
-  const clash = await prisma.discipline.findUnique({
-    where: { code: input.code },
-    select: { id: true },
+  // Codes and names are unique inside a company, not across the product: another customer running
+  // a "CIVIL" discipline is none of this company's business.
+  const clash = await prisma.discipline.findFirst({
+    where: { orgId: actor.orgId, OR: [{ code: input.code }, { name: input.name }] },
+    select: { code: true },
   });
   if (clash) {
-    throw new ServiceError("A discipline with this code already exists.", {
-      code: ["A discipline with this code already exists."],
-    });
+    return clash.code === input.code
+      ? fail("A discipline with this code already exists.", "code")
+      : fail("A discipline with this name already exists.", "name");
   }
 
   const created = await prisma.$transaction(async (tx) => {
     const discipline = await tx.discipline.create({
       data: {
+        orgId: actor.orgId,
         code: input.code,
         name: input.name,
         colorHex: input.colorHex,
@@ -353,8 +385,18 @@ export async function updateDiscipline(
   assertCan(actor, "MANAGE_DISCIPLINES");
   if (input.colorHex) assertPaletteColor(input.colorHex);
 
-  const existing = await prisma.discipline.findUnique({ where: { id: input.id } });
+  const existing = await prisma.discipline.findFirst({
+    where: { id: input.id, orgId: actor.orgId },
+  });
   if (!existing) throw new NotFoundError("We could not find that discipline.");
+
+  if (input.name && input.name !== existing.name) {
+    const nameClash = await prisma.discipline.findFirst({
+      where: { orgId: actor.orgId, name: input.name, id: { not: existing.id } },
+      select: { id: true },
+    });
+    if (nameClash) fail("A discipline with this name already exists.", "name");
+  }
 
   const updated = await prisma.$transaction(async (tx) => {
     const discipline = await tx.discipline.update({

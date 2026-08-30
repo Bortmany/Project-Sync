@@ -29,11 +29,31 @@ import { ACTIVITY, appendActivity } from "@/server/services/activity";
 /* Reads                                                               */
 /* ------------------------------------------------------------------ */
 
-/** The one place "may this person see this project?" is answered. Admins see everything. */
+/**
+ * The one place "may this person see this project?" is answered — and the read side's tenant gate.
+ * Another company's project is not refused, it simply does not exist: the lookup is filtered by the
+ * actor's organisation, so an outsider learns nothing about whether the id is real.
+ * Inside one company, admins still see everything.
+ */
 export async function assertCanViewProject(actor: ActorContext, projectId: string): Promise<void> {
-  const project = await prisma.project.findFirst({ where: { id: projectId, ...notDeleted }, select: { id: true } });
+  const project = await projectInOrg(actor, projectId);
+  assertCan(actor, "VIEW_PROJECT", { projectId: project.id, orgId: project.orgId });
+}
+
+/**
+ * Loads a live project that belongs to the actor's organisation, or says it does not exist.
+ * Every service that needs a project starts here, so no mutation can ever reach across companies.
+ */
+export async function projectInOrg(
+  actor: ActorContext,
+  projectId: string,
+): Promise<{ id: string; orgId: string }> {
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, orgId: actor.orgId, ...notDeleted },
+    select: { id: true, orgId: true },
+  });
   if (!project) throw new NotFoundError("We could not find that project.");
-  assertCan(actor, "VIEW_PROJECT", { projectId });
+  return project;
 }
 
 /**
@@ -43,13 +63,19 @@ export async function assertCanViewProject(actor: ActorContext, projectId: strin
  * ("my tasks", the sidebar's shortcuts) filter against this set.
  */
 export async function visibleProjects(actor: ActorContext): Promise<Map<string, string>> {
-  const projects = actor.role === "ADMIN" ? await activeProjects() : await activeProjectsForUser(actor.userId);
+  const projects =
+    actor.role === "ADMIN"
+      ? await activeProjects(actor.orgId)
+      : await activeProjectsForUser(actor.orgId, actor.userId);
   return new Map(projects.map((project) => [project.id, project.code]));
 }
 
 /** Projects the signed-in person may see: their own memberships, or all of them for an administrator. */
 export async function listProjectsForActor(actor: ActorContext): Promise<ProjectListItemDTO[]> {
-  const projects = actor.role === "ADMIN" ? await activeProjects() : await activeProjectsForUser(actor.userId);
+  const projects =
+    actor.role === "ADMIN"
+      ? await activeProjects(actor.orgId)
+      : await activeProjectsForUser(actor.orgId, actor.userId);
   return buildProjectListItems(projects);
 }
 
@@ -131,7 +157,12 @@ export async function getProjectForActor(actor: ActorContext, projectId: string)
 export async function createProject(actor: ActorContext, input: CreateProjectInput): Promise<ProjectDTO> {
   assertCan(actor, "CREATE_PROJECT");
 
-  const clash = await prisma.project.findUnique({ where: { code: input.code }, select: { id: true } });
+  // Project codes are unique inside a company, not across the product: another customer's "PH-1"
+  // is none of this company's business.
+  const clash = await prisma.project.findUnique({
+    where: { orgId_code: { orgId: actor.orgId, code: input.code } },
+    select: { id: true },
+  });
   if (clash) {
     throw new ServiceError("A project with that code already exists. Choose another code.", {
       code: ["A project with that code already exists."],
@@ -139,10 +170,10 @@ export async function createProject(actor: ActorContext, input: CreateProjectInp
   }
 
   const disciplineIds = [...new Set(input.disciplineIds)];
-  await assertDisciplinesExist(disciplineIds);
+  await assertDisciplinesExist(actor, disciplineIds);
 
   const members = withCreatorAsManager(actor, input.members);
-  await assertUsersAreActive(members.map((member) => member.userId));
+  await assertUsersAreActive(actor, members.map((member) => member.userId));
   for (const member of members) {
     if (member.disciplineId && !disciplineIds.includes(member.disciplineId)) {
       throw new ServiceError(
@@ -154,6 +185,7 @@ export async function createProject(actor: ActorContext, input: CreateProjectInp
   const projectId = await prisma.$transaction(async (tx) => {
     const project = await tx.project.create({
       data: {
+        orgId: actor.orgId,
         name: input.name,
         code: input.code,
         description: input.description,
@@ -189,9 +221,11 @@ export async function createProject(actor: ActorContext, input: CreateProjectInp
 
 /** Changes a project's details. Progress and status of its tasks are untouched — those are derived. */
 export async function updateProject(actor: ActorContext, input: UpdateProjectInput): Promise<ProjectDTO> {
-  const existing = await prisma.project.findFirst({ where: { id: input.id, ...notDeleted } });
+  const existing = await prisma.project.findFirst({
+    where: { id: input.id, orgId: actor.orgId, ...notDeleted },
+  });
   if (!existing) throw new NotFoundError("We could not find that project.");
-  assertCan(actor, "EDIT_PROJECT", { projectId: existing.id });
+  assertCan(actor, "EDIT_PROJECT", { projectId: existing.id, orgId: existing.orgId });
 
   await prisma.$transaction(async (tx) => {
     const updated = await tx.project.update({
@@ -224,11 +258,13 @@ export async function updateProject(actor: ActorContext, input: UpdateProjectInp
 
 /** Adds someone to a project, or changes the role or discipline they hold on it. */
 export async function upsertMember(actor: ActorContext, input: UpsertMemberInput): Promise<ProjectMemberDTO> {
-  const project = await prisma.project.findFirst({ where: { id: input.projectId, ...notDeleted } });
+  const project = await prisma.project.findFirst({
+    where: { id: input.projectId, orgId: actor.orgId, ...notDeleted },
+  });
   if (!project) throw new NotFoundError("We could not find that project.");
-  assertCan(actor, "MANAGE_MEMBERS", { projectId: project.id });
+  assertCan(actor, "MANAGE_MEMBERS", { projectId: project.id, orgId: project.orgId });
 
-  const [user] = await assertUsersAreActive([input.userId]);
+  const [user] = await assertUsersAreActive(actor, [input.userId]);
   if (input.disciplineId) await assertDisciplineEnabled(project.id, input.disciplineId);
 
   const existing = await prisma.projectMember.findUnique({
@@ -273,9 +309,11 @@ export async function removeMember(
   actor: ActorContext,
   input: { projectId: string; userId: string },
 ): Promise<{ removed: true }> {
-  const project = await prisma.project.findFirst({ where: { id: input.projectId, ...notDeleted } });
+  const project = await prisma.project.findFirst({
+    where: { id: input.projectId, orgId: actor.orgId, ...notDeleted },
+  });
   if (!project) throw new NotFoundError("We could not find that project.");
-  assertCan(actor, "MANAGE_MEMBERS", { projectId: project.id });
+  assertCan(actor, "MANAGE_MEMBERS", { projectId: project.id, orgId: project.orgId });
 
   const member = await prisma.projectMember.findUnique({
     where: { projectId_userId: { projectId: project.id, userId: input.userId } },
@@ -321,11 +359,15 @@ export async function upsertProjectDiscipline(
   actor: ActorContext,
   input: UpsertProjectDisciplineInput,
 ): Promise<ProjectDisciplineDTO> {
-  const project = await prisma.project.findFirst({ where: { id: input.projectId, ...notDeleted } });
+  const project = await prisma.project.findFirst({
+    where: { id: input.projectId, orgId: actor.orgId, ...notDeleted },
+  });
   if (!project) throw new NotFoundError("We could not find that project.");
-  assertCan(actor, "MANAGE_PROJECT_DISCIPLINES", { projectId: project.id });
+  assertCan(actor, "MANAGE_PROJECT_DISCIPLINES", { projectId: project.id, orgId: project.orgId });
 
-  const discipline = await prisma.discipline.findUnique({ where: { id: input.disciplineId } });
+  const discipline = await prisma.discipline.findFirst({
+    where: { id: input.disciplineId, orgId: actor.orgId },
+  });
   if (!discipline) throw new NotFoundError("We could not find that discipline.");
 
   if (input.leadId) {
@@ -369,9 +411,11 @@ export async function removeProjectDiscipline(
   actor: ActorContext,
   input: { projectId: string; disciplineId: string },
 ): Promise<{ removed: true }> {
-  const project = await prisma.project.findFirst({ where: { id: input.projectId, ...notDeleted } });
+  const project = await prisma.project.findFirst({
+    where: { id: input.projectId, orgId: actor.orgId, ...notDeleted },
+  });
   if (!project) throw new NotFoundError("We could not find that project.");
-  assertCan(actor, "MANAGE_PROJECT_DISCIPLINES", { projectId: project.id });
+  assertCan(actor, "MANAGE_PROJECT_DISCIPLINES", { projectId: project.id, orgId: project.orgId });
 
   const row = await prisma.projectDiscipline.findUnique({
     where: { projectId_disciplineId: { projectId: project.id, disciplineId: input.disciplineId } },
@@ -435,7 +479,7 @@ export async function buildProjectDTO(projectId: string): Promise<ProjectDTO> {
   });
   if (!project) throw new NotFoundError("We could not find that project.");
 
-  const tasks = await activeMainTasks(project.id);
+  const tasks = await activeMainTasks(project.orgId, project.id);
   const now = new Date();
   const completed = tasks.filter(
     (task) => effectiveStatus(task.status, task.statusOverride) === "COMPLETED",
@@ -548,9 +592,12 @@ function withCreatorAsManager(actor: ActorContext, members: CreateProjectInput["
   return [...members, { userId: actor.userId, projectRole: "PROJECT_MANAGER" as const, disciplineId: null }];
 }
 
-async function assertDisciplinesExist(disciplineIds: string[]): Promise<void> {
+/** Every discipline named must exist INSIDE this company — another company's is simply "gone". */
+async function assertDisciplinesExist(actor: ActorContext, disciplineIds: string[]): Promise<void> {
   if (disciplineIds.length === 0) return;
-  const found = await prisma.discipline.count({ where: { id: { in: disciplineIds } } });
+  const found = await prisma.discipline.count({
+    where: { id: { in: disciplineIds }, orgId: actor.orgId },
+  });
   if (found !== disciplineIds.length) throw new ServiceError("One of those disciplines no longer exists.");
 }
 
@@ -563,14 +610,15 @@ async function assertDisciplineEnabled(projectId: string, disciplineId: string):
   }
 }
 
-async function assertUsersAreActive(userIds: string[]) {
+/** Everyone put on a project must be an active colleague in the SAME company. */
+async function assertUsersAreActive(actor: ActorContext, userIds: string[]) {
   const unique = [...new Set(userIds)];
   const users = await prisma.user.findMany({
-    where: { id: { in: unique }, isActive: true },
+    where: { id: { in: unique }, orgId: actor.orgId, isActive: true },
     select: { id: true, name: true },
   });
   if (users.length !== unique.length) {
-    throw new ServiceError("One of those people is no longer active in Nexus.");
+    throw new ServiceError("One of those people is no longer active in Tielora.");
   }
   return users;
 }

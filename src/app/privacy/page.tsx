@@ -23,9 +23,15 @@ export default function PrivacyPage() {
       <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--olng-text)]">
         <h2 className="text-base font-semibold text-[var(--olng-navy)]">Who this covers</h2>
         <p>
-          Project Nexus is an internal tool for Oman LNG staff and contractors working on
-          multidisciplinary engineering coordination. Accounts are created by an administrator — there
-          is no public sign-up, and this notice applies only to people who have been given an account.
+          This is a coordination tool for companies doing multidisciplinary engineering work. Each
+          company has its own separate space: nobody in one company can see the people, projects,
+          tasks, documents or comments of another.
+        </p>
+        <p>
+          There are two ways to get an account. Someone signing their company up creates the first
+          one for themselves and becomes its administrator; everybody after them is given an account
+          by that administrator. Either way, your information belongs to the company whose space you
+          are in, and this notice applies to you from the moment the account exists.
         </p>
       </section>
 
@@ -35,6 +41,10 @@ export default function PrivacyPage() {
           <li>
             <strong>People:</strong> name, work email, job title, role, discipline, a password that is
             hashed and never stored or shown in readable form, and whether the account is active.
+          </li>
+          <li>
+            <strong>Your company:</strong> the company name given at sign-up, the handle made from it,
+            and the industry template its starting list of disciplines came from.
           </li>
           <li>
             <strong>Sessions:</strong> a hashed sign-in token, the IP address and browser used to sign
@@ -79,9 +89,9 @@ export default function PrivacyPage() {
       <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--olng-text)]">
         <h2 className="text-base font-semibold text-[var(--olng-navy)]">Your rights</h2>
         <p>
-          This is an internal tool with admin-created accounts, so requests to see, correct, or remove
-          your personal information are handled by <strong>your Project Nexus administrator</strong>{" "}
-          rather than through a self-service page. Deactivating an account keeps the audit trail and
+          Your information is held inside your own company&apos;s space, so requests to see, correct,
+          or remove your personal information are handled by{" "}
+          <strong>your company&apos;s administrator</strong> rather than through a self-service page. Deactivating an account keeps the audit trail and
           document history intact, as explained above — that record is part of the engineering work
           itself, not personal data held about you alone.
         </p>

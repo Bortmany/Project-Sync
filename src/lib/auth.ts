@@ -29,6 +29,8 @@ function hashToken(rawToken: string): string {
 
 export type SessionUser = {
   id: string;
+  /** The company this person signed in to. Every read and every write is scoped to it. */
+  orgId: string;
   email: string;
   name: string;
   role: RoleValue;
@@ -133,6 +135,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
 
   return {
     id: session.user.id,
+    orgId: session.user.orgId,
     email: session.user.email,
     name: session.user.name,
     role: session.user.role,
@@ -164,7 +167,7 @@ export async function loadActor(user: SessionUser) {
     where: { userId: user.id },
     select: { projectId: true, projectRole: true, disciplineId: true },
   });
-  return { userId: user.id, role: user.role, memberships };
+  return { userId: user.id, orgId: user.orgId, role: user.role, memberships };
 }
 
 /** Constant-time string compare, for anywhere a token is compared outside the database. */
