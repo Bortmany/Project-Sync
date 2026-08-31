@@ -19,6 +19,11 @@ import {
   type SweepWebhookEvent,
 } from "@/server/services/notifications";
 import { deliverDailyBrief, deliverToOrgWebhooks } from "@/server/services/webhooks";
+import {
+  removeDeletedWorkspaceFiles,
+  sweepWorkspaceDeletions,
+} from "@/server/services/workspace-deletion";
+import { sweepExportFiles } from "@/server/services/workspace-export";
 
 /** The app's fixed advisory-lock key. Any other scheduled job must pick a different number. */
 export const SWEEP_LOCK_KEY = 728_431_001;
@@ -78,11 +83,17 @@ export async function runSweepOnce(now: Date = new Date()): Promise<SweepResult>
       // Contractor access warnings ride on the same locked pass, for the same reason the reminders
       // do: one instance writes them, or none does.
       const expiring = await sweepAccessExpiryNotifications(tx, now);
+      // And so does the one irreversible thing this app does: a workspace whose seven-day grace
+      // period has run out is deleted here, inside the same lock, so two copies of the app can
+      // never both be deleting the same company. Its FILES are removed after the commit — a
+      // transaction that rolls back must not have taken anybody's documents with it.
+      const deletedWorkspaces = await sweepWorkspaceDeletions(tx, now);
 
       return {
         ran: true as const,
         counts: { ...swept.counts, accessExpiring: expiring.count },
         events: swept.events,
+        deletedWorkspaces,
       };
     },
     // A sweep walks every open task in every project, so the default five-second budget is far
@@ -92,12 +103,19 @@ export async function runSweepOnce(now: Date = new Date()): Promise<SweepResult>
 
   if (!outcome.ran) return outcome;
 
+  // The deleted workspaces' files, now that the transaction that removed their rows has committed.
+  await removeDeletedWorkspaceFiles(outcome.deletedWorkspaces);
+
   // Chat copies go out only after the transaction has committed, exactly as notify() does it: the
   // notification rows are the truth, and a chat tool being slow must never hold a database
   // transaction open.
   await deliverSweepReminders(outcome.events);
   // The once-a-day digest rides on the same hourly run, outside the transaction for the same reason.
   await postDailyDigests(now);
+  // And so does the housekeeping: workspace export archives are deleted 48 hours after they were
+  // built. It touches the disk rather than the database, it never throws, and nothing in the app
+  // depends on it having run — a file left behind costs disk space, never correctness.
+  await sweepExportFiles(now);
   return { ran: true, counts: outcome.counts };
 }
 

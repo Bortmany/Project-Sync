@@ -72,7 +72,19 @@ model Organization {
   /// migration — the same shape OrgIntegration.kind uses. broadcastPolicyOf() maps the legacy
   /// spelling "ADMIN" to "ADMIN_ONLY" and reads any other unrecognised value as the default.
   broadcastPolicy  String   @default("ADMIN_PM")
+  /// When an administrator asked for this whole workspace to be deleted. Null — which is what every
+  /// existing workspace means — is "nobody has asked". The workspace stays fully usable during the
+  /// seven-day grace period that follows; the sweep deletes it for good once the seven days pass,
+  /// and any administrator can clear this field to call the whole thing off.
+  /// The DEADLINE itself is never stored: it is this moment plus the grace period, worked out at
+  /// read time exactly as OVERDUE and a locked phase are.
+  deleteRequestedAt   DateTime?
+  /// Who asked, so the other administrators are never left guessing. SetNull, the same shape
+  /// OrgIntegration.createdById uses: the request outlives the account that made it.
+  deleteRequestedById String?
   createdAt        DateTime @default(now())
+
+  deleteRequestedBy User? @relation("OrganizationDeleteRequestedBy", fields: [deleteRequestedById], references: [id], onDelete: SetNull)
 
   users        User[]
   disciplines  Discipline[]
@@ -202,6 +214,7 @@ model User {
   emailTokens           EmailToken[]
   createdIntegrations   OrgIntegration[]    @relation("OrgIntegrationCreatedBy")
   microsoftConnections  MicrosoftConnection[] @relation("MicrosoftConnectionConnectedBy")
+  requestedOrgDeletions Organization[]      @relation("OrganizationDeleteRequestedBy")
 
   @@index([isActive])
   @@index([orgId, isActive])

@@ -20,7 +20,7 @@
 
 import type { Prisma } from "@/generated/prisma/client";
 import { logger } from "@/lib/logger";
-import type { EmailPurposeName } from "@/lib/zod-schemas";
+import type { EmailedPurposeName } from "@/lib/zod-schemas";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
 import { EMAIL_TOKEN_TTL_WORDS } from "@/server/services/email-tokens";
 // The one place in the app that reads and validates APP_BASE_URL. Reused rather than repeated, so
@@ -93,8 +93,13 @@ export function emailStatus(env: NodeJS.ProcessEnv = process.env): "dormant" | "
 /* Links                                                               */
 /* ------------------------------------------------------------------ */
 
-/** Where each kind of emailed link lands. One place, so an email and a page cannot drift apart. */
-export const EMAIL_LINK_PATH: Record<EmailPurposeName, string> = {
+/**
+ * Where each kind of emailed link lands. One place, so an email and a page cannot drift apart.
+ *
+ * Keyed by `EmailedPurposeName`, not by every purpose: an EXPORT token is a download bearer handed
+ * to an administrator on screen, never a link in a message, and the compiler is what says so.
+ */
+export const EMAIL_LINK_PATH: Record<EmailedPurposeName, string> = {
   INVITE: "/set-password",
   RESET: "/reset-password",
   VERIFY: "/verify-email",
@@ -105,7 +110,7 @@ export const EMAIL_LINK_PATH: Record<EmailPurposeName, string> = {
  * (which is also when this whole feature reads as dormant, so a caller that checks
  * `emailAvailable()` first never sees the null).
  */
-export function emailLink(purpose: EmailPurposeName, rawToken: string): string | null {
+export function emailLink(purpose: EmailedPurposeName, rawToken: string): string | null {
   const base = appBaseUrl();
   if (!base) return null;
   return `${base}${EMAIL_LINK_PATH[purpose]}?token=${encodeURIComponent(rawToken)}`;
@@ -128,7 +133,7 @@ export type EmailMessage = {
 };
 
 /** Only ever used to make a log line useful. Never the address, never the link. */
-type SendContext = { purpose?: EmailPurposeName; userId?: string };
+type SendContext = { purpose?: EmailedPurposeName; userId?: string };
 
 /** Seconds from a Retry-After header, clamped to something we are willing to wait. */
 export function emailRetryAfterMs(header: string | null): number {
@@ -316,7 +321,7 @@ export type EmailAuditInput = {
   actorName?: string | null;
   recipientId: string;
   recipientName: string;
-  purpose: EmailPurposeName;
+  purpose: EmailedPurposeName;
 };
 
 function summaryFor(input: EmailAuditInput): string {

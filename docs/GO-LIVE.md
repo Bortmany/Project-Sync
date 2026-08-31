@@ -49,9 +49,12 @@ publicly reachable with no sign-in, following what this app *actually* stores:
   browses through the one connected account.
 
 Both pages carry an honest note that they are a template pending professional review, and are not yet
-reviewed by a lawyer — do that before relying on them for real launch. Because each company runs its
-own workspace, "download my data" and "delete my account" are handled by **your workspace
-administrator** rather than self-service — the privacy page says so by name.
+reviewed by a lawyer — do that before relying on them for real launch. **Data rights are now
+self-service, both halves.** Anybody signed in downloads their own copy and can delete their own
+account from Your account; an administrator downloads the whole workspace's copy and can delete the
+whole workspace from Admin → Data & privacy. See section 7 below and the two "Data rights" sections
+of `docs/CONVENTIONS.md`. Both pages say what deleting really does — an account is anonymised and
+its work stays; a workspace is gone for good after seven days.
 
 **Rule that outlives this file:** if a change starts storing a new piece of personal information, the
 privacy page changes in the *same* change.
@@ -292,15 +295,56 @@ address>` once, after which the ordinary Connect button works.
 
 ---
 
-## 7. What is deliberately not built
+## 7. Deleting an account, and deleting a workspace
+
+Both live on the two data-rights screens, beside the exports, in a red-tinted danger section.
+
+**Deleting your own account** (Your account → Delete my account; any signed-in person, contractors
+included). It is **anonymisation, not removal**: the person is signed out on the spot and can never
+sign in again, their name becomes "Former member" and their email address becomes a tombstone that
+is not an address, their job title, employer, department and access end date are cleared, their
+password is replaced with one nothing can match, and every session, one-time link, starred shortcut,
+private to-do item, dismissal and notification of theirs is deleted. **Their work stays** —
+comments, completed tasks, uploaded document revisions, acknowledgements and the audit trail — and
+every screen shows "Former member" against it, because names are read live off the account rather
+than copied onto the work. **The one exception, said plainly on every screen that mentions it**:
+entries already recorded in the activity trail keep the name they were written with, because that
+trail is a record of what happened and is never rewritten. One `ACCOUNT_DELETED` audit row is
+written and it deliberately does not name them. **The one refusal**: an administrator who is the
+last one who can sign in is told to make somebody else an administrator first, so no company can be
+locked out of its own Admin section — and that count is taken behind a lock on the company's own
+row, so two of a company's last two administrators pressing at the same moment cannot both get
+through.
+
+**Deleting the whole workspace** (Admin → Data & privacy → Danger zone; an administrator types the
+workspace's name).
+
+- **Seven days' grace.** The request is recorded with who asked and when; every administrator is
+  notified in the app and sees a red, non-dismissible banner on every page until it is resolved.
+  **Any** administrator can cancel with one press, and cancelling asks for no confirmation.
+- **Nothing is locked during those seven days.** The workspace works exactly as before. That is
+  deliberate: everybody who could stop it has been told, and a week of half-working software would
+  punish the people who had no say.
+- **Then it is permanent.** The hourly sweep deletes every row that company owns — accounts,
+  projects, tasks, documents and every revision, comments, the noticeboard, notifications, chat and
+  Microsoft connections **and the workspace's whole activity log** — and then every uploaded file
+  and every export archive on disk. There is no undo, no archive, no soft delete.
+- **The copy-out reminder.** "Download everything" is on the same screen, one press, and it is the
+  only way to keep anything. The danger card, the privacy page and the terms page all say so. Once
+  the seven days pass there is nothing left to export.
+- The append-only promise is unchanged in meaning: no revision or audit row is ever altered or lost
+  **inside a living workspace**. Deleting the workspace is that workspace ending, and its history
+  ends with it. `mutation-safety.test.ts` allows exactly one file to remove those rows and still
+  forbids updating them anywhere.
+
+---
+
+## 8. What is deliberately not built
 
 Named here so nobody assumes otherwise:
 
 - **A legal review of the privacy and terms pages** — gate 1 above is written and linked, but it is a
   template. Have a lawyer review the actual wording before relying on it.
-- **Self-service "download my data" / "delete my account"** — this is an internal staff tool with
-  admin-created accounts; an administrator deactivates a person, and the audit trail stays by design.
-  If the app ever takes non-staff users, both become required.
 - **Browser-side error reporting** — off unless `NEXT_PUBLIC_SENTRY_DSN` is set at build time. Server
   errors are always logged, and go to Sentry when `SENTRY_DSN` is set. `/api/health` reports the two
   channels separately, so neither can be mistaken for the other.

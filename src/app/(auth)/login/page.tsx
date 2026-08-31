@@ -18,6 +18,8 @@ const DONE_MESSAGES: Record<string, string> = {
   password:
     "Your password is changed, and you've been signed out everywhere else. Sign in with your new password.",
   invite: "You're all set — sign in with your new password to get started.",
+  "account-deleted":
+    "Your account has been deleted. Thanks for being part of Tielora — take care.",
 };
 
 export default async function LoginPage({

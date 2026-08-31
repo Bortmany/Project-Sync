@@ -50,6 +50,16 @@ export {
   disconnectMicrosoft,
 } from "@/server/actions/integrations";
 
+// Admin → Data & privacy. The download link itself never comes back through an action.
+export { startWorkspaceExport } from "@/server/actions/exports";
+
+// The deleting half: your own account, and the whole workspace's seven-day countdown.
+export {
+  cancelWorkspaceDeletion,
+  deleteMyAccount,
+  requestWorkspaceDeletion,
+} from "@/server/actions/deletion";
+
 export { createComment, editComment, deleteComment } from "@/server/actions/comments";
 
 export {

@@ -229,13 +229,32 @@ const DESTRUCTIVE_SQL = (table: string): RegExp[] => [
   new RegExp(`TRUNCATE[^;\`]*"?${table}"?`, "i"),
 ];
 
+/**
+ * The ONE place a history row may be REMOVED, and why.
+ *
+ * The append-only guarantee is about a living workspace: no revision and no audit row is ever
+ * altered or lost while the company exists. Deleting the whole workspace is the company saying it
+ * should not exist any more, seven days ahead, with any administrator able to call it off — and a
+ * copy of every one of those rows is a button press away in Admin → Data & privacy first. So the
+ * exception is exactly this: this file, and only DELETE, never UPDATE. Rewriting a revision or an
+ * audit row is still impossible anywhere in the app.
+ */
+const HISTORY_MAY_BE_DELETED_IN: Record<string, string> = {
+  [path.join("src", "server", "services", "workspace-deletion.ts")]:
+    "deleting a whole workspace takes its own revisions and audit trail with it",
+};
+
+const REMOVAL_VERBS = ["delete", "deleteMany"];
+
 function offendingLines(model: string, table: string): string[] {
   const offences: string[] = [];
   for (const file of sourceFiles(SRC)) {
+    const mayRemove = relative(file) in HISTORY_MAY_BE_DELETED_IN;
     const lines = read(file).split("\n");
     lines.forEach((line, index) => {
       const where = `${relative(file)}:${index + 1}`;
       for (const verb of DESTRUCTIVE_PRISMA) {
+        if (mayRemove && REMOVAL_VERBS.includes(verb)) continue;
         if (new RegExp(`\\.${model}\\.${verb}\\b`).test(line)) offences.push(`${where} — ${line.trim()}`);
       }
       for (const pattern of DESTRUCTIVE_SQL(table)) {
@@ -259,6 +278,21 @@ describe("nothing in the app rewrites history", () => {
     const everything = sourceFiles(SRC).map(read).join("\n");
     expect(/\.documentVersion\.create\b/.test(everything)).toBe(true);
     expect(/\.activityLog\.create\b/.test(everything)).toBe(true);
+  });
+
+  it("keeps the one exception narrow, real, and delete-only", () => {
+    const names = Object.keys(HISTORY_MAY_BE_DELETED_IN);
+    expect(names).toHaveLength(1);
+
+    for (const name of names) {
+      const source = read(path.join(process.cwd(), name));
+      // It really does remove them — otherwise the exception is stale and should be deleted.
+      expect(/\.documentVersion\.deleteMany\b/.test(source)).toBe(true);
+      expect(/\.activityLog\.deleteMany\b/.test(source)).toBe(true);
+      // And it never rewrites one, which is the half that is never allowed anywhere.
+      expect(/\.documentVersion\.(update|updateMany|upsert)\b/.test(source)).toBe(false);
+      expect(/\.activityLog\.(update|updateMany|upsert)\b/.test(source)).toBe(false);
+    }
   });
 
   it("keeps documents soft-deleted rather than removed, so their revisions stay reachable", () => {

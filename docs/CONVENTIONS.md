@@ -116,7 +116,12 @@ In practice:
 - The only legal bypass is `statusOverride`, which always records who, why (5 characters minimum) and
   when, writes an `OVERRIDE_APPLIED` activity row, and is limited to ADMIN / PROJECT_MANAGER.
 - `DocumentVersion` and `ActivityLog` are **append-only**: insert only, never update, never delete.
-  Documents are soft-deleted (`deletedAt`); their versions and audit rows stay.
+  Documents are soft-deleted (`deletedAt`); their versions and audit rows stay. **One exception, and
+  it is the workspace ending rather than the rule bending**: when a company's seven-day deletion
+  grace period runs out, `src/server/services/workspace-deletion.ts` removes that company's rows
+  along with everything else it owns. `mutation-safety.test.ts` allows that one file to DELETE them
+  and still forbids UPDATE everywhere, including there — nothing in this app ever rewrites a
+  revision or an audit row.
 - `OVERDUE` is never stored on a task. It is derived at read time with `isOverdue()`.
 
 **Any change touching this area adds or extends a test in `src/lib/__tests__/progress.test.ts`
@@ -371,6 +376,18 @@ In practice:
     trigram `DropIndex` lines were deleted by hand, and `pg_indexes` was checked on both databases
     afterwards.)
 
+  - `20260831191909_workspace_deletion_grace` (workspace deletion, with its seven-day grace period.
+    TWO nullable columns on `Organization` — `deleteRequestedAt` (when an administrator asked for
+    the whole workspace to be deleted) and `deleteRequestedById`, a relation to `User` with
+    `onDelete: SetNull`, **the same shape `OrgIntegration.createdById` uses**, so the request
+    outlives the account that made it. Additive only: no existing model, field, enum value or index
+    was changed, and null on both — which is what every existing workspace means — reads as "nobody
+    has asked", so nothing changes for anybody when it is applied. **The deadline itself is never a
+    column**: it is `deleteRequestedAt` plus the grace period, derived at read time exactly as
+    OVERDUE and a locked phase are, so changing the grace period is a constant and never a
+    migration. The generated migration's five trigram `DropIndex` lines were deleted by hand, and
+    `pg_indexes` was checked on both databases afterwards — five rows each.)
+
 - **Careful with `prisma migrate dev`:** the trigram search indexes are hand-written raw SQL that the
   Prisma schema does not know about, so the generated migration will try to DROP them. Delete those
   `DropIndex` lines from the generated `migration.sql` before it goes anywhere near a real database.
@@ -430,6 +447,9 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/personal-tasks` | GET | — | `PersonalTaskDTO[]` (the signed-in person's own list, open items first, then by `sortOrder` so newly added lines lead, 200 max) |
 | `/api/posts/announcements` | GET | — | `PostDTO[]` (the announcements still running for this person's audiences — company-wide, their projects, their department(s) — newest first, 50 max, each flagged `dismissed`, plus `requiresAck`, this person's own `acked` / `ackedAt`, and `ackProgress` — the "N of M" and the outstanding names, **sent only to the post's author and to an administrator**, `null` for everybody else. Not found for a contractor) |
 | `/api/posts/audiences` | GET | — | `PostAudienceDTO[]` (the noticeboard tabs this person may read, each with `canPost` / `canModerate`. An ADMIN gets every project and discipline of their OWN company) |
+| `/api/admin/export/status` | GET | — | `WorkspaceExportStatusDTO` (ADMIN only; where this company's export has got to, derived at read time from the audit trail and the file on disk. Carries the raw download token when one is ready, which is why it is only ever answered to an administrator of that company) |
+| `/api/admin/export/download` | GET | query: `token` | the ZIP stream (`Content-Disposition: attachment`, `Cache-Control: private, no-store`). **Two keys, not one**: the token AND a signed-in ADMIN of the company whose data it is. Consumes nothing — the same link works until it expires |
+| `/api/account/export` | GET | — | one person's own data as a JSON file (`PersonalExportDTO`, streamed as an attachment). Any signed-in person, contractors included; three a day per person, refused with 429 and a `Retry-After` |
 | `/api/posts/board` | GET | query: `tab` (`everyone` \| `project:<id>` \| `discipline:<id>`, default `everyone`) | `BoardPostDTO[]` (roots newest first, 50 max, each with its replies oldest first, 100 max; removed posts stay as tombstones. Each root carries `attachment` — the one document it points at, resolved through **this** reader's own visibility and `null` when there is none or when they may not see it. An audience this person does not belong to is **not found**) |
 
 Server actions live in `src/server/actions`. Each takes its `*Input` type and returns
@@ -494,6 +514,10 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `dismissAnnouncement` (own dashboard only; **no audit row** — personal read state, like marking a notification read. Refused, in plain English, while an announcement that requires acknowledgement has not been acknowledged by that person) | `DismissAnnouncementInput` | `ActionResult<{ dismissed: true }>` |
 | `acknowledgePost` (any INTERNAL member of the announcement's audience who may read it; one row per person per post, pressing it twice is the same acknowledgement; **writes one `POST_ACKNOWLEDGED` audit row** — the deliberate opposite of a dismissal. Not found for a contractor, for a non-member, and for an announcement that never asked) | `AcknowledgePostInput` | `ActionResult<PostDTO>` |
 | `setBroadcastPolicy` (ADMIN in their own company; audited with `BROADCAST_POLICY_CHANGED`) | `SetBroadcastPolicyInput` | `ActionResult<BroadcastSettingDTO>` |
+| `startWorkspaceExport` (ADMIN, `EXPORT_ORG`; five presses a minute per person **and** one export per company per 24 hours, the second enforced in the service against the last `EXPORT_STARTED` audit row. Writes `EXPORT_STARTED`, then fires the build off and returns immediately) | — | `ActionResult<WorkspaceExportStatusDTO>` |
+| `deleteMyAccount` (any signed-in person, contractors included; **no id and no `assertCan`** — the only account it can reach is the session's. Typed confirmation `"DELETE"`. Anonymises in one transaction, ends every session, writes one name-free `ACCOUNT_DELETED` row. Refused for an ADMIN who is their company's last active one. Three presses a minute) | `DeleteMyAccountInput` | `ActionResult<AccountDeletedDTO>` |
+| `requestWorkspaceDeletion` (ADMIN, `DELETE_ORG`; the workspace's own name typed exactly. Sets `deleteRequestedAt` / `deleteRequestedById`, writes `WORKSPACE_DELETION_REQUESTED` and notifies every other administrator in-app) | `RequestWorkspaceDeletionInput` | `ActionResult<WorkspaceDeletionDTO>` |
+| `cancelWorkspaceDeletion` (ANY ADMIN of that company during the grace period; no typed confirmation — undoing a dangerous thing should be the easiest press on the screen. Clears both columns, writes `WORKSPACE_DELETION_CANCELLED`, notifies the administrators) | — | `ActionResult<WorkspaceDeletionDTO>` |
 
 ## Notifications and the deadline sweep
 
@@ -502,9 +526,12 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
   problem saving notifications can never undo the change that caused them — failures are logged and
   swallowed. It skips the actor, skips duplicates inside one call, and skips deactivated people.
   - **It takes exactly one option, `{ chatCopy: false }`**, which writes the in-app rows and posts
-    nothing to Slack or Teams. One caller uses it: the contractors' half of an announcement that
-    included them, which is the same news with a different link (see "Contractor notices"). The chat
-    channel is the company's own and has already had that announcement once.
+    nothing to Slack or Teams. Two callers use it: the contractors' half of an announcement that
+    included them, which is the same news with a different link (see "Contractor notices") — the
+    chat channel is the company's own and has already had that announcement once — and the two
+    workspace-deletion messages to a company's administrators, which borrow `ANNOUNCEMENT` for
+    their shape but are not noticeboard news, so the `announcements` chat toggle must not carry
+    them.
 - **Marking a notification read writes no `ActivityLog` row.** Read state is a personal preference,
   not project work; the audit trail records project work only. This is the one documented exception
   to house rule 1.
@@ -547,7 +574,13 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
     notifications only** — no chat copy, because a lockout date is an administrator's housekeeping
     rather than one of the six chat events, and `DEADLINE_APPROACHING`'s chat toggle means "a task
     deadline is near".
-  - **Nothing depends on the sweep having run.** Overdue is still derived at read time everywhere
+  - **The same locked pass also carries out workspace deletions whose seven days have run out**
+    (`sweepWorkspaceDeletions()` in `src/server/services/workspace-deletion.ts`). It is the one
+    thing on this list that is irreversible, which is exactly why it sits inside the advisory lock:
+    two copies of the app must never both be deleting the same company. The rows go inside the
+    transaction; the FILES are removed by `removeDeletedWorkspaceFiles()` after it commits, the same
+    road the chat copies take. A late sweep deletes late, never never.
+  - **Nothing else depends on the sweep having run.** Overdue is still derived at read time everywhere
     (`isOverdue()`), and an expired contractor is refused at sign-in whether or not anybody was
     warned; a skipped run costs a nudge, never correctness.
   - `SWEEP_DISABLED=1` stops the scheduler (the tests set it). `runSweepOnce()` itself ignores the
@@ -989,6 +1022,261 @@ network: `global.fetch` is mocked.**
 `src/server/__tests__/email.service.test.ts` (the delivery half) or
 `src/server/__tests__/email-flows.service.test.ts` (the flows on top) in the same change — and the
 tests never touch the network: `global.fetch` is mocked.**
+
+## Data rights, part 1: taking a copy out
+
+> Every company can take a full copy of its own data, and every person can take a copy of their
+> own. An export never crosses a company boundary, never reaches further than the person asking
+> already reaches, and never carries a password, a token or a webhook address.
+
+**Part 1 is the two exports.** Deleting an account or a workspace is part 2 below, on the same two
+screens — `/admin/data-privacy` and `/account` — in the red-tinted danger section under each export
+card.
+
+### No migration, and no new table
+
+Nothing about an export is stored in a column of its own — the schema stays frozen. Three things
+already in the app carry the whole feature:
+
+- **The audit trail is the record.** `EXPORT_STARTED` is written when an administrator presses the
+  button, `EXPORT_READY` when the archive is finished. Both are organisation-level
+  (`entityType: "Organization"`, `entityId` the org id, `projectId: null`, the same shape
+  `ORG_CREATED` has). "Working", "ready" and "failed" are **derived at read time** from those two
+  rows plus the file on disk, exactly as `OVERDUE` and a locked phase are.
+- **`EmailToken` is the download bearer.** `EmailPurposeSchema` gains a fourth value, `"EXPORT"`
+  (24-hour lifetime, `EMAIL_TOKEN_TTL_MS.EXPORT`), and it is the one purpose that is **never
+  emailed**: it is handed to the administrator on the screen they are already looking at. The
+  compiler says so — `EMAIL_LINK_PATH`, `emailLink()` and the email audit input all take
+  `EmailedPurposeName` (`Exclude<EmailPurposeName, "EXPORT">`), so an export token cannot reach an
+  inbox by accident. Everything else about the row is unchanged: only the SHA-256 hash is stored,
+  a new one retires that person's earlier live one, and a miss answers the same plain nothing.
+- **The archive is named after its own `EXPORT_STARTED` row id** (`DATA_DIR/exports/<id>.zip`).
+  That is how the download route finds the file again **without any path ever being written into an
+  audit row** — the row records who asked and when, and nothing else. `appendActivity()` now returns
+  the id of the row it wrote, which is the only change that reaches outside this feature.
+
+### What is in a workspace export, and what is deliberately not
+
+One JSON file per model, holding **that organisation's rows only**: organization, users,
+disciplines, projects, phases, members, project disciplines, main tasks, discipline tasks,
+dependencies, required documents, documents, document versions, comments, posts, acknowledgements,
+dismissals, notifications, the whole activity log, and the chat integrations. Plus `files/` — every
+uploaded file of that company's document versions, under its stored name — and a plain-English
+`README.txt` saying what is in the archive and what is not.
+
+**Deliberately absent, and the README says so:**
+
+- `User.passwordHash`. An argon2 hash is still a credential, and an export is a file that gets
+  emailed around and left on laptops.
+- Every `Session` and every `EmailToken` row. The same reason, one step stronger: these are live
+  keys to an account.
+- `OrgIntegration.webhookUrl`. A webhook address is a bearer secret (house rule 11), so the export
+  shows exactly what the admin screen shows — **scheme and host** via `maskWebhookUrl()`.
+- The whole `MicrosoftConnection`. Its tokens can be exchanged for new credentials; a partial row
+  would be a new place to leak them, so it is left out entirely rather than half-included.
+- Personal preference data — favorites and private to-do lists. They belong to the person rather
+  than the company, and each person exports their own from Your account.
+
+**Soft-deleted rows ARE included**, with their `deletedAt`: a removed document or project is still
+part of the record the company is asking for a copy of, and the permanence rule already says the
+history stays.
+
+### How it is built, and what it costs
+
+- **Fire-and-forget, in this process, like a chat webhook.** `startWorkspaceExport` writes the audit
+  row and returns; the build runs after it. **Surviving a restart is not a requirement**: a lost job
+  is one press of the button. An `EXPORT_STARTED` row with no `EXPORT_READY` row after
+  `EXPORT_STALE_MS` (30 minutes) reads as **failed**, which is what stops a lost job showing
+  "preparing…" forever, and a failed attempt does not spend the day's export.
+- **Nothing is ever buffered.** `src/lib/zip.ts` is a hand-written **store-only (no compression) ZIP
+  writer**: entries are written straight through to the file with backpressure respected, and the
+  sizes and CRC follow the data (the ZIP "data descriptor", general-purpose bit 3) so a table can be
+  written as JSON without first building the whole string. Only the central directory is held in
+  memory — one small record per entry. Tables are read in id-ordered pages of 500. It is the same
+  spirit `readBounded()` carries in `graph.ts`.
+- **Why hand-written rather than a dependency:** the app needs exactly one thing — files side by
+  side in a container every computer can already open — which is a 30-byte header, the bytes, a CRC
+  and a directory. Two hundred lines and no supply chain, proved by `src/lib/__tests__/zip.test.ts`
+  and by the service tests, which unzip the real archive and check every checksum. **Nothing ever
+  shells out to a `zip` binary** — the deploy image has none.
+- **A plain 4 GB limit**, and 65,535 files. This is deliberately 32-bit ZIP, not ZIP64: those are
+  the format's own ceilings. Whether the company fits is checked **before a byte is written**, and
+  one that does not is told so in plain English rather than handed a broken file. A ceiling reached
+  part-way through anyway (the JSON tables are not weighed in advance) throws `ZipLimitError`, which
+  `buildExport` treats exactly as it treats a `ServiceError`: its wording reaches the screen, because
+  "export it in parts" is something an administrator can act on and "something went wrong" is not.
+- **A write that fails is a failed export, never a crashed server.** `ZipWriter` attaches its
+  `error` listener in the constructor, before a byte is written: a Node write stream with no
+  listener turns a full disk or a revoked permission into an *unhandled* `error` event, which takes
+  the whole process down — every request in flight with it, for a background job nobody was waiting
+  on. The failure is recorded and re-thrown from the next `push()` or `finish()`, so the job's own
+  try/catch sees it like anything else and the screen offers "try again".
+- **The export is not a listing**, so it does not use the helpers in `src/lib/db.ts` (house rule 2):
+  it includes soft-deleted rows and reads in pages. Every query is still anchored to the
+  organisation through `User.orgId`, `Discipline.orgId` or `Project.orgId`, which is what the tenant
+  rule actually asks.
+
+### The download
+
+- **Two keys, not one.** `/api/admin/export/download?token=…` needs the token **and** a signed-in
+  ADMIN of the company whose data it is (`EXPORT_ORG`, then `holder.orgId === actor.orgId`). Another
+  company's administrator holding a perfectly valid token is answered **not found**, like every
+  other cross-company miss: a bearer never walks past the tenant rule.
+- **A GET consumes nothing.** `previewEmailToken()` is used, not `consumeEmailToken()`, so a dropped
+  download can simply be started again until the link expires. It is a large file behind a session
+  as well as a token, and a link that died on the first byte would be worse than useless.
+- **The raw token is never stored.** The one this process minted is cached in memory; after a
+  restart the next status read mints a fresh one for whichever administrator is looking, and a link
+  copied before the restart stops working. That is the honest trade for storing no secret, and it
+  costs a copied link, never the archive.
+- **The cache is keyed per export AND per administrator** (`${exportId}:${userId}`), not per export
+  alone. An `EmailToken` belongs to the person it was minted for and dies with their account, so a
+  shared cache entry would hand the company's second administrator a link minted for the first —
+  and the moment that first administrator was deactivated or deleted their own account, every
+  download would answer "not found" while the screen went on showing a link that looked fine for
+  the rest of the day. One small row each removes the whole class of problem.
+- **Cleanup.** `sweepExportFiles()` runs on the hourly sweep, after its transaction (the same place
+  the chat copies go), and deletes archives older than 48 hours. A finished export also deletes the
+  company's earlier ones, so only the newest copy is ever on disk. Nothing depends on it having run:
+  a file left behind costs disk, never correctness.
+
+### The personal export
+
+- **Immediate, not a job**: one person's rows, JSON rather than files, and capped at 5,000 per
+  section (the sections that hit the cap are named in `truncated`). `downloadMyData()` in
+  `src/server/services/personal-export.ts` builds it and the route streams it as an attachment.
+- **A route rather than a server action**, for the same reason the document download is one: a
+  server action returns a value to React, and this has to arrive in a downloads folder as a file.
+- **Their own reach and no further.** Their profile (never a hash), their project memberships, the
+  tasks assigned to them, the comments they wrote, their notifications, their favorites, their
+  private list and the announcements they acknowledged or dismissed. **A contractor's copy is
+  narrowed exactly as every other read of theirs is**: `externalTaskScope(actor)` on their comments,
+  and a project only when they hold live work on it — being left a `ProjectMember` is not enough,
+  here as everywhere else.
+- **Three a day per person**, `byUser`, refused with 429 and a `Retry-After`. The ceiling lives in
+  the service (`personalExportThrottle`) so the tests can prove it.
+- **One `PERSONAL_EXPORT` audit row per download**, naming the person and nothing that was in the
+  file.
+
+**Any change touching this area adds or extends a test in
+`src/server/__tests__/exports.service.test.ts` in the same change** — and the tenant half in
+`org-isolation.service.test.ts`, which unzips one company's archive and proves the other company's
+ids appear nowhere in its bytes.
+
+## Data rights, part 2: deleting
+
+> A person can delete themselves, and a company can delete itself. **One is anonymisation and the
+> other is removal**, and the difference is deliberate: one person's profile is theirs, but the work
+> they did belongs to the company's project record — while a company's whole workspace belongs to
+> nobody but that company, so when it asks for all of it to go, all of it goes.
+
+Both live on the two screens part 1 built, in a red-tinted danger section under the export card:
+`/account` and `/admin/data-privacy`.
+
+### Deleting your own account (`src/server/services/account-deletion.ts`)
+
+- **Any signed-in person, contractors included, and only ever themselves.** `deleteMyAccount()`
+  takes no id and calls no `assertCan`: the only account it can reach is `actor.userId`, which comes
+  from the session and from nowhere else. The confirmation is the fixed word `DELETE`, checked in
+  zod **and** again in the service, because a service never assumes its caller parsed.
+- **What goes.** In ONE transaction: `name` → `"Former member"`, `email` → `deleted+<id>@tielora.invalid`
+  (a `.invalid` address by RFC 2606, so nothing can ever be delivered to it, carrying the id so the
+  column's global uniqueness still holds), `passwordHash` → an argon2 hash of 32 random bytes that
+  are thrown away (`unusablePasswordHash()`'s idea, reused), `jobTitle` / `companyName` /
+  `disciplineId` / `accessExpiresAt` / `emailVerifiedAt` cleared, `isActive` false. Then every
+  `Session` and `EmailToken`, and the personal-preference rows: `Favorite`, `PersonalTask`,
+  `PostDismissal`.
+- **What stays, and why.** Comments, completed tasks, uploaded `DocumentVersion` rows, `Post`s and
+  the whole `ActivityLog`. **`PostAck` stays too**: a dismissal is private read state and an
+  acknowledgement is an attestation somebody relied on (see "Acknowledgements" above) — the same
+  contrast, applied one more time.
+- **The rename does every screen at once, and this was checked rather than assumed.** Every DTO that
+  carries a person's name resolves it through a live join off the `User` row — `authorName`,
+  `assigneeName`, `uploadedByName`, `ownerName`, `createdByName`, `completedByName`,
+  `overriddenByName`, `leadName`, `userName`, `actorName`, `requestedByName`, `connectedByName`. **No
+  snapshot column exists anywhere**, which is what makes "Former member" true everywhere without a
+  backfill.
+- **`ActivityLog.summary` keeps the name it was written with, and the screens say so.** The audit
+  trail is a record of what happened; rewriting it is exactly what the golden rule forbids. So the
+  promise everywhere — the danger card, its modal, `/privacy` and `/terms` — is the same two
+  sentences: your work shows "Former member", and entries already recorded in the activity trail
+  keep the name they were written with. **Do not let one of those four drift into "nobody will ever
+  see your name again"**, which is not true and is not fixable without rewriting history.
+- **`Notification` is the one place a name IS frozen into stored text** — its `title` and `body` are
+  sentences written at the time, e.g. "Layla al-Riyami mentioned you". So the deletion removes the
+  person's notifications **in both directions**: the rows addressed to them (their own inbox) and
+  the rows where they were the actor. A notification is a nudge, never a record; the audit trail is
+  the record, and it stays.
+- **The audit row is name-free on purpose.** `ACCOUNT_DELETED`, organisation-level
+  (`projectId: null`), actor = themselves, summary "A member deleted their own account". It is
+  written in the same transaction that takes the name away, so repeating the name would put it
+  straight back. The OLDER audit rows keep the name they were written with — that is history, not a
+  profile, and the privacy page says so in as many words.
+- **The sole-administrator refusal, and the lock that makes it hold.** An ADMIN who is the last
+  active administrator of their company is refused in plain English ("make someone else an
+  administrator first"), server-side — the same rule `updateUser` keeps when an administrator
+  demotes or deactivates the last one. **Counting them outside the transaction would be a
+  check-then-act race**: a company's two administrators pressing the button in the same second
+  would both count two, both pass, and leave the company with nobody able to run it and no way back
+  in. So the deleting transaction opens with `SELECT id FROM "Organization" WHERE id = $1 FOR
+  UPDATE` and asks again behind that lock; the second one waits, counts one, and is refused. The
+  lock is transaction-scoped, so it is always released — the same reasoning the sweep's
+  `pg_try_advisory_xact_lock` follows. The cheap pre-transaction count stays as well, purely so an
+  obvious refusal is instant and never pays for an argon2 hash first.
+  The screen shows the guidance **before** anybody types the word, computed at page load, and the
+  button is never greyed out — nothing in this app is offered disabled.
+
+### Deleting the whole workspace (`src/server/services/workspace-deletion.ts`)
+
+- **Seven days, and the deadline is never stored.** `Organization.deleteRequestedAt` +
+  `deleteRequestedById` are the whole record; `deletesOn` and `daysLeft` are derived at read time
+  exactly as OVERDUE and a locked phase are, so the grace period is a constant
+  (`WORKSPACE_DELETION_GRACE_MS`) and never a migration.
+- **`DELETE_ORG` is its own permission**, ADMIN-only, beside `EXPORT_ORG`. Requesting needs the
+  workspace's own name typed exactly; **cancelling needs nothing at all** and is open to any
+  administrator of that company, not only the one who asked.
+- **Nobody is locked out during the grace period.** The workspace works exactly as before. Every
+  administrator is notified in-app the moment it is requested (an `ANNOUNCEMENT`-type notification
+  with `{ chatCopy: false }` — see the notifications section) and sees a red, **non-dismissible**
+  banner on every page, with "cancel" inline in the sentence. Non-administrators see nothing: they
+  are affected, but a countdown you cannot act on is anxiety rather than news.
+- **The hard delete runs inside the sweep's advisory-locked transaction** (`runSweepOnce`), so
+  however many copies of the app are running, only one can ever be deleting a company. It never
+  depends on having run on time: a late sweep deletes late.
+- **The order is the whole trick, and it was discovered from the schema rather than guessed.**
+  Deleting the `Organization` row alone does NOT work. Organization cascades to `User`,
+  `Discipline`, `Project`, `OrgIntegration`, `MicrosoftConnection` and `Post` — and those cascades
+  then hit foreign keys that RESTRICT: `Project.createdById`, `MainTask.createdById`,
+  `Document.uploadedById`, `DocumentVersion.uploadedById`, `Comment.authorId`, `Notification.userId`,
+  `ProjectMember.userId` and `Post.authorId` all pin a `User` (Prisma's default for a REQUIRED
+  relation is Restrict, and only an OPTIONAL one defaults to SetNull), `MainTask.phaseId` pins a
+  phase, and `Post.documentId` pins a document. So every dependent table is emptied by hand, in one
+  transaction, in this order: post acks → post dismissals → posts → notifications → activity log →
+  comments → required documents → document versions → documents → task dependencies → discipline
+  tasks → main tasks → phases → project members → project disciplines → favorites → personal tasks →
+  email tokens → sessions → **projects** → disciplines → chat integrations → Microsoft connection →
+  **users** → the organisation.
+- **The audit trail goes with the workspace.** GO-LIVE promises an append-only trail *within a
+  living workspace*; it was never a promise to keep one company's history after that company asked
+  for all of it to be deleted. This is the one documented exception to the append-only half of the
+  golden rule (see THE GOLDEN RULE above), and `mutation-safety.test.ts` names the single file
+  allowed to delete those rows and still forbids updating them anywhere.
+- **Files are dealt with around the transaction, never inside it.** The `DocumentVersion`
+  `storedFilename`s and the export archives (named after their own `EXPORT_STARTED` audit row ids,
+  which is exactly why they must be read before the activity log is emptied) are collected BEFORE
+  the deletes; the bytes are removed AFTER the transaction commits. A transaction that rolls back
+  must not have taken anybody's documents with it, and a file that will not delete is **logged and
+  left** — no row points at it any more, so an orphan costs disk space, never correctness. One log
+  line per workspace, counts only: no names, no addresses, no file names.
+- **Nothing is soft about it.** No archive, no tombstone, no undo. The seven days ARE the undo, and
+  "Download everything" sits on the same screen — the danger card, the privacy page and the terms
+  page all say to use it first.
+
+**Any change touching this area adds or extends a test in
+`src/server/__tests__/deletion.service.test.ts` in the same change** — and the tenant half in
+`org-isolation.service.test.ts`. The critical one is already there: a workspace is deleted with a
+second company sitting beside it, every table is asserted empty for the first and unchanged for the
+second, and the second company's files are still on disk.
 
 ## Verify recipe (run in this order, all must pass)
 

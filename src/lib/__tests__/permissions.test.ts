@@ -39,6 +39,8 @@ const ALL_ACTIONS: Action[] = [
   "MANAGE_USERS",
   "MANAGE_DISCIPLINES",
   "MANAGE_INTEGRATIONS",
+  "EXPORT_ORG",
+  "DELETE_ORG",
   "POST_ANNOUNCEMENT",
   "POST_BOARD",
   "VIEW_PROJECT",
@@ -113,6 +115,8 @@ describe("project manager", () => {
       action !== "MANAGE_USERS" &&
       action !== "MANAGE_DISCIPLINES" &&
       action !== "MANAGE_INTEGRATIONS" &&
+      action !== "EXPORT_ORG" &&
+      action !== "DELETE_ORG" &&
       !POST_ACTIONS.includes(action),
   );
 
@@ -125,10 +129,12 @@ describe("project manager", () => {
     }
   });
 
-  it("may never manage users, disciplines or chat integrations", () => {
+  it("may never manage users, disciplines or chat integrations, or export or delete the company", () => {
     expect(can(pm, "MANAGE_USERS", ownCtx)).toBe(false);
     expect(can(pm, "MANAGE_DISCIPLINES", ownCtx)).toBe(false);
     expect(can(pm, "MANAGE_INTEGRATIONS", ownCtx)).toBe(false);
+    expect(can(pm, "EXPORT_ORG", ownCtx)).toBe(false);
+    expect(can(pm, "DELETE_ORG", ownCtx)).toBe(false);
   });
 
   it("may not touch a project they do not belong to", () => {
@@ -325,6 +331,8 @@ const EVERYTHING_BUT_ADMIN_ONLY: Action[] = ALL_ACTIONS.filter(
     action !== "MANAGE_USERS" &&
     action !== "MANAGE_DISCIPLINES" &&
     action !== "MANAGE_INTEGRATIONS" &&
+    action !== "EXPORT_ORG" &&
+    action !== "DELETE_ORG" &&
     !POST_ACTIONS.includes(action),
 );
 const MEMBER_ONLY: Action[] = ["VIEW_PROJECT", "COMMENT"];

@@ -8,6 +8,7 @@
 // A cross-company read is "not found", never "forbidden": telling an outsider that an id is real is
 // itself a leak.
 
+import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +20,7 @@ import { searchEverything } from "@/lib/search";
 import { ForbiddenError } from "@/lib/permissions";
 import { seal } from "@/lib/secret-box";
 import { storeFile, validateUpload } from "@/lib/upload";
+import { readZip } from "@/lib/zip";
 import { actorForUser, type ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
 import { createUser, deactivateUser, listAllUsers, updateUser } from "@/server/services/admin";
@@ -33,6 +35,12 @@ import {
   uploadDocumentVersion,
 } from "@/server/services/documents";
 import { toggleFavorite } from "@/server/services/favorites";
+import { deleteMyAccount, FORMER_MEMBER } from "@/server/services/account-deletion";
+import {
+  cancelWorkspaceDeletion,
+  requestWorkspaceDeletion,
+  workspaceDeletionStatus,
+} from "@/server/services/workspace-deletion";
 import {
   deleteIntegration,
   listIntegrationsForAdmin,
@@ -78,6 +86,13 @@ import {
   setMainTaskPhase,
   updateDisciplineTaskStatus,
 } from "@/server/services/tasks";
+import { downloadMyData } from "@/server/services/personal-export";
+import {
+  exportDownload,
+  startWorkspaceExport,
+  whenExportSettles,
+  workspaceExportStatus,
+} from "@/server/services/workspace-export";
 import { DIGEST_HOUR_UTC, postDailyDigests, runSweepOnce } from "@/server/sweep";
 import { deliverToOrgWebhooks } from "@/server/services/webhooks";
 import {
@@ -1001,5 +1016,103 @@ describe("the noticeboard stops at the company door too", () => {
     const rivalOrg = orgs.find((org) => org.id === rival.admin.orgId);
     expect(acmeOrg?.broadcastPolicy).toBe("ADMIN_ONLY");
     expect(rivalOrg?.broadcastPolicy).toBe("ADMIN_PM");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Data rights: an export is one company's, and so is its link          */
+/* ------------------------------------------------------------------ */
+
+describe("taking a copy of the data out", () => {
+  it("exports one company's rows and hands its link to that company alone", async () => {
+    await startWorkspaceExport(acme.admin);
+    await whenExportSettles();
+
+    const status = await workspaceExportStatus(acme.admin);
+    expect(status.state).toBe("READY");
+    const token = new URL(status.downloadUrl!, "https://example.test").searchParams.get("token")!;
+
+    // The archive itself: every row is Acme's, and the rival's ids appear nowhere in the bytes.
+    const file = await exportDownload(acme.admin, token);
+    const raw = await readFile(file.absolutePath);
+    const entries = new Map(readZip(raw).map((entry) => [entry.name, entry.data]));
+    const projects = JSON.parse(entries.get("projects.json")!.toString("utf8")) as {
+      orgId: string;
+    }[];
+
+    expect(projects.every((row) => row.orgId === acme.admin.orgId)).toBe(true);
+    expect(raw.includes(Buffer.from(rival.admin.orgId, "utf8"))).toBe(false);
+    expect(raw.includes(Buffer.from(rival.projectId, "utf8"))).toBe(false);
+
+    // The rival's administrator holding a valid link: not found, like every other cross-company
+    // miss — the token is a bearer, and a bearer never walks past the tenant rule.
+    await expect(exportDownload(rival.admin, token)).rejects.toBeInstanceOf(NotFoundError);
+
+    // And one company's export never blocks or shows up in the other's.
+    const theirs = await workspaceExportStatus(rival.admin);
+    expect(theirs.state).toBe("NONE");
+    expect(theirs.canStart).toBe(true);
+    expect(theirs.downloadUrl).toBeNull();
+  });
+
+  it("gives each person their own data and nobody else's, across the two companies", async () => {
+    const mine = await downloadMyData(acme.engineer);
+    const theirs = await downloadMyData(rival.engineer);
+
+    // Both companies name their work identically on purpose, so the proof is whose rows they are:
+    // the workspace, the address on the profile, and the other person's address appearing nowhere.
+    expect(mine.workspaceName).not.toBe(theirs.workspaceName);
+    expect(mine.profile.email).toBe(acme.engineer.email);
+    expect(theirs.profile.email).toBe(rival.engineer.email);
+    expect(JSON.stringify(mine)).not.toContain(rival.engineer.email);
+    expect(JSON.stringify(theirs)).not.toContain(acme.engineer.email);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Data rights: deleting stops at the company boundary too              */
+/* ------------------------------------------------------------------ */
+
+describe("deleting an account and deleting a workspace", () => {
+  it("anonymises one company's person and leaves the other company's untouched", async () => {
+    const theirName = rival.engineer.name;
+
+    await deleteMyAccount(acme.engineer, { confirm: "DELETE" });
+
+    const mine = await prisma.user.findUniqueOrThrow({ where: { id: acme.engineer.userId } });
+    const theirs = await prisma.user.findUniqueOrThrow({ where: { id: rival.engineer.userId } });
+    expect(mine.name).toBe(FORMER_MEMBER);
+    expect(mine.isActive).toBe(false);
+    expect(theirs.name).toBe(theirName);
+    expect(theirs.isActive).toBe(true);
+    expect(theirs.email).toBe(rival.engineer.email);
+  });
+
+  it("schedules one company's deletion and never the other's", async () => {
+    const acmeOrg = await prisma.organization.findUniqueOrThrow({
+      where: { id: acme.admin.orgId },
+    });
+
+    // There is no organisation id in the input at all: it comes from the session, so an
+    // administrator can only ever schedule their OWN company.
+    await requestWorkspaceDeletion(acme.admin, { confirmName: acmeOrg.name });
+
+    const mine = await workspaceDeletionStatus(acme.admin);
+    const theirs = await workspaceDeletionStatus(rival.admin);
+    expect(mine.pending).toBe(true);
+    expect(mine.workspaceName).toBe(acmeOrg.name);
+    expect(theirs.pending).toBe(false);
+    expect(theirs.workspaceName).not.toBe(acmeOrg.name);
+
+    const rows = await prisma.organization.findMany({
+      select: { id: true, deleteRequestedAt: true },
+    });
+    expect(rows.find((row) => row.id === acme.admin.orgId)?.deleteRequestedAt).not.toBeNull();
+    expect(rows.find((row) => row.id === rival.admin.orgId)?.deleteRequestedAt).toBeNull();
+
+    // The other company's administrator cannot call off a request that is not theirs to cancel —
+    // there is nothing pending in their own workspace, so there is nothing to cancel.
+    await expect(cancelWorkspaceDeletion(rival.admin)).rejects.toBeInstanceOf(ServiceError);
+    expect((await workspaceDeletionStatus(acme.admin)).pending).toBe(true);
   });
 });
