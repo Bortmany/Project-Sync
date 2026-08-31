@@ -1,6 +1,7 @@
 // Health check: database reachable, uploads folder writable, whether each error-tracking
 // channel (server and browser) is switched on, how the hourly deadline sweep is getting on, and
-// how many companies have each chat integration switched on.
+// how many companies have each chat integration switched on, and whether transactional email is
+// keyed up or dormant.
 
 import { NextResponse } from "next/server";
 import { access, constants, mkdir } from "node:fs/promises";
@@ -8,6 +9,7 @@ import { pingDatabase } from "@/lib/db";
 import { sentryStatus } from "@/lib/error-reporting";
 import { isMicrosoftConfigured } from "@/lib/ms-graph";
 import { uploadsDir } from "@/lib/upload";
+import { emailStatus } from "@/server/services/email";
 import { integrationCounts } from "@/server/services/integrations";
 import { microsoftHealth } from "@/server/services/microsoft";
 import { sweepStatus } from "@/server/sweep";
@@ -61,6 +63,9 @@ export async function GET() {
       sentry: sentryStatus(),
       integrations,
       microsoft,
+      // Transactional email: "dormant" until RESEND_API_KEY, EMAIL_FROM and APP_BASE_URL are all
+      // set, then "configured". A word, and nothing else — no address, no count of anybody.
+      email: emailStatus(),
       // Reporting only, and only about THIS copy of the app: the sweep is not something the app's
       // correctness depends on (overdue is always derived at read time), so a skipped or failed run
       // never makes the app unhealthy.

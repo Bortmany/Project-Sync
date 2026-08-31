@@ -201,10 +201,14 @@ In practice:
       **invisible**: no card, no upload tab, and every `/api/integrations/microsoft/...` route answers
       a plain "not set up". `/api/health` reports
       `"microsoft": {"status": "dormant" | "configured", "connectedOrgs": n}`.
+    - **Transactional email is per deployment and nothing else**: `RESEND_API_KEY` (a real secret)
+      and `EMAIL_FROM`, plus `APP_BASE_URL`, which email needs the way Microsoft needs it. Unset
+      means **no email is ever sent and nothing else changes**; `/api/health` reports
+      `"email": "dormant"`. See "Transactional email" below.
     - **Delivery is best-effort and per-process**, the same accepted limitation rate limiting
       carries: one attempt, one retry on 429 respecting `Retry-After` (capped at ten seconds), then
       the message is dropped with a logged line. There is no queue table. In-app Notifications
-      remain the source of truth.
+      remain the source of truth. **Email follows exactly the same road.**
 12. **Privacy:** if a change starts storing a new piece of personal data, the privacy page (`/privacy`,
     alongside `/terms`) is part of the same change (see the engineering standards, section 6). Both
     pages are a template pending a real legal review before launch — see `docs/GO-LIVE.md` gate 1.
@@ -325,6 +329,26 @@ In practice:
     trigram `DropIndex` lines were deleted by hand, and `pg_indexes` was checked on both databases
     afterwards.)
 
+  - `20260831152239_email_tokens_and_verification` (transactional email. One new model, `EmailToken`
+    — a single-use link sent to somebody by email: `userId` (cascading), `purpose`, a unique
+    `tokenHash`, `expiresAt`, a nullable `usedAt`, `createdAt` and `@@index([userId, purpose])`;
+    plus ONE nullable column, `User.emailVerifiedAt`. **Only the SHA-256 hash of the token is ever
+    stored** — exactly what `Session.tokenHash` already does. The raw token leaves the server once,
+    inside the email, and is never stored, never returned by a read, never written to an audit row
+    and never logged, so a copy of the database hands nobody a working link. Plain SHA-256 rather
+    than the HMAC a session uses, deliberately: an emergency `SESSION_SECRET` rotation should sign
+    everyone out (which is the point) without also killing every invitation in flight, and 32 random
+    bytes is what stops the token being guessed either way. **`purpose` is a plain string validated
+    by zod** (`EmailPurposeSchema` — "INVITE", "RESET", "VERIFY"), not a Prisma enum, the same choice
+    `OrgIntegration.kind` and `Post.kind` made, so a fourth kind of link needs no migration.
+    **Cascade from `User` is deliberate**: these rows are worthless without the account they belong
+    to and carry no audit value of their own — the `ActivityLog` row about the email is the record,
+    and it stays. Additive only: no existing model, field, enum value or index was changed, and
+    `emailVerifiedAt` null (which is what every existing account means) simply reads as "never
+    verified", which restricts nobody — the app nudges, it never locks. The generated migration's
+    five trigram `DropIndex` lines were deleted by hand, and `pg_indexes` was checked on both
+    databases afterwards.)
+
 - **Careful with `prisma migrate dev`:** the trigram search indexes are hand-written raw SQL that the
   Prisma schema does not know about, so the generated migration will try to DROP them. Delete those
   `DropIndex` lines from the generated `migration.sql` before it goes anywhere near a real database.
@@ -364,9 +388,12 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/documents/versions/[versionId]/download` | GET | — | file stream |
 | `/api/auth/signup` | POST | `SignupInput` | `SignupResultDTO` + session cookie (public; `byIp` limited to 5 an hour) |
 | `/api/auth/login` | POST | `LoginInput` | session cookie |
+| `/api/auth/forgot-password` | POST | `ForgotPasswordInput` | `{ sent: true }` — **the same body, status and bytes whatever the address was**: with an account, without one, deactivated, or a contractor whose access has run out. Public; `byIp` limited to 3 an hour **and** 3 an hour per address asked about. Answers the dormant sentence (503) while email is not set up, and sends nothing |
+| `/api/auth/reset-password` | POST | `ResetPasswordInput` | `PasswordChangedDTO` — **no session, no cookie** (public; `byIp` limited to 10 an hour) |
+| `/api/auth/set-password` | POST | `SetPasswordInput` | `PasswordChangedDTO` — accepting an invitation; also marks the address verified. **No session, no cookie** (public; `byIp` limited to 10 an hour) |
 | `/api/auth/logout` | POST | — | `{ signedOut: true }` |
 | `/api/auth/me` | GET | — | signed-in user |
-| `/api/health` | GET | — | health JSON (adds `integrations` — how many companies have each chat kind switched on, numbers only: `{"slack": 0, "teams": 0}` when nobody has — and `microsoft`: `{"status": "dormant"\|"configured", "connectedOrgs": n}`) |
+| `/api/health` | GET | — | health JSON (adds `integrations` — how many companies have each chat kind switched on, numbers only: `{"slack": 0, "teams": 0}` when nobody has — `microsoft`: `{"status": "dormant"\|"configured", "connectedOrgs": n}`, and `email`: `"dormant"` or `"configured"`, a word and nothing else. `"configured"` means all three of `RESEND_API_KEY`, `EMAIL_FROM` and `APP_BASE_URL` are set, because an email with no link is no use) |
 | `/api/integrations/microsoft/connect` | GET | — | 302 to Microsoft's sign-in (ADMIN; signed `state` binds the attempt to this person and company) |
 | `/api/integrations/microsoft/callback` | GET | query: `code`, `state` (or `error`) | 302 back to `/admin/integrations?microsoft=connected\|denied\|failed\|setup` |
 | `/api/integrations/microsoft/status` | GET | — | `MicrosoftConnectionDTO` (404 "not set up" while dormant, which is how the upload tab stays hidden) |
@@ -420,9 +447,11 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `softDeleteDocument` (ADMIN / PM; never deletes a revision) | `{ id }` | `ActionResult<{ deleted: true }>` |
 | `markNotificationRead` (own notification only — someone else's is refused) | `{ id }` | `ActionResult<NotificationDTO>` |
 | `markAllNotificationsRead` (the signed-in person's unread only) | — | `ActionResult<{ count: number }>` |
-| `createUser` (always into the actor's own organisation; `CreateUserInput` and `UpdateUserInput` both now carry an optional, nullable `accessExpiresAt`, which zod refuses on any role but EXTERNAL and the service clears for one) | `CreateUserInput` | `ActionResult<UserDTO>` |
+| `createUser` (always into the actor's own organisation; `CreateUserInput` and `UpdateUserInput` both now carry an optional, nullable `accessExpiresAt`, which zod refuses on any role but EXTERNAL and the service clears for one. `CreateUserInput` also carries an optional `mode` — `"PASSWORD"` (left out means this, and it is the only path while email is dormant) or `"INVITE"`, which creates the account with an unusable random password hash, mints an INVITE link in the same transaction and emails it after the commit. Zod refuses a password sent with `"INVITE"` and refuses `"PASSWORD"` with none) | `CreateUserInput` | `ActionResult<UserDTO>` |
 | `updateUser` (an access end date sent for somebody who is no longer a contractor is cleared, exactly as `companyName` is; the audit row names "access end date" as a field that moved, never the date itself) | `UpdateUserInput` | `ActionResult<UserDTO>` |
 | `deactivateUser` | `{ id }` | `ActionResult<UserDTO>` |
+| `resendInvite` (ADMIN in their own company; only for somebody who has never signed in — `lastLoginAt` null — and only while email is configured. Re-issuing retires the link already in their inbox; audited with a second `EMAIL_SENT` row. Three a minute per person) | `ResendInviteInput` | `ActionResult<EmailSentDTO>` |
+| `resendVerificationEmail` (the banner's action; your OWN address and nobody else's, three a minute per person. An address that is already verified answers the same `{ sent: true }` rather than an error) | — | `ActionResult<EmailSentDTO>` |
 | `createDiscipline` | `CreateDisciplineInput` | `ActionResult<DisciplineDTO>` |
 | `updateDiscipline` | `UpdateDisciplineInput` | `ActionResult<DisciplineDTO>` |
 | `updateTaskDates` (Gantt drag) | `UpdateTaskDatesInput` | `ActionResult<MainTaskDTO \| DisciplineTaskDTO>` |
@@ -461,6 +490,10 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
   reason: starring a project and jotting a private reminder are personal preferences, not project
   work. Same documented exception, same rule — everything else in `src/server/services` still
   appends its audit row inside the transaction.
+- **Dismissing the "verify your email" banner writes nothing at all** — not an audit row, not a
+  database row of any kind. It is a `sessionStorage` flag that is gone at the next full sign-in.
+  Everything the emailed links themselves do — sending one, resetting a password, accepting an
+  invitation, verifying an address — appends its audit row inside the transaction, as always.
 - **The sweep** (`src/server/sweep.ts`, started by `src/instrumentation.ts` in the Node runtime only,
   once per process — first run ~60 seconds after boot, then hourly) sends `DEADLINE_APPROACHING` for
   open tasks due inside 48 hours and `OVERDUE` for open tasks past their deadline: discipline tasks
@@ -682,6 +715,118 @@ the network: `global.fetch` is mocked.**
 **Any change touching this area adds or extends a test in
 `src/server/__tests__/microsoft.service.test.ts` in the same change — and the tests never touch the
 network: `global.fetch` is mocked.**
+
+## Transactional email (invitations, password resets, verification)
+
+> An emailed link is a **hashed, single-use, expiring** thing. The raw token leaves the server once,
+> inside the email; the database only ever holds its SHA-256 hash, and the same link never works
+> twice.
+
+- **Dormant until keyed, like every other integration.** `emailConfigured()` in
+  `src/server/services/email.ts` is true only when `RESEND_API_KEY` **and** `EMAIL_FROM` are both
+  set; `emailAvailable()` additionally requires `APP_BASE_URL`, and that is the one every screen and
+  `/api/health` should ask. Keys with no base address logs **one** line and behaves as dormant —
+  every one of these emails is nothing but a link, so a link with nowhere to point is "not set up",
+  not a broken email. Dormant means every send is a silent no-op returning `{ status: "dormant" }`
+  and **nothing else in the app behaves differently**: tokens are still issued and consumed, so the
+  flows on top can be built and tested before anybody buys a mail provider.
+- **The audit row is written BEFORE the send, inside the calling service's transaction.** The
+  `ActivityLog` row is the record of intent; the email is the copy. `appendEmailActivity()` writes
+  `entityType: "Email"`, `action: EMAIL_SENT`, `entityId` = the recipient's user id and
+  `metadata: { kind, userId }` — never the token, never the link, never the address (the address is
+  already on the account, which is where it belongs). Writing it first means a mail provider that is
+  down or rate limiting can never leave a reset with no trace of having been asked for, and it keeps
+  house rule 1 whole. The send itself then happens **after the transaction commits and is never
+  awaited** — `void sendPasswordResetEmail(...)` — exactly as `deliverToOrgWebhooks()` is called.
+- **Delivery is best-effort and per-process**: one attempt, one retry when Resend answers 429
+  respecting `Retry-After` (capped at ten seconds), then the message is dropped with a logged line.
+  A failure line carries the purpose, the recipient's user id and what went wrong — never the API
+  key, the from address, the recipient's address, the link or the token. Nothing here ever throws.
+  There is no queue table and no SDK: a plain `fetch` to `https://api.resend.com/emails` with a
+  plain-text body, which is the whole of the copy (there is no HTML template library and there must
+  not be one).
+- **Three purposes, three lifetimes** (`EMAIL_TOKEN_TTL_MS` in
+  `src/server/services/email-tokens.ts`): `RESET` 1 hour, `VERIFY` 24 hours, `INVITE` 7 days.
+  `issueEmailToken()` returns the raw token **once** and marks every earlier live token of the same
+  purpose used, so the newest link in somebody's inbox is always the only one that works.
+  `consumeEmailToken()` is a single conditional update on (hash + purpose + unused + unexpired), so
+  two browsers racing the same link can only ever have one winner. `previewEmailToken()` is the
+  read-only twin the pages render from — looking at a link never spends it.
+- **A miss never says why.** Wrong, tampered with, expired, already used, wrong purpose, or
+  belonging to a deactivated account all answer the same `null`, and the screens say "this link no
+  longer works" and nothing more — the same discretion the external rule's "not found" carries.
+- **Verification is a nudge, never a lock.** `User.emailVerifiedAt` null means "not verified" and
+  restricts nothing anywhere in the app; no route, permission or read consults it.
+
+### The four flows on top (`src/server/services/account.ts`)
+
+- **A NO LINK EVER MINTS A SESSION.** `/api/auth/reset-password` and `/api/auth/set-password` both
+  answer `PasswordChangedDTO` and set no cookie: the person signs in next, deliberately, on the
+  page they are sent to. That is what keeps an **EXTERNAL contractor whose access has expired**
+  out — they may reset a password like anybody else, and `getSessionUser()` and the sign-in route
+  still turn them away on the strength of `accessExpiresAt`, exactly as they turn away a
+  deactivated account. A link that signed somebody in would be a way past every one of those rules.
+- **`/forgot-password` never says whether an address has an account** — and that means the WAIT as
+  well as the bytes. Same body, same status, same bytes for a live account, a missing one, a
+  deactivated one and an expired contractor; and the route **does not await the work**
+  (`void requestPasswordReset(...).catch(...)`, the same road `deliverToOrgWebhooks()` takes), so a
+  real account's whole transaction — retire the old links, write the new one, append the audit row
+  — cannot make the answer arrive later than a missing address's single lookup. An identical body
+  with a measurably different response time is still an account oracle. Two ceilings, both three an
+  hour: the IP, and the address asked about, so rotating the forwarded IP buys nothing.
+- **A failure line here carries a category and nothing else** —
+  `{ reason: error instanceof Error ? error.name : "unknown" }`, never the raw error. A Prisma
+  failure on a lookup keyed by email renders the address into its own message, which is exactly
+  what this route exists not to say.
+- **The request itself writes no `ActivityLog` row of its own** — it is unauthenticated, and there
+  is no actor to name. What IS written, inside the same transaction as the token, is the ordinary
+  `EMAIL_SENT` row through `appendEmailActivity()`, with **the recipient as the actor**: they asked
+  for their own link, there is nobody else it could be, and `ActivityLog.actorId` is a real
+  relation rather than a nullable system column.
+- **A reset ends every session that account holds**, in the same transaction as the new password
+  hash, the spent token and the `PASSWORD_RESET` audit row — the screen promises it, so the
+  database keeps it. `INVITE_ACCEPTED` and `EMAIL_VERIFIED` are the other two new audit actions;
+  none of the three ever carries a password, a token or a link.
+- **An invitation creates an account nobody has a password for.** `createUser` with
+  `mode: "INVITE"` writes an argon2 hash of 32 random bytes that are then thrown away
+  (`unusablePasswordHash()`), so there is no first password to leak, to write down or to pass along
+  a corridor. Accepting the invitation **marks the address verified** — the link only ever existed
+  in that inbox, which is the whole of what verification asks.
+- **Self-serve signup issues a VERIFY link inside its own transaction** and sends it after the
+  commit, when email is available. Signing up is never blocked, slowed or failed by it in either
+  direction: dormant means no token and no send, and a broken mail provider still leaves the
+  company created and its administrator signed in.
+- **The verification banner shows for any unverified account whenever email is configured** — an
+  admin-created account with a temporary password included. That is deliberate rather than
+  overlooked: a rule narrow enough to spare them (only the company's original self-serve
+  administrator, say) is a rule nobody can predict from the screen, and the banner is a soft,
+  dismissible line with a one-press resend. Dismissing it writes **nothing to the database** — a
+  `sessionStorage` flag, gone at the next full sign-in. This is the fourth documented exception to
+  house rule 1, and the smallest: hiding a nudge is not company work.
+- **Every screen in this round reads one boolean, `emailAvailable()`, on the server.** The
+  forgot-password page renders the dormant sentence instead of a form; the create-user dialog's
+  invite toggle is simply absent and the dialog looks exactly as it always has; the banner is not
+  mounted. No screen ever names a setting, a key or a provider — the same discretion
+  `AdminMicrosoftCard` and the chat cards use.
+- The public pages are `/forgot-password`, `/reset-password?token=`, `/set-password?token=` and
+  `/verify-email?token=`, all server components on the `AuthSplit` shell. The first three render
+  from `previewEmailToken()`, so **looking at a link never spends it**; `/verify-email` is the one
+  that consumes on sight, because seeing it IS the confirmation, and it is `byIp` limited like any
+  other anonymous entry point.
+- **A mail scanner must not be able to burn a verification link.** Outlook Safe Links and Gmail's
+  fetcher open every link in a message before the person does, and `/verify-email` spends its token
+  on sight — so `verifyEmailWithToken()` answers a spent link by looking it up once: if it really
+  was a VERIFY link, it really has been used, and that account really is verified now, the visitor
+  is shown the success they earned. Nothing is revealed by saying so (they are holding the token,
+  which is the only thing that could ever have proved it) and nothing changes — the moment of
+  verification and its single `EMAIL_VERIFIED` row stay as they were. Every other miss still
+  answers the same plain nothing. **The two password pages need none of this**: they preview on
+  GET and consume only on submit, so a scanner following them changes nothing at all.
+
+**Any change touching this area adds or extends a test in
+`src/server/__tests__/email.service.test.ts` (the delivery half) or
+`src/server/__tests__/email-flows.service.test.ts` (the flows on top) in the same change — and the
+tests never touch the network: `global.fetch` is mocked.**
 
 ## Verify recipe (run in this order, all must pass)
 

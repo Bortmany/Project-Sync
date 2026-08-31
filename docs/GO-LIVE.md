@@ -39,6 +39,10 @@ publicly reachable with no sign-in, following what this app *actually* stores:
 - **Notifications:** what each person was alerted about and whether they have read it.
 - **A personal to-do list**, added in the last UI round — private to each person, no audit trail
   (documented deviation), and now covered in the data inventory above.
+- **Emailed links**, once email is switched on: for each invitation, password reset or verification
+  we store a hashed, single-use, expiring link (never the link itself), whose account it belongs to,
+  when it expires and when it was used — plus whether an address has been verified, and when. The
+  privacy page lists both.
 - **A Microsoft 365 connection**, if a company's administrator sets one up: the Microsoft work
   domain, who connected it and when, and that account's sign-in tokens, encrypted at rest and never
   shown to anybody. The privacy page has its own section explaining it, including that everybody
@@ -66,7 +70,9 @@ Set these in the Railway service's Variables tab — never in the repo, never in
 | `SENTRY_DSN` | Optional | Server-side error tracking. Leave unset and it stays completely inert (`/api/health` reports `"sentry": {"server": "dormant", ...}`). Set it and server errors go to Sentry (`"server": "configured"`). **Set it before the build**, because the Content-Security-Policy that lets the browser reach Sentry is baked into the build. |
 | `NEXT_PUBLIC_SENTRY_DSN` | Optional | Only if you also want errors from people's browsers. Inlined at build time, and reported separately as `"sentry": {..., "browser": "configured"}`. |
 | `SENTRY_TRACES_SAMPLE_RATE` | Optional | `0` by default — errors only, no tracing quota spent. |
-| `APP_BASE_URL` | Optional | The address this deployment answers on, e.g. `https://tielora.up.railway.app`, with no trailing slash. Makes the link inside a Slack or Teams message clickable, and is **required** for Microsoft 365 attachments (it is what the callback address is built from). Unset is safe for chat: messages name the page instead of linking to it. Not a secret. |
+| `APP_BASE_URL` | Optional | The address this deployment answers on, e.g. `https://tielora.up.railway.app`, with no trailing slash. Makes the link inside a Slack or Teams message clickable, and is **required** for Microsoft 365 attachments (it is what the callback address is built from) **and for email** (an invitation or reset email is nothing but a link, so with this unset no email is sent at all, whatever the two variables below say). Unset is safe for chat: messages name the page instead of linking to it. Not a secret. |
+| `RESEND_API_KEY` | Optional | **A real secret.** The API key from resend.com. Leave it unset and no email is ever sent: the forgot-password page tells people to ask their workspace administrator, the "email them an invite link" option is absent from Admin → Users, and `/api/health` reports `"email":"dormant"`. Nothing else in the app changes. |
+| `EMAIL_FROM` | Optional | The address emails come from, e.g. `Tielora <no-reply@yourdomain>`. Must be on a domain you have verified in Resend, or every send is refused. Not a secret, but email stays dormant until it and the key are **both** set. |
 | `MS_GRAPH_CLIENT_ID` | Optional | The Application (client) ID of the Azure app registration (section 6). Not a secret, but the feature stays completely dormant until it and the secret below are both set: no card, no tab, and every Microsoft route answers "not set up". `/api/health` reports `"microsoft": {"status": "dormant", "connectedOrgs": 0}` until then. |
 | `MS_GRAPH_CLIENT_SECRET` | Optional | **A real secret.** The client secret Value from the same Azure app registration, shown once when it is created. Client secrets expire — set a calendar reminder before the date you chose, because when it expires every company's attachments stop working until it is replaced. |
 | `MS_GRAPH_REDIRECT_PATH` | Optional | Defaults to `/api/integrations/microsoft/callback`, which is the path to register in Azure. Only change it if something in front of the app rewrites that path. |
@@ -119,6 +125,21 @@ lets a clean Nixpacks checkout build at all — the generated Prisma client live
      are counts of how many companies have switched a chat channel on, and nothing else. The
      `microsoft` line reads `{"status":"dormant","connectedOrgs":0}` until the Azure app in section 6
      is registered, and `"configured"` afterwards.
+   - The same answer's `email` line reads `"dormant"` until `RESEND_API_KEY`, `EMAIL_FROM` **and**
+     `APP_BASE_URL` are all set, and `"configured"` once they are. Dormant is a supported way to
+     run: no invitation, password-reset or verification email is sent, and administrators set
+     people's first passwords by hand exactly as they do today. If you set the two mail variables
+     and it still reads `"dormant"`, `APP_BASE_URL` is the missing one — the deploy log says so in
+     one line.
+   - **When that line reads `"configured"`, check the forgot-password journey end to end**, because
+     it is the one part of the app nobody signed in can test for you: open
+     `https://<domain>/forgot-password`, enter the address of a real account, and confirm you get
+     the "Check your email" panel, that the email arrives with a link back to your own domain, that
+     the link opens "Choose a new password", and that the new password signs you in while any other
+     browser you had open is signed out. Then enter an address that has **no** account and confirm
+     the screen says exactly the same thing — that identical answer is the whole point of the page.
+     While the line reads `"dormant"` the page says resets by email are not available and asks
+     people to contact their administrator, which is a supported way to run.
    - The deploy logs contain no "Tielora cannot start in production" line. If they do, the
      message names exactly which variable is wrong.
    - `curl -sD - -o /dev/null https://<domain>/login` shows `Content-Security-Policy`,
@@ -285,8 +306,15 @@ Named here so nobody assumes otherwise:
   channels separately, so neither can be mistaken for the other.
 - **Shared rate limiting** — limits are counted per process (`src/lib/rate-limit.ts`). Fine on one
   instance; if the app is ever scaled to several, add the Redis store behind `RateLimitStore`.
-- **Email or SMS notifications** — notifications live in the app, with an optional copy to a Slack or
-  Teams channel (Admin → Integrations). No email is ever sent.
+- **Email or SMS notifications** — work notifications live in the app, with an optional copy to a
+  Slack or Teams channel (Admin → Integrations). **No task, comment or deadline is ever emailed to
+  anybody**, and there is no plan to. The app does now send three account emails — an invitation, a
+  password reset and an email verification — and even those are dormant until `RESEND_API_KEY`,
+  `EMAIL_FROM` and `APP_BASE_URL` are set (section 2). No SMS is ever sent.
+- **A queue behind email** — the same one-attempt, one-retry, then-dropped shape chat delivery has,
+  for the same reason: the audit trail records that the app meant to send, so a dropped email costs
+  somebody a link they can ask for again, never a record. Someone who never receives an invitation
+  is given a password by their administrator instead, exactly as before email existed.
 - **A queue behind chat delivery** — a Slack or Teams message is attempted once, retried once if the
   chat tool says "too many requests", and otherwise dropped with a logged line. Delivery state lives
   in the process, not in a table, exactly like rate limiting. In-app notifications are always written

@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createUser, deactivateUser, updateUser } from "@/components/actions";
+import { createUser, deactivateUser, resendInvite, updateUser } from "@/components/actions";
 import { fieldError, useAction } from "@/components/hooks/use-action";
 import { formatDate, formatDateUtc, toUtcDateInputValue } from "@/components/format";
 import {
@@ -27,7 +27,7 @@ import {
   type FilterDimension,
 } from "@/components/ui";
 import { isAccessExpired } from "@/lib/access-expiry";
-import type { DisciplineDTO, RoleName, UserDTO } from "@/lib/zod-schemas";
+import type { CreateUserModeName, DisciplineDTO, RoleName, UserDTO } from "@/lib/zod-schemas";
 
 const ROLE_OPTIONS: { value: RoleName; label: string }[] = [
   { value: "ADMIN", label: "Admin" },
@@ -91,10 +91,13 @@ function PasswordPanel({ password }: { password: string }) {
 
 function NewUserDialog({
   disciplines,
+  inviteAvailable,
   open,
   onClose,
 }: {
   disciplines: DisciplineDTO[];
+  /** True only when this deployment can actually send email. False renders today's dialog exactly. */
+  inviteAvailable: boolean;
   open: boolean;
   onClose: () => void;
 }) {
@@ -108,10 +111,15 @@ function NewUserDialog({
   const [disciplineId, setDisciplineId] = useState("");
   const [jobTitle, setJobTitle] = useState("");
   const [password, setPassword] = useState(generatePassword);
+  // "Set a password" is the default: it is today's behaviour, and the safer answer before anybody
+  // has chosen. With email dormant it is the only path, and the choice is never shown.
+  const [mode, setMode] = useState<CreateUserModeName>("PASSWORD");
   const [created, setCreated] = useState<UserDTO | null>(null);
+  const [createdMode, setCreatedMode] = useState<CreateUserModeName>("PASSWORD");
 
   const needsDiscipline = DISCIPLINE_ROLES.includes(role);
   const needsCompany = role === "EXTERNAL";
+  const inviting = inviteAvailable && mode === "INVITE";
 
   function close() {
     setCreated(null);
@@ -122,11 +130,31 @@ function NewUserDialog({
     setDisciplineId("");
     setJobTitle("");
     setPassword(generatePassword());
+    setMode("PASSWORD");
     onClose();
   }
 
   if (created) {
-    return (
+    // Two different endings. The invitation branch has no password panel at all, because there is
+    // no password to share — that is the whole point of inviting somebody.
+    return createdMode === "INVITE" ? (
+      <Modal
+        open={open}
+        title="Invite sent"
+        size="sm"
+        onClose={close}
+        footer={<Button onClick={close}>Done</Button>}
+      >
+        <div className="space-y-3">
+          <p>
+            Invite sent to{" "}
+            <span className="font-semibold text-[var(--brand-ink)]">{created.email}</span>.
+            They&apos;ll get an email with a link to set their own password. It expires in 7 days —
+            if it lapses, open Edit and resend it.
+          </p>
+        </div>
+      </Modal>
+    ) : (
       <Modal
         open={open}
         title="User created"
@@ -167,7 +195,9 @@ function NewUserDialog({
                   createUser({
                     name: name.trim(),
                     email: email.trim(),
-                    password,
+                    // An invitation sends no password at all — there is none to send.
+                    ...(inviting ? {} : { password }),
+                    mode: inviting ? "INVITE" : "PASSWORD",
                     role,
                     disciplineId: disciplineId || null,
                     jobTitle: jobTitle.trim() || null,
@@ -175,9 +205,12 @@ function NewUserDialog({
                     accessExpiresAt: accessEndsValue(role, accessEnds),
                   }),
                 {
-                  success: "User created.",
-                  failure: "Couldn't create this user. Try again.",
+                  success: inviting ? "Invite sent." : "User created.",
+                  failure: inviting
+                    ? "Couldn't send this invite. Try again."
+                    : "Couldn't create this user. Try again.",
                   onSuccess: (user) => {
+                    setCreatedMode(inviting ? "INVITE" : "PASSWORD");
                     setCreated(user);
                     router.refresh();
                   },
@@ -185,13 +218,31 @@ function NewUserDialog({
               )
             }
           >
-            Create user
+            {inviting ? "Send invite" : "Create user"}
           </Button>
         </>
       }
     >
       <div className="space-y-3">
         {error ? <ErrorBanner message={error} /> : null}
+        {inviteAvailable ? (
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button
+              variant={mode === "PASSWORD" ? "primary" : "secondary"}
+              className="flex-1"
+              onClick={() => setMode("PASSWORD")}
+            >
+              Set a password
+            </Button>
+            <Button
+              variant={mode === "INVITE" ? "primary" : "secondary"}
+              className="flex-1"
+              onClick={() => setMode("INVITE")}
+            >
+              Email them an invite link
+            </Button>
+          </div>
+        ) : null}
         <Field label="Name" error={fieldError(fieldErrors, "name")}>
           <Input value={name} onChange={(event) => setName(event.target.value)} />
         </Field>
@@ -256,26 +307,58 @@ function NewUserDialog({
         <Field label="Job title" hint="Optional — how the role reads on their profile.">
           <Input value={jobTitle} onChange={(event) => setJobTitle(event.target.value)} />
         </Field>
-        <Field label="First password" hint="Generated for you. Share it once, in person or by phone.">
-          <div className="flex items-center gap-2">
-            <Input value={password} readOnly className="font-mono" />
-            <Button variant="secondary" onClick={() => setPassword(generatePassword())}>
-              New one
-            </Button>
-          </div>
-        </Field>
+        {inviting ? null : (
+          <Field
+            label="First password"
+            hint="Generated for you. Share it once, in person or by phone."
+          >
+            <div className="flex items-center gap-2">
+              <Input value={password} readOnly className="font-mono" />
+              <Button variant="secondary" onClick={() => setPassword(generatePassword())}>
+                New one
+              </Button>
+            </div>
+          </Field>
+        )}
       </div>
     </Modal>
+  );
+}
+
+/**
+ * "Resend invite email" — only for somebody who has never signed in, and only when this deployment
+ * can send email at all. Somebody who has already chosen a password does not need a fresh
+ * invitation; "New password" in the same dialog is what their administrator wants instead.
+ */
+function ResendInviteButton({ user }: { user: UserDTO }) {
+  const { run, pending } = useAction();
+
+  return (
+    <button
+      type="button"
+      disabled={pending}
+      onClick={() =>
+        run(() => resendInvite({ id: user.id }), {
+          success: "Invite email sent again.",
+          failure: "Couldn't send that invite. Try again.",
+        })
+      }
+      className="text-xs font-semibold text-[var(--brand-primary)] hover:underline disabled:text-[var(--brand-gray)]"
+    >
+      {pending ? "Sending…" : "Resend invite email"}
+    </button>
   );
 }
 
 function EditUserDialog({
   user,
   disciplines,
+  inviteAvailable,
   onClose,
 }: {
   user: UserDTO;
   disciplines: DisciplineDTO[];
+  inviteAvailable: boolean;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -414,6 +497,15 @@ function EditUserDialog({
           </div>
         </Field>
         {password ? <PasswordPanel password={password} /> : null}
+        {inviteAvailable && user.isActive && !user.lastLoginAt ? (
+          <div className="space-y-1 border-t border-[var(--border)] pt-3">
+            <ResendInviteButton user={user} />
+            <p className="text-xs text-[var(--brand-gray)]">
+              {user.name} hasn&apos;t signed in yet. Sending it again replaces the link already in
+              their inbox.
+            </p>
+          </div>
+        ) : null}
       </div>
     </Modal>
   );
@@ -489,9 +581,12 @@ function ReactivateButton({ user }: { user: UserDTO }) {
 export function AdminUsersView({
   users,
   disciplines,
+  inviteAvailable = false,
 }: {
   users: UserDTO[];
   disciplines: DisciplineDTO[];
+  /** Whether this deployment can send email. False means the screen looks exactly as it always has. */
+  inviteAvailable?: boolean;
 }) {
   const [search, setSearch] = useState("");
   const [newOpen, setNewOpen] = useState(false);
@@ -707,6 +802,7 @@ export function AdminUsersView({
 
       <NewUserDialog
         disciplines={disciplines}
+        inviteAvailable={inviteAvailable}
         open={newOpen}
         onClose={() => setNewOpen(false)}
       />
@@ -714,6 +810,7 @@ export function AdminUsersView({
         <EditUserDialog
           user={editing}
           disciplines={disciplines}
+          inviteAvailable={inviteAvailable}
           onClose={() => setEditing(null)}
         />
       ) : null}

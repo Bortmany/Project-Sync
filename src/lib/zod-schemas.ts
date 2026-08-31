@@ -87,6 +87,19 @@ export const LoginInput = z.object({
 });
 export type LoginInput = z.infer<typeof LoginInput>;
 
+/**
+ * The one password rule in the app: at least 12 characters, at most 200. Signing a company up,
+ * accepting an invitation and resetting a forgotten password all parse through this, so the
+ * threshold and the wording can never drift apart between the screens that ask for one.
+ */
+export const PasswordSchema = z
+  .string()
+  .min(12, "Use at least 12 characters — a short sentence works well.")
+  .max(200);
+
+/** An email address as every form in the app accepts one. */
+const emailAddress = z.string().trim().toLowerCase().email().max(200);
+
 /** The discipline sets a brand-new company can start from. The lists live in src/server/industry-templates.ts. */
 export const IndustryTemplateSchema = z.enum(["OIL_AND_GAS", "CONSTRUCTION", "GENERIC"]);
 export type IndustryTemplateName = z.infer<typeof IndustryTemplateSchema>;
@@ -100,10 +113,7 @@ export const SignupInput = z.object({
   industryTemplate: IndustryTemplateSchema,
   name: z.string().trim().min(1, "Tell us your name.").max(200),
   email: z.string().trim().toLowerCase().email("Use an email address like name@company.com.").max(200),
-  password: z
-    .string()
-    .min(12, "Use at least 12 characters — a short sentence works well.")
-    .max(200),
+  password: PasswordSchema,
 });
 export type SignupInput = z.infer<typeof SignupInput>;
 
@@ -148,11 +158,32 @@ export type UserDTO = z.infer<typeof UserDTO>;
 /** The refusal both user forms give when an access-end date is sent for somebody who is not a contractor. */
 const ACCESS_EXPIRY_EXTERNAL_ONLY = "Only an external contractor can have an access end date.";
 
+/**
+ * How a new colleague gets their first password.
+ *
+ * `PASSWORD` is the original behaviour and stays the default: the administrator is handed a
+ * generated one to pass on, and it is the ONLY path while transactional email is dormant.
+ * `INVITE` creates the account with no usable password at all and emails them a single-use link to
+ * set their own — so nobody but them ever knows it.
+ */
+export const CreateUserModeSchema = z.enum(["PASSWORD", "INVITE"]);
+export type CreateUserModeName = z.infer<typeof CreateUserModeSchema>;
+
+/** What the create-user form says when it sends neither a password nor an invitation. */
+const PASSWORD_OR_INVITE = "Set a first password, or email them an invite link.";
+
 export const CreateUserInput = z
   .object({
     email: z.string().trim().toLowerCase().email().max(200),
     name: shortText,
-    password: z.string().min(12).max(200),
+    /** Required on the `PASSWORD` path, and refused as pointless on the `INVITE` one. */
+    password: z.string().min(12).max(200).optional(),
+    /**
+     * Left out means `PASSWORD` — exactly what every caller written before invitations meant, and
+     * why this is optional rather than defaulted: an omitted mode stays omitted all the way to the
+     * service, which reads anything but `"INVITE"` as the original behaviour.
+     */
+    mode: CreateUserModeSchema.optional(),
     role: RoleSchema,
     disciplineId: id.nullable().optional(),
     jobTitle: z.string().trim().max(120).nullable().optional(),
@@ -164,6 +195,16 @@ export const CreateUserInput = z
   .refine((value) => !value.accessExpiresAt || value.role === "EXTERNAL", {
     message: ACCESS_EXPIRY_EXTERNAL_ONLY,
     path: ["accessExpiresAt"],
+  })
+  .refine((value) => value.mode === "INVITE" || typeof value.password === "string", {
+    message: PASSWORD_OR_INVITE,
+    path: ["password"],
+  })
+  // An invitation carries no password anywhere: not in the form, not in the request, not in the
+  // audit row. Refusing one that was sent anyway keeps that promise honest.
+  .refine((value) => value.mode !== "INVITE" || value.password === undefined, {
+    message: "An invited person chooses their own password.",
+    path: ["password"],
   });
 export type CreateUserInput = z.infer<typeof CreateUserInput>;
 
@@ -1561,3 +1602,63 @@ export type SetBroadcastPolicyInput = z.infer<typeof SetBroadcastPolicyInput>;
 /** The company's noticeboard setting, as the Admin screen sees it. */
 export const BroadcastSettingDTO = z.object({ policy: BroadcastPolicySchema });
 export type BroadcastSettingDTO = z.infer<typeof BroadcastSettingDTO>;
+
+/* ------------------------------------------------------------------ */
+/* Emailed links (invitations, password resets, verification)          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What an emailed link is for. A zod enum over a plain string column, NOT a database enum — the
+ * same choice `IntegrationKindSchema` and `PostKindSchema` made, so a fourth kind of link needs no
+ * migration.
+ */
+export const EmailPurposeSchema = z.enum(["INVITE", "RESET", "VERIFY"]);
+export type EmailPurposeName = z.infer<typeof EmailPurposeSchema>;
+
+/**
+ * The raw token out of a link, exactly as it was minted: 32 random bytes as lower-case hex. Parsing
+ * it before it reaches the database means a query string full of anything else is refused as
+ * "this link no longer works" — the same answer a wrong, expired or used link gets.
+ */
+export const EmailTokenSchema = z
+  .string()
+  .trim()
+  .regex(/^[0-9a-f]{64}$/, "That link no longer works.");
+export type EmailTokenValue = z.infer<typeof EmailTokenSchema>;
+
+/** Asking for a reset link. The answer is the same whatever address is typed in here. */
+export const ForgotPasswordInput = z.object({ email: emailAddress });
+export type ForgotPasswordInput = z.infer<typeof ForgotPasswordInput>;
+
+/** Spending a reset link: the token out of the address bar, and the new password. */
+export const ResetPasswordInput = z.object({
+  token: EmailTokenSchema,
+  password: PasswordSchema,
+});
+export type ResetPasswordInput = z.infer<typeof ResetPasswordInput>;
+
+/** Spending an invitation link. The same two fields, deliberately a name of its own. */
+export const SetPasswordInput = z.object({
+  token: EmailTokenSchema,
+  password: PasswordSchema,
+});
+export type SetPasswordInput = z.infer<typeof SetPasswordInput>;
+
+/** Spending a verification link. */
+export const VerifyEmailInput = z.object({ token: EmailTokenSchema });
+export type VerifyEmailInput = z.infer<typeof VerifyEmailInput>;
+
+/** Sending somebody's invitation again — the person, never the link. */
+export const ResendInviteInput = z.object({ id: id });
+export type ResendInviteInput = z.infer<typeof ResendInviteInput>;
+
+/**
+ * What the two public password pages hand back. Never the address, never a session — signing in is
+ * a separate, deliberate step, so a reset link can never become a way in on its own.
+ */
+export const PasswordChangedDTO = z.object({ changed: z.literal(true) });
+export type PasswordChangedDTO = z.infer<typeof PasswordChangedDTO>;
+
+/** What the resend actions hand back: that we tried, and nothing about the link itself. */
+export const EmailSentDTO = z.object({ sent: z.literal(true) });
+export type EmailSentDTO = z.infer<typeof EmailSentDTO>;

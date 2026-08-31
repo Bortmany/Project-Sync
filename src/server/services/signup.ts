@@ -15,7 +15,9 @@ import { SignupResultDTO as SignupResultSchema } from "@/lib/zod-schemas";
 import { ServiceError } from "@/server/errors";
 import { disciplinesForTemplate, slugify } from "@/server/industry-templates";
 import { checkDto } from "@/server/serialize";
+import { deliverVerification, issueVerification } from "@/server/services/account";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
+import { emailAvailable } from "@/server/services/email";
 
 /** How many "-2", "-3" … endings a company name may need before signup gives up. */
 const SLUG_ATTEMPTS = 50;
@@ -67,6 +69,15 @@ export async function signUpOrganization(
         { organizationName: ["That company name was just taken. Try again."] },
       );
     }
+  }
+
+  // After the commit, and never awaited — the new company is already theirs whatever the mail
+  // provider does next.
+  if (created.verifyToken) {
+    deliverVerification(
+      { id: created.user.id, name: created.user.name, email: created.user.email },
+      created.verifyToken,
+    );
   }
 
   const result = checkDto(
@@ -150,7 +161,13 @@ async function writeOrganization({
       },
     });
 
-    return { organization, user };
+    // Nobody vouched for this address — the person typed it in themselves — so a verification link
+    // is minted here, in the same transaction, and posted once it commits. Signing up is NEVER
+    // blocked by it: with no mail provider set up no token is issued and nothing else changes, and
+    // an unverified account is restricted nowhere in the app either way.
+    const verifyToken = emailAvailable() ? await issueVerification(tx, user) : null;
+
+    return { organization, user, verifyToken };
   });
 }
 

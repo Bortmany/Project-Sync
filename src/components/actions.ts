@@ -37,6 +37,9 @@ export {
   updateDiscipline,
 } from "@/server/actions/admin";
 
+// Transactional email, the signed-in half: sending an invitation or a verification link again.
+export { resendInvite, resendVerificationEmail } from "@/server/actions/account";
+
 // Admin → Integrations. No action here ever returns a saved webhook address.
 export {
   saveIntegration,

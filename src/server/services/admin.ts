@@ -22,7 +22,14 @@ import { DisciplineDTO as DisciplineSchema, UserDTO as UserSchema } from "@/lib/
 import type { ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
 import { checkDto, checkDtoList } from "@/server/serialize";
+import {
+  INVITE_DORMANT_MESSAGE,
+  deliverInvite,
+  issueInvite,
+  unusablePasswordHash,
+} from "@/server/services/account";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
+import { emailAvailable } from "@/server/services/email";
 
 /** The roles whose work always belongs to one discipline. */
 const DISCIPLINE_ROLES: RoleName[] = ["DISCIPLINE_LEAD", "ENGINEER"];
@@ -163,9 +170,27 @@ function accessExpiresFor(role: RoleName, accessExpiresAt: Date | null | undefin
  * Creates an account inside the administrator's own company. Signup creates the FIRST person in a
  * company; this is how every colleague after them gets in. The new account's orgId is taken from
  * the actor, never from the form — there is no way to add someone to another organisation.
+ *
+ * Two ways in, chosen by `input.mode`:
+ *  - **PASSWORD** (the default, and the only one while email is dormant): the administrator's
+ *    generated password is hashed and shown to them once, exactly as it always has been.
+ *  - **INVITE**: the account is created with a password hash nobody can ever match, and a
+ *    single-use invitation link is minted **in the same transaction** and emailed once it commits.
+ *    No first password exists anywhere — not on the screen, not in the request, not in the audit
+ *    row — so there is nothing to pass along a corridor and nothing to leak.
  */
 export async function createUser(actor: ActorContext, input: CreateUserInput): Promise<UserDTO> {
   assertCan(actor, "MANAGE_USERS");
+
+  const invited = input.mode === "INVITE";
+  // Dormant is not a half-state: with no mail provider the invite path does not exist at all, and
+  // the dialog never offers it. This is the server saying the same thing.
+  if (invited && !emailAvailable()) throw new ServiceError(INVITE_DORMANT_MESSAGE);
+  if (!invited && !input.password) {
+    throw new ServiceError("Set a first password, or email them an invite link.", {
+      password: ["Set a first password, or email them an invite link."],
+    });
+  }
 
   // Email addresses are unique across the whole product — one address signs in to one company —
   // so the answer to "is this taken?" cannot be narrowed to this organisation.
@@ -179,9 +204,15 @@ export async function createUser(actor: ActorContext, input: CreateUserInput): P
   await assertDisciplineChoice(actor, input.role, input.disciplineId);
   const companyName = companyNameFor(input.role, input.companyName);
   const accessExpiresAt = accessExpiresFor(input.role, input.accessExpiresAt);
-  const passwordHash = await hashPassword(input.password);
+  const passwordHash =
+    invited || !input.password ? await unusablePasswordHash() : await hashPassword(input.password);
 
-  const created = await prisma.$transaction(async (tx) => {
+  // The invitation email names the company; read it before the transaction opens.
+  const organization = invited
+    ? await prisma.organization.findUnique({ where: { id: actor.orgId }, select: { name: true } })
+    : null;
+
+  const { user: created, rawToken } = await prisma.$transaction(async (tx) => {
     const user = await tx.user.create({
       data: {
         orgId: actor.orgId,
@@ -213,11 +244,33 @@ export async function createUser(actor: ActorContext, input: CreateUserInput): P
         disciplineId: user.disciplineId,
         companyName: user.companyName,
         accessLimited: user.accessExpiresAt !== null,
+        // How they were let in, never what they were let in with.
+        invited,
       },
     });
 
-    return user;
+    // The invitation's own audit row goes in the same transaction, so a mail provider that is down
+    // can never leave an account with no record of having been invited.
+    const rawToken = invited
+      ? await issueInvite(
+          tx,
+          { userId: actor.userId, name: actor.name },
+          { id: user.id, name: user.name, email: user.email },
+        )
+      : null;
+
+    return { user, rawToken };
   });
+
+  // After the commit, and never awaited: nobody waits on a mail provider to see the account appear.
+  if (rawToken) {
+    deliverInvite(
+      { id: created.id, name: created.name, email: created.email },
+      rawToken,
+      actor.name,
+      organization?.name ?? "Tielora",
+    );
+  }
 
   return checkDto(UserSchema, toUserDTO(created), "UserDTO");
 }

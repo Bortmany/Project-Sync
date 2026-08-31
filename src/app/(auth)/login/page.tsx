@@ -5,14 +5,31 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import { homePathFor } from "@/components/shell/nav-items";
-import { AuthLegalLinks, AuthSplit } from "../auth-split";
+import { AuthLegalLinks, AuthSplit, GoodNews } from "../auth-split";
 import { LoginForm } from "./login-form";
 
 export const metadata = { title: "Sign in — Tielora" };
 
-export default async function LoginPage() {
+/**
+ * The one-off good news somebody arrives with after setting a password. It is read from the address
+ * bar once and never stored: refreshing without the parameter simply shows the ordinary page.
+ */
+const DONE_MESSAGES: Record<string, string> = {
+  password:
+    "Your password is changed, and you've been signed out everywhere else. Sign in with your new password.",
+  invite: "You're all set — sign in with your new password to get started.",
+};
+
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ done?: string }>;
+}) {
   const user = await getSessionUser();
   if (user) redirect(homePathFor(user.role));
+
+  const params = await searchParams;
+  const done = params.done ? DONE_MESSAGES[params.done] : undefined;
 
   return (
     <AuthSplit>
@@ -21,6 +38,7 @@ export default async function LoginPage() {
         Use your work email. Accounts are set up by your workspace administrator.
       </p>
       <div className="mt-6">
+        {done ? <GoodNews>{done}</GoodNews> : null}
         <LoginForm />
       </div>
       <p className="mt-6 text-sm text-[var(--brand-text)]">
