@@ -71,6 +71,17 @@ export const ACTIVITY = {
   POST_EDITED: "POST_EDITED",
   POST_DELETED: "POST_DELETED",
   BROADCAST_POLICY_CHANGED: "BROADCAST_POLICY_CHANGED",
+  // Transactional email. The row records that the app MEANT to send one — it carries the kind and
+  // the recipient's user id, and never the token, the link or the address.
+  EMAIL_SENT: "EMAIL_SENT",
+  // What somebody did with an emailed link. None of these rows ever carries the token, the link or
+  // the password that was chosen — only that the account moved, and when.
+  /** A forgotten password was set again from a reset link, and every session was dropped. */
+  PASSWORD_RESET: "PASSWORD_RESET",
+  /** An invited colleague chose their first password and became a real account. */
+  INVITE_ACCEPTED: "INVITE_ACCEPTED",
+  /** Somebody proved an address is theirs. A nudge finished, never a permission granted. */
+  EMAIL_VERIFIED: "EMAIL_VERIFIED",
 } as const;
 
 export type ActivityAction = (typeof ACTIVITY)[keyof typeof ACTIVITY];
@@ -95,7 +106,10 @@ export type AppendActivityInput = {
     | "User"
     | "Discipline"
     | "OrgIntegration"
-    | "MicrosoftConnection";
+    | "MicrosoftConnection"
+    // An email the app sent to one person. `entityId` is that person's user id, so the row sits in
+    // their history — the address itself is never copied here.
+    | "Email";
   entityId: string;
   action: ActivityAction;
   /** Plain English, e.g. "Ahmed al-Balushi marked Electrical review complete". */

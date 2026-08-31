@@ -2,6 +2,7 @@
 
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { homePathFor } from "@/components/shell/nav-items";
@@ -68,6 +69,18 @@ export function LoginForm() {
           onChange={(event) => setPassword(event.target.value)}
         />
       </Field>
+
+      {/* Always here, whether or not this deployment sends email: a signed-out visitor has no way
+          of knowing, and the page it leads to is what explains it. Its own row, so the tap target
+          on a phone is comfortable rather than crammed against the input. */}
+      <p className="text-right text-sm">
+        <Link
+          href="/forgot-password"
+          className="inline-block py-1 text-[var(--brand-primary)] underline-offset-2 hover:underline"
+        >
+          Forgot password?
+        </Link>
+      </p>
 
       {error ? (
         <p

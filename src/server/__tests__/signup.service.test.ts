@@ -4,7 +4,7 @@
 // limit, the transaction that builds the company, and the session cookie that comes back. The only
 // thing stubbed is the cookie jar, which needs a live request to exist.
 
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** The cookie jar next/headers would give a route. Replaced per test so each starts empty. */
 const jar = new Map<string, { value: string; expires?: Date }>();
@@ -297,5 +297,82 @@ describe("signing a company up", () => {
     // Somebody else is unaffected — the limit is per address, not global.
     const elsewhere = await post(form({ organizationName: "Somewhere Else" }), "198.51.100.78");
     expect(elsewhere.status).toBe(200);
+  });
+});
+
+describe("the verification email a self-serve signup earns", () => {
+  const API_KEY = "re_Sup3rSecretResendKeyValue";
+  const FROM = "Tielora <no-reply@tielora.example>";
+  const BASE = "https://tielora.example";
+
+  /** Lets the un-awaited `void sendVerificationEmail(...)` run before the spy is inspected. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.RESEND_API_KEY;
+    delete process.env.EMAIL_FROM;
+    delete process.env.APP_BASE_URL;
+  });
+
+  it("sends one, after the company is committed, without blocking the signup", async () => {
+    process.env.RESEND_API_KEY = API_KEY;
+    process.env.EMAIL_FROM = FROM;
+    process.env.APP_BASE_URL = BASE;
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ id: "msg_1" }), { status: 200 }));
+
+    const { status, body } = await post(form());
+    expect(status).toBe(200);
+
+    // Nobody vouched for this address, so a verification link is minted in the same transaction.
+    const tokens = await prisma.emailToken.findMany({ where: { purpose: "VERIFY" } });
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].userId).toBe(body.data.id);
+
+    await settle();
+    expect(spy).toHaveBeenCalledTimes(1);
+    const sent = JSON.parse(String((spy.mock.calls[0][1] as RequestInit).body)) as {
+      subject: string;
+      text: string;
+    };
+    expect(sent.subject).toBe("Verify your Tielora email");
+    expect(sent.text).toContain(`${BASE}/verify-email?token=`);
+
+    // A nudge, never a lock: the account is signed in and unverified, and nothing is withheld.
+    const person = await prisma.user.findUniqueOrThrow({ where: { id: body.data.id } });
+    expect(person.emailVerifiedAt).toBeNull();
+    expect(await prisma.session.count({ where: { userId: person.id } })).toBe(1);
+  });
+
+  it("goes through unchanged, and sends nothing, with no mail provider set up", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("{}", { status: 200 }));
+
+    const { status, body } = await post(form());
+
+    expect(status).toBe(200);
+    expect(body.ok).toBe(true);
+    await settle();
+    expect(spy).not.toHaveBeenCalled();
+    expect(await prisma.emailToken.count()).toBe(0);
+    // The session is still there: signing up is never held up by email, in either direction.
+    expect(await prisma.session.count({ where: { userId: body.data.id } })).toBe(1);
+  });
+
+  it("still creates the company when the mail provider is broken", async () => {
+    process.env.RESEND_API_KEY = API_KEY;
+    process.env.EMAIL_FROM = FROM;
+    process.env.APP_BASE_URL = BASE;
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("connect ECONNREFUSED"));
+
+    const { status, body } = await post(form({ organizationName: "Unlucky Works" }));
+
+    expect(status).toBe(200);
+    expect(body.data.organizationSlug).toBe("unlucky-works");
+    await settle();
+    expect(await prisma.organization.count()).toBe(1);
   });
 });

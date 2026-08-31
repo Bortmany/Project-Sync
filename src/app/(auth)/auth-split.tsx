@@ -38,6 +38,32 @@ export function AuthSplit({
   );
 }
 
+/** The quiet way back, on every public page that is not the sign-in page itself. */
+export function BackToSignIn() {
+  return (
+    <p className="mt-6 text-sm text-[var(--brand-text)]">
+      <Link
+        href="/login"
+        className="font-semibold text-[var(--brand-primary)] underline-offset-2 hover:underline"
+      >
+        Back to sign in
+      </Link>
+    </p>
+  );
+}
+
+/**
+ * The calm "good news" strip the sign-in page shows after a password has been set. Deliberately
+ * not the red error styling — nothing went wrong — and deliberately not celebratory either.
+ */
+export function GoodNews({ children }: { children: ReactNode }) {
+  return (
+    <p className="mb-4 rounded-[var(--radius)] border border-[var(--brand-accent)] bg-[var(--brand-accent)]/10 px-3 py-2 text-sm text-[var(--brand-ink)]">
+      {children}
+    </p>
+  );
+}
+
 /** The privacy and terms line both public screens carry under their form. */
 export function AuthLegalLinks() {
   return (

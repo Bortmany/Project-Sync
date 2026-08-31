@@ -4,16 +4,22 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { Sidebar } from "@/components/shell/sidebar";
 import { Topbar } from "@/components/shell/topbar";
+import { VerificationBanner } from "@/components/shell/verification-banner";
+import { needsVerificationNudge } from "@/server/services/account";
 import { Providers } from "./providers";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
+  // Only when this deployment can send email AND this person has no verified address. It is a
+  // nudge, never a lock: nothing below this line behaves differently either way.
+  const unverified = await needsVerificationNudge(user.id);
 
   return (
     <Providers>
       <div className="flex min-h-screen">
         <Sidebar role={user.role} />
         <div className="flex min-w-0 flex-1 flex-col">
+          {unverified ? <VerificationBanner email={user.email} /> : null}
           <Topbar name={user.name} email={user.email} role={user.role} />
           <main className="min-w-0 flex-1 p-4 sm:p-6">{children}</main>
           <footer className="border-t border-[var(--brand-stone)] px-4 py-3 text-xs text-[var(--brand-gray)] sm:px-6">

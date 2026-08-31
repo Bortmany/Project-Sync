@@ -28,6 +28,7 @@ const TABLES = [
   "Project",
   "OrgIntegration",
   "MicrosoftConnection",
+  "EmailToken",
   "Session",
   "User",
   "Discipline",

@@ -13,7 +13,7 @@ export default function PrivacyPage() {
         Tielora
       </p>
       <h1 className="mt-2 text-2xl font-semibold text-[var(--brand-ink)]">Privacy notice</h1>
-      <p className="mt-1 text-sm text-[var(--brand-gray)]">Last updated 25 Aug 2026</p>
+      <p className="mt-1 text-sm text-[var(--brand-gray)]">Last updated 31 Aug 2026</p>
 
       <div className="mt-6 rounded-[var(--radius)] border border-[var(--brand-stone)] bg-[var(--brand-stone)]/40 p-4 text-sm text-[var(--brand-text)]">
         This notice is a template written to describe the app honestly. It has not yet been reviewed
@@ -59,6 +59,15 @@ export default function PrivacyPage() {
           <li>
             <strong>Sessions:</strong> a hashed sign-in token, the IP address and browser used to sign
             in, and when the session expires.
+          </li>
+          <li>
+            <strong>Email links, if your company has email switched on:</strong> when you are invited,
+            ask to reset your password, or are asked to confirm your address, we store a scrambled
+            copy of that one-time link — never the link itself — along with which account it belongs
+            to, when it stops working, and when it was used. Each link works once and then expires,
+            asking for a new one retires the old one, and the record of the link is deleted with the
+            account. We also store whether your address has been confirmed and when; if you never
+            confirm it, nothing is taken away from you — it is only a reminder.
           </li>
           <li>
             <strong>Work:</strong> projects, tasks, comments, uploaded documents and every revision of
@@ -148,13 +157,31 @@ export default function PrivacyPage() {
       </section>
 
       <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
+        <h2 className="text-base font-semibold text-[var(--brand-ink)]">The emails we send you</h2>
+        <p>
+          There are only three, and each is about your account rather than your work: an invitation
+          to set your first password, a password reset you asked for, and a request to confirm your
+          email address. Each carries your name and a link that works once and then expires. They are
+          sent through Resend, an email delivery service, which handles your name and address in
+          order to deliver the message.
+        </p>
+        <p>
+          No task, comment, document or deadline is ever emailed to anybody — work notifications stay
+          in the app, with the optional chat copy described above. If your company has not switched
+          email on, none of these are sent at all and your administrator sets passwords for you
+          instead.
+        </p>
+      </section>
+
+      <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
         <h2 className="text-base font-semibold text-[var(--brand-ink)]">Why this is stored</h2>
         <p>
           Solely to run multidisciplinary project coordination for the company whose workspace you
           are in: assigning and tracking work, gating task completion on required documents, keeping
           a dependable audit trail, and notifying people about work relevant to them. Nothing here is
           used for advertising and nothing is ever sold. The only information that leaves this app is
-          the chat copy described above, and only while your administrator has that switched on.
+          the chat copy described above, while your administrator has that switched on, and the
+          account emails described below.
         </p>
       </section>
 

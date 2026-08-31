@@ -165,6 +165,10 @@ model User {
   /// the service clears it whenever somebody stops being a contractor. "Expired" itself is never
   /// stored — it is derived from this date at read time, exactly as OVERDUE is.
   accessExpiresAt DateTime?
+  /// When this person confirmed their email address by following a verification link. Null means
+  /// they never have — which is what every account created before verification existed means, and
+  /// it never restricts anybody: the app only ever nudges, it does not lock.
+  emailVerifiedAt DateTime?
   isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
@@ -194,6 +198,7 @@ model User {
   personalTasks         PersonalTask[]
   posts                 Post[]              @relation("PostAuthor")
   postDismissals        PostDismissal[]
+  emailTokens           EmailToken[]
   createdIntegrations   OrgIntegration[]    @relation("OrgIntegrationCreatedBy")
   microsoftConnections  MicrosoftConnection[] @relation("MicrosoftConnectionConnectedBy")
 
@@ -215,6 +220,39 @@ model Session {
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+/// One single-use link sent to somebody by email: an invitation, a password reset or an email
+/// verification.
+///
+/// `tokenHash` holds the SHA-256 hex of the raw token and nothing else — exactly the shape
+/// Session.tokenHash takes. The raw token leaves the server ONCE, inside the email; it is never
+/// stored, never returned by any read, never written to an audit row and never logged. A stolen
+/// database therefore hands nobody a working link.
+/// `purpose` is a plain STRING validated by zod (EmailPurposeSchema in src/lib/zod-schemas.ts), not
+/// a Prisma enum — the same choice OrgIntegration.kind and Post.kind made, so a fourth kind of link
+/// needs no migration.
+/// `usedAt` is what makes a link single-use: consuming one is a conditional update on
+/// (hash + purpose + unused + unexpired), so two browsers racing the same link can only ever have
+/// one winner. Issuing a fresh token of the same purpose marks the older ones used, so the newest
+/// link in somebody's inbox is always the only one that works.
+/// Cascading from User is deliberate and safe: these rows are worthless without the account they
+/// belong to, they carry no audit value (the ActivityLog row about the email is the record of
+/// intent), and nobody is ever hard-deleted anyway — people are deactivated.
+model EmailToken {
+  id        String    @id @default(cuid())
+  userId    String
+  /// "INVITE", "RESET" or "VERIFY".
+  purpose   String
+  tokenHash String    @unique
+  expiresAt DateTime
+  /// When this link was used, or a newer one of the same purpose replaced it. Null means live.
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
 }
 
 model Discipline {
