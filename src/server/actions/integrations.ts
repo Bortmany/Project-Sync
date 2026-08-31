@@ -23,6 +23,7 @@ import {
 import { toFailure } from "@/server/errors";
 import { beginMutation, revalidateAdmin } from "@/server/actions/guard";
 import * as integrations from "@/server/services/integrations";
+import * as microsoft from "@/server/services/microsoft";
 
 const CHECK_FIELDS = "Please check the highlighted fields.";
 
@@ -99,6 +100,24 @@ export async function sendTestMessage(
     return { ok: true, data: result };
   } catch (error) {
     return toFailure(error, { action: "sendTestMessage" });
+  }
+}
+
+/**
+ * Removes the company's Microsoft 365 connection, tokens and all. Connecting is a browser journey
+ * to Microsoft and back (/api/integrations/microsoft/connect), so this is the only half of it that
+ * can be a server action — and it is the half that must be audited.
+ */
+export async function disconnectMicrosoft(): Promise<ActionResult<{ removed: true }>> {
+  const guard = await beginMutation("disconnect-microsoft", 20);
+  if (guard.failure) return guard.failure;
+
+  try {
+    const removed = await microsoft.disconnectMicrosoft(guard.actor);
+    revalidateAdmin();
+    return { ok: true, data: removed };
+  } catch (error) {
+    return toFailure(error, { action: "disconnectMicrosoft" });
   }
 }
 

@@ -61,6 +61,11 @@ export default function PrivacyPage() {
             <strong>A personal to-do list</strong>, if you choose to use one — the notes you type there
             are private to your account and visible to nobody else.
           </li>
+          <li>
+            <strong>A Microsoft 365 connection</strong>, if your administrator sets one up: which
+            Microsoft work domain it is, which administrator connected it and when, and the sign-in
+            tokens for that one account, kept encrypted and never shown to anybody. See below.
+          </li>
         </ul>
       </section>
 
@@ -97,6 +102,30 @@ export default function PrivacyPage() {
           It is off unless your administrator turns it on, they choose which kinds of notification go
           out, and they can switch it off or remove it at any time in Admin → Integrations. Nothing
           else is sent: no documents, no comments in full, no email addresses and no passwords.
+        </p>
+      </section>
+
+      <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
+        <h2 className="text-base font-semibold text-[var(--brand-ink)]">
+          Microsoft 365 files, if your administrator connects them
+        </h2>
+        <p>
+          Your workspace administrator can connect your company&apos;s OneDrive and SharePoint so
+          people can attach a document that already lives there. We store which Microsoft work domain
+          it is, who connected it and when, and the sign-in tokens for that one account — encrypted,
+          never shown to anybody and never sent anywhere else. Removing the connection deletes them.
+        </p>
+        <p>
+          When somebody attaches a file, we ask Microsoft for that file and copy it into Tielora as
+          an ordinary document revision, which then follows the permanence rule above. We never
+          write anything back to Microsoft, never change or delete anything there, and never list
+          files for anybody who could not already upload to the task they are attaching to.
+        </p>
+        <p>
+          Everyone in the company browses through the account the administrator connected, so the
+          list of files people can see is what that one account can see. It is off unless your
+          administrator switches it on, and they can disconnect it at any time in Admin →
+          Integrations.
         </p>
       </section>
 

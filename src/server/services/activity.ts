@@ -56,6 +56,9 @@ export const ACTIVITY = {
   INTEGRATION_EVENTS_CHANGED: "INTEGRATION_EVENTS_CHANGED",
   INTEGRATION_TEST_SENT: "INTEGRATION_TEST_SENT",
   INTEGRATION_REMOVED: "INTEGRATION_REMOVED",
+  // Microsoft 365 files. These rows carry the tenant id and who connected — never a token.
+  MICROSOFT_CONNECTED: "MICROSOFT_CONNECTED",
+  MICROSOFT_DISCONNECTED: "MICROSOFT_DISCONNECTED",
 } as const;
 
 export type ActivityAction = (typeof ACTIVITY)[keyof typeof ACTIVITY];
@@ -76,7 +79,8 @@ export type AppendActivityInput = {
     // Admin-section rows carry no project — they are about the organisation, not one project.
     | "User"
     | "Discipline"
-    | "OrgIntegration";
+    | "OrgIntegration"
+    | "MicrosoftConnection";
   entityId: string;
   action: ActivityAction;
   /** Plain English, e.g. "Ahmed al-Balushi marked Electrical review complete". */

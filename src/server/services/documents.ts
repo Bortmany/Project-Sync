@@ -52,6 +52,34 @@ export async function uploadDocumentVersion(
   meta: UploadMeta,
   file: StoredUpload,
 ): Promise<DocumentVersionDTO> {
+  const target = await assertCanUploadTo(actor, meta);
+
+  const requiredDocument = await resolveRequiredDocument(meta, target);
+  const filename = safeOriginalName(file.originalName);
+  const title = meta.title?.trim() || withoutExtension(filename);
+
+  // The unique constraint on (documentId, revisionNumber) is the last word on revision numbers.
+  // The row lock below stops two uploads racing for the same number; the retry covers the rest.
+  let versionId: string;
+  try {
+    versionId = await writeVersion({ actor, meta, file, target, requiredDocument, title, filename });
+  } catch (error) {
+    if (!isRevisionClash(error)) throw error;
+    versionId = await writeVersion({ actor, meta, file, target, requiredDocument, title, filename });
+  }
+
+  await notifyWatchers(actor, target, filename);
+
+  return buildVersionDTO(versionId);
+}
+
+/**
+ * Works out where a file is going and refuses anyone who may not put it there. Every upload runs
+ * through here, and so does every Microsoft 365 browse and attach — a member is shown a company's
+ * OneDrive files only after passing exactly the permission an upload to that same task needs, so
+ * "attach from OneDrive" can never reach further than "upload a file" already does.
+ */
+export async function assertCanUploadTo(actor: ActorContext, meta: UploadMeta): Promise<UploadTarget> {
   const target = await resolveTarget(actor, meta);
 
   // Shared working documents (main-task level) are revised by everyone contributing to that
@@ -73,23 +101,7 @@ export async function uploadDocumentVersion(
     assigneeId: assigneeCtx,
   });
 
-  const requiredDocument = await resolveRequiredDocument(meta, target);
-  const filename = safeOriginalName(file.originalName);
-  const title = meta.title?.trim() || withoutExtension(filename);
-
-  // The unique constraint on (documentId, revisionNumber) is the last word on revision numbers.
-  // The row lock below stops two uploads racing for the same number; the retry covers the rest.
-  let versionId: string;
-  try {
-    versionId = await writeVersion({ actor, meta, file, target, requiredDocument, title, filename });
-  } catch (error) {
-    if (!isRevisionClash(error)) throw error;
-    versionId = await writeVersion({ actor, meta, file, target, requiredDocument, title, filename });
-  }
-
-  await notifyWatchers(actor, target, filename);
-
-  return buildVersionDTO(versionId);
+  return target;
 }
 
 type WriteVersionInput = {

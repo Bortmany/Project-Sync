@@ -43,6 +43,7 @@ export {
   setEventToggles,
   sendTestMessage,
   deleteIntegration,
+  disconnectMicrosoft,
 } from "@/server/actions/integrations";
 
 export { createComment, editComment, deleteComment } from "@/server/actions/comments";

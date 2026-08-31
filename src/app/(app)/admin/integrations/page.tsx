@@ -7,16 +7,32 @@ import { AdminIntegrationsView } from "@/components/admin/admin-integrations-vie
 import { NoAccess } from "@/components/admin/no-access";
 import { currentActor } from "@/server/session";
 import { listIntegrationsForAdmin } from "@/server/services/integrations";
+import { microsoftConnectionFor } from "@/server/services/microsoft";
 
 export const metadata = { title: "Integrations — Tielora" };
 export const dynamic = "force-dynamic";
 
-export default async function AdminIntegrationsPage() {
+export default async function AdminIntegrationsPage({
+  searchParams,
+}: {
+  // Set by the Microsoft callback — "connected", "denied", "failed" or "setup".
+  searchParams: Promise<{ microsoft?: string }>;
+}) {
   const actor = await currentActor();
   if (!actor) redirect("/login");
   if (!can(actor, "MANAGE_INTEGRATIONS")) return <NoAccess />;
 
-  const integrations = await listIntegrationsForAdmin(actor);
+  const [integrations, microsoft, params] = await Promise.all([
+    listIntegrationsForAdmin(actor),
+    microsoftConnectionFor(actor),
+    searchParams,
+  ]);
 
-  return <AdminIntegrationsView integrations={integrations} />;
+  return (
+    <AdminIntegrationsView
+      integrations={integrations}
+      microsoft={microsoft}
+      microsoftOutcome={params.microsoft}
+    />
+  );
 }

@@ -16,6 +16,7 @@ import {
   GanttDTO,
   MainTaskDTO,
   MainTaskListItemDTO,
+  MicrosoftConnectionDTO,
   MyTasksDTO,
   PersonalTaskDTO,
   PhaseDTO,
@@ -420,5 +421,29 @@ export function useDisciplineTaskComments(taskId: string): UseQueryResult<Commen
     queryKey: ["discipline-task", taskId, "comments"],
     queryFn: () =>
       readRoute(`/api/discipline-tasks/${taskId}/comments`, z.array(CommentRowDTO)),
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Microsoft 365 files                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Is "Attach from OneDrive or SharePoint" available to this person? Answers null while the feature
+ * is dormant (no Azure app registered) or the route refuses — which is what keeps the tab out of
+ * sight rather than showing a broken one. Cached for five minutes: it changes about once a year.
+ */
+export function useMicrosoftStatus(): UseQueryResult<MicrosoftConnectionDTO | null> {
+  return useQuery({
+    queryKey: ["microsoft-status"],
+    queryFn: async () => {
+      try {
+        return await readRoute("/api/integrations/microsoft/status", MicrosoftConnectionDTO);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 5 * 60_000,
+    retry: false,
   });
 }

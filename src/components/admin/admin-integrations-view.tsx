@@ -16,12 +16,14 @@ import {
   setEventToggles,
   setIntegrationEnabled,
 } from "@/components/actions";
+import { AdminMicrosoftCard } from "@/components/admin/admin-microsoft-card";
 import { fieldError, useAction } from "@/components/hooks/use-action";
 import { Badge, Button, Card, ErrorBanner, Field, Input, Modal, useToast } from "@/components/ui";
 import type {
   IntegrationEventName,
   IntegrationEventToggles,
   IntegrationKindName,
+  MicrosoftConnectionDTO,
   OrgIntegrationDTO,
 } from "@/lib/zod-schemas";
 
@@ -312,14 +314,23 @@ function IntegrationCard({ integration }: { integration: OrgIntegrationDTO }) {
   );
 }
 
-export function AdminIntegrationsView({ integrations }: { integrations: OrgIntegrationDTO[] }) {
+export function AdminIntegrationsView({
+  integrations,
+  microsoft,
+  microsoftOutcome,
+}: {
+  integrations: OrgIntegrationDTO[];
+  microsoft: MicrosoftConnectionDTO;
+  microsoftOutcome?: string;
+}) {
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-semibold text-[var(--brand-primary)]">Integrations</h1>
         <p className="mt-1 text-sm text-[var(--brand-text)]">
-          Send a copy of your company&rsquo;s notifications to a chat channel. Notifications inside
-          Tielora carry on either way — this is an extra copy, not a replacement.
+          Send a copy of your company&rsquo;s notifications to a chat channel, and connect the files
+          your team already keeps in Microsoft 365. Notifications inside Tielora carry on either way
+          — chat is an extra copy, not a replacement.
         </p>
       </div>
 
@@ -327,6 +338,8 @@ export function AdminIntegrationsView({ integrations }: { integrations: OrgInteg
         {integrations.map((integration) => (
           <IntegrationCard key={integration.kind} integration={integration} />
         ))}
+        {/* Renders nothing at all while no Azure app is registered on this Tielora. */}
+        <AdminMicrosoftCard connection={microsoft} outcome={microsoftOutcome} />
       </div>
     </div>
   );

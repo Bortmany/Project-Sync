@@ -1023,3 +1023,106 @@ export const IntegrationTestResultDTO = z.object({
   message: z.string(),
 });
 export type IntegrationTestResultDTO = z.infer<typeof IntegrationTestResultDTO>;
+
+/* ------------------------------------------------------------------ */
+/* Microsoft 365 files (OneDrive and SharePoint)                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Graph ids are opaque strings from Microsoft, longer than our own cuids and put straight into a
+ * request path — so anything that could change the shape of that path is refused here, once, and
+ * the same helper is used again before any outbound call (src/lib/ms-graph.ts).
+ */
+export function isSafeGraphId(value: string): boolean {
+  return value.length > 0 && value.length <= 512 && !/[/?#%\\\s]/.test(value);
+}
+
+const graphId = z
+  .string()
+  .trim()
+  .min(1)
+  .max(512)
+  .refine(isSafeGraphId, "That file reference is not usable.");
+
+/**
+ * One company's Microsoft 365 connection, as the Admin screen sees it. No token, no tenant secret
+ * and no file address is ever part of this shape.
+ */
+export const MicrosoftConnectionDTO = z.object({
+  /** Whether this Tielora has an Azure app registered at all. False means the card is not shown. */
+  available: z.boolean(),
+  /** Whether APP_BASE_URL is set, which is what the callback address is built from. */
+  callbackReady: z.boolean(),
+  connected: z.boolean(),
+  /** The work domain of the account that connected, e.g. "contoso.com". Never a person's address. */
+  tenantDomain: z.string().nullable(),
+  connectedByName: z.string().nullable(),
+  connectedAt: dateOut.nullable(),
+  /** True once Microsoft has stopped accepting the saved token — an administrator must reconnect. */
+  needsReconnect: z.boolean(),
+});
+export type MicrosoftConnectionDTO = z.infer<typeof MicrosoftConnectionDTO>;
+
+/** One place files live: the person's own OneDrive, or a SharePoint document library. */
+export const MicrosoftDriveDTO = z.object({
+  id: graphId,
+  name: z.string(),
+  /** "OneDrive" or the SharePoint site's name — plain English for the picker's list. */
+  location: z.string(),
+});
+export type MicrosoftDriveDTO = z.infer<typeof MicrosoftDriveDTO>;
+
+/** One row in the file picker: a folder to open, or a file to attach. */
+export const MicrosoftItemDTO = z.object({
+  id: graphId,
+  name: z.string(),
+  isFolder: z.boolean(),
+  sizeBytes: z.number().nullable(),
+  lastModifiedAt: dateOut.nullable(),
+  /** Larger than the 25 MB upload limit, so the picker can say so before anyone waits. */
+  tooLarge: z.boolean(),
+});
+export type MicrosoftItemDTO = z.infer<typeof MicrosoftItemDTO>;
+
+/**
+ * What one step of browsing (or one search) answers with. The picker keeps its own breadcrumb from
+ * the folders it walked through, so the server never spends a second Graph call re-reading names it
+ * has just handed over.
+ */
+export const MicrosoftListingDTO = z.object({
+  driveId: graphId,
+  driveName: z.string(),
+  /** The folder being shown, or null for the top of the drive. */
+  folderId: graphId.nullable(),
+  items: z.array(MicrosoftItemDTO),
+  /** True when Microsoft had more rows than one page shows. */
+  truncated: z.boolean(),
+});
+export type MicrosoftListingDTO = z.infer<typeof MicrosoftListingDTO>;
+
+/**
+ * Where an attachment would go. Exactly the fields the upload dialog already sends, because the
+ * browse endpoints check the SAME permission an upload does before they show a single file name.
+ */
+export const MicrosoftTargetInput = UploadMeta.omit({ title: true, category: true, note: true });
+export type MicrosoftTargetInput = z.infer<typeof MicrosoftTargetInput>;
+
+export const MicrosoftBrowseInput = MicrosoftTargetInput.extend({
+  driveId: graphId.optional(),
+  /** The folder being opened. Absent means the drive's root. */
+  itemId: graphId.optional(),
+});
+export type MicrosoftBrowseInput = z.infer<typeof MicrosoftBrowseInput>;
+
+export const MicrosoftSearchInput = MicrosoftTargetInput.extend({
+  driveId: graphId,
+  q: z.string().trim().min(2, "Type at least two characters to search.").max(100),
+});
+export type MicrosoftSearchInput = z.infer<typeof MicrosoftSearchInput>;
+
+/** Attaching one picked file. Everything an upload carries, plus which file to fetch. */
+export const AttachMicrosoftFileInput = UploadMeta.extend({
+  driveId: graphId,
+  itemId: graphId,
+});
+export type AttachMicrosoftFileInput = z.infer<typeof AttachMicrosoftFileInput>;

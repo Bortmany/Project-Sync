@@ -139,6 +139,13 @@ In practice:
       Changing one means pasting it again. Only https, and only the per-kind host allowlist in
       `webhookUrlProblem()` — checked when it is saved **and again at delivery time**, which is the
       SSRF guard.
+    - **Microsoft 365 file attachments are the other shape: per deployment AND per company.** The
+      Azure app registration is the owner's, in env (`MS_GRAPH_CLIENT_ID`, `MS_GRAPH_CLIENT_SECRET`,
+      optional `MS_GRAPH_REDIRECT_PATH`, and `APP_BASE_URL` for the callback address); each company's
+      administrator then connects their own Microsoft tenant in Admin → Integrations. Unset env means
+      **invisible**: no card, no upload tab, and every `/api/integrations/microsoft/...` route answers
+      a plain "not set up". `/api/health` reports
+      `"microsoft": {"status": "dormant" | "configured", "connectedOrgs": n}`.
     - **Delivery is best-effort and per-process**, the same accepted limitation rate limiting
       carries: one attempt, one retry on 429 respecting `Retry-After` (capped at ten seconds), then
       the message is dropped with a logged line. There is no queue table. In-app Notifications
@@ -207,6 +214,22 @@ In practice:
     integration at all — dormant by default, and the seed deliberately does not create one. The
     generated migration's five trigram `DropIndex` lines were deleted by hand.)
 
+  - `20260831012133_microsoft_connection` (Microsoft 365 file attachments. One new model,
+    `MicrosoftConnection` — a company's link to its own OneDrive / SharePoint: `orgId` **unique**
+    (one Microsoft tenant per company, cascading), `tenantId`, a nullable `tenantDomain` shown on the
+    admin card, a nullable `connectedById` (`onDelete: SetNull`, the same shape `OrgIntegration`
+    uses), `connectedAt`, `refreshTokenEnc`, `accessTokenEnc`, `accessTokenExpiresAt` and a nullable
+    `staleAt`. **The two token columns hold AES-256-GCM ciphertext under a key derived from
+    `SESSION_SECRET` with HKDF** (`src/lib/secret-box.ts`) — never plaintext, never returned by a
+    read, never in an audit row or a log line. `staleAt` records that Microsoft has stopped accepting
+    the saved token, so the screens can ask for a reconnection instead of failing quietly; it is a
+    fact, not a derived state, which is why it is stored. **Nothing about a file is stored here**: an
+    attached file becomes an ordinary `DocumentVersion` through the existing
+    `validateUpload` → `storeFile` path, so the append-only guarantee is untouched. Additive only:
+    no existing model, field, enum value or index was changed, and a company with no row here has no
+    connection at all. The generated migration's five trigram `DropIndex` lines were deleted by
+    hand.)
+
 - **Careful with `prisma migrate dev`:** the trigram search indexes are hand-written raw SQL that the
   Prisma schema does not know about, so the generated migration will try to DROP them. Delete those
   `DropIndex` lines from the generated `migration.sql` before it goes anywhere near a real database.
@@ -247,7 +270,14 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/auth/login` | POST | `LoginInput` | session cookie |
 | `/api/auth/logout` | POST | — | `{ signedOut: true }` |
 | `/api/auth/me` | GET | — | signed-in user |
-| `/api/health` | GET | — | health JSON (adds `integrations` — how many companies have each chat kind switched on, numbers only: `{"slack": 0, "teams": 0}` when nobody has) |
+| `/api/health` | GET | — | health JSON (adds `integrations` — how many companies have each chat kind switched on, numbers only: `{"slack": 0, "teams": 0}` when nobody has — and `microsoft`: `{"status": "dormant"\|"configured", "connectedOrgs": n}`) |
+| `/api/integrations/microsoft/connect` | GET | — | 302 to Microsoft's sign-in (ADMIN; signed `state` binds the attempt to this person and company) |
+| `/api/integrations/microsoft/callback` | GET | query: `code`, `state` (or `error`) | 302 back to `/admin/integrations?microsoft=connected\|denied\|failed\|setup` |
+| `/api/integrations/microsoft/status` | GET | — | `MicrosoftConnectionDTO` (404 "not set up" while dormant, which is how the upload tab stays hidden) |
+| `/api/integrations/microsoft/drives` | GET | query: the upload target (`projectId` + one of `mainTaskId`/`disciplineTaskId`/`documentId`) | `MicrosoftDriveDTO[]` |
+| `/api/integrations/microsoft/items` | GET | query: upload target + `driveId`, `itemId?` | `MicrosoftListingDTO` |
+| `/api/integrations/microsoft/search` | GET | query: upload target + `driveId`, `q` | `MicrosoftListingDTO` |
+| `/api/integrations/microsoft/attach` | POST | `AttachMicrosoftFileInput` (the upload meta plus `driveId`, `itemId`) | `DocumentVersionDTO` — a normal revision |
 | `/api/my-tasks` | GET | — | `MyTasksDTO` (everything assigned to the signed-in person: up to 200 open tasks by deadline **plus** the 50 most recently completed, read in two windows so history never crowds out live work, with `truncated`; `totals` counted in the database over all of it) |
 | `/api/my-tasks/gantt` | GET | — | `GanttDTO` (only the signed-in person's discipline tasks, grouped under their main tasks; bounded — open work plus work whose deadline fell inside the last 90 days, 300 bars max) |
 | `/api/favorites` | GET | — | `FavoriteDTO[]` (the signed-in person's own shortcuts, newest first, 50 max; deleted targets and anything in a project they may no longer see are skipped) |
@@ -302,6 +332,7 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `setEventToggles` (ADMIN; all five events are saved together) | `SetEventTogglesInput` | `ActionResult<OrgIntegrationDTO>` |
 | `sendTestMessage` (ADMIN; rate limited hard — five a minute per person, because each press posts into a real channel) | `IntegrationKindInput` | `ActionResult<IntegrationTestResultDTO>` |
 | `deleteIntegration` (ADMIN; removes the address with the connection, audit rows stay) | `IntegrationKindInput` | `ActionResult<{ removed: true }>` |
+| `disconnectMicrosoft` (ADMIN; deletes the stored tokens, audit row stays. Connecting is a browser journey to Microsoft, so only this half can be an action) | — | `ActionResult<{ removed: true }>` |
 
 ## Notifications and the deadline sweep
 
@@ -361,6 +392,40 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 **Any change touching this area adds or extends a test in
 `src/server/__tests__/integrations.service.test.ts` in the same change — and the tests never touch
 the network: `global.fetch` is mocked.**
+
+## Microsoft 365 attachments (OneDrive and SharePoint)
+
+- **An attached file is an ordinary upload.** `attachMicrosoftFile()` fetches the bytes and then
+  walks the same road `/api/uploads` walks: size checked from Graph's metadata *before* anything is
+  downloaded and again on what arrived, `validateUpload()` on the bytes (a renamed `.exe` is refused
+  exactly as it is from a browser), `storeFile()` under a random name, then
+  `uploadDocumentVersion()`. There is no second way to write a `DocumentVersion`, and the
+  append-only guarantee is untouched. Where it came from is recorded in the revision's own `note`.
+- **Browsing needs the permission an upload needs.** Every browse and attach route carries the
+  upload target and calls `assertCanUploadTo()` (`src/server/services/documents.ts`) — the same
+  function `uploadDocumentVersion` calls — before a single file name is returned. "Attach from
+  OneDrive" can therefore never reach further than "upload a file" already does.
+- **One connection per company, resolved from `actor.orgId` only.** `MicrosoftConnection.orgId` is
+  unique and every lookup is `where: { orgId: actor.orgId }`, so another company's connection, drive
+  id or file id is **not found**. Everyone in a company browses through the account its administrator
+  connected; the admin card and the privacy page both say so plainly.
+- **Two hosts, ever**: `graph.microsoft.com` and `login.microsoftonline.com`, checked on every
+  outbound call in `src/server/services/graph.ts` (the SSRF guard, the same shape the chat webhooks
+  carry). The one exception is a file download: `/content` answers 302 to a short-lived Microsoft
+  content host, so the redirect is **never followed automatically** — the target is checked against
+  the content-host allowlist in `src/lib/ms-graph.ts` and then fetched **without** our bearer token.
+- **Tokens are encrypted at rest** (`src/lib/secret-box.ts`: HKDF from `SESSION_SECRET`, AES-256-GCM,
+  keyed per purpose) and never returned, logged or written to an audit row. Microsoft retires a
+  refresh token as it is used, so the new one is always saved; **one refresh is in flight per company
+  at a time** (per process, like rate limiting), because racing refreshes are how a working
+  connection breaks itself. A 401 buys exactly one forced refresh and one retry — then the connection
+  is marked `staleAt` and the screens ask an administrator to reconnect.
+- **No Microsoft JavaScript anywhere.** The picker is ours, fed by our own routes, so the strict
+  Content-Security-Policy in `next.config.ts` needed no change at all.
+
+**Any change touching this area adds or extends a test in
+`src/server/__tests__/microsoft.service.test.ts` in the same change — and the tests never touch the
+network: `global.fetch` is mocked.**
 
 ## Verify recipe (run in this order, all must pass)
 

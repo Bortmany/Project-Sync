@@ -33,6 +33,38 @@ export function failFrom(error: unknown, context: Record<string, unknown> = {}):
   return NextResponse.json(body, { status: statusFor(error) });
 }
 
+/**
+ * The named query parameters as a plain object, with blanks left out so an optional field in a zod
+ * schema stays absent rather than arriving as an empty string.
+ */
+export function queryRecord(request: Request, keys: string[]): Record<string, string> {
+  const params = new URL(request.url).searchParams;
+  const raw: Record<string, string> = {};
+  for (const key of keys) {
+    const value = params.get(key);
+    if (value !== null && value.trim() !== "") raw[key] = value;
+  }
+  return raw;
+}
+
+/**
+ * A tighter ceiling on top of guardRead, for the few routes where one request costs a call to
+ * somebody else's service. Returns the 429 to hand back, or null to carry on.
+ */
+export function tighterLimit(
+  actor: ActorContext,
+  scope: string,
+  max: number,
+  windowMs = 60_000,
+): NextResponse | null {
+  const throttle = limit(byUser(actor.userId, scope), max, windowMs);
+  if (throttle.ok) return null;
+  return NextResponse.json(
+    { ok: false, error: "That is a lot of requests at once. Please wait a moment and try again." },
+    { status: 429, headers: { "Retry-After": String(throttle.retryAfterSec) } },
+  );
+}
+
 type Guarded = { actor: ActorContext; response?: undefined } | { actor?: undefined; response: NextResponse };
 
 /** Every read route starts here: signed in, and not hammering the endpoint. */

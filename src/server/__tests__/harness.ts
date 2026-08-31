@@ -25,6 +25,7 @@ const TABLES = [
   "ProjectDiscipline",
   "Project",
   "OrgIntegration",
+  "MicrosoftConnection",
   "Session",
   "User",
   "Discipline",

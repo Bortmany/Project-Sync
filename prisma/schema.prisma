@@ -66,6 +66,41 @@ model Organization {
   disciplines  Discipline[]
   projects     Project[]
   integrations OrgIntegration[]
+  microsoft    MicrosoftConnection?
+}
+
+/// One company's link to its own Microsoft 365 (OneDrive / SharePoint), so members can attach a file
+/// that already lives there instead of downloading and re-uploading it.
+///
+/// ONE ROW PER COMPANY (`orgId` is unique): an administrator connects on behalf of the company and
+/// everyone browses through that connection, so what the company can see in Tielora is exactly what
+/// that administrator's Microsoft account can see.
+/// `refreshTokenEnc` and `accessTokenEnc` are AES-256-GCM ciphertext under a key derived from
+/// SESSION_SECRET (src/lib/secret-box.ts). They are NEVER stored in plain text, never returned by
+/// any read, never written to an audit row and never logged — one step stricter than the chat
+/// webhook address, because these can be exchanged for new credentials.
+/// `staleAt` is set when Microsoft stops accepting the saved token; the screens then ask an
+/// administrator to reconnect instead of failing silently.
+/// Nothing about a file is stored here: an attached file becomes an ordinary DocumentVersion
+/// through the usual validateUpload → storeFile path, so the append-only guarantee is untouched.
+model MicrosoftConnection {
+  id                   String    @id @default(cuid())
+  orgId                String    @unique
+  /// The customer's Microsoft Entra tenant id, as returned when they connected.
+  tenantId             String
+  /// The work domain of the connecting account, e.g. "contoso.com" — shown on the admin card.
+  tenantDomain         String?
+  connectedById        String?
+  connectedAt          DateTime  @default(now())
+  refreshTokenEnc      String
+  accessTokenEnc       String?
+  accessTokenExpiresAt DateTime?
+  staleAt              DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  connectedBy  User?        @relation("MicrosoftConnectionConnectedBy", fields: [connectedById], references: [id], onDelete: SetNull)
 }
 
 /// One company's chat-notification hook: where Tielora posts a copy of its notifications.
@@ -134,6 +169,7 @@ model User {
   favorites             Favorite[]
   personalTasks         PersonalTask[]
   createdIntegrations   OrgIntegration[]    @relation("OrgIntegrationCreatedBy")
+  microsoftConnections  MicrosoftConnection[] @relation("MicrosoftConnectionConnectedBy")
 
   @@index([isActive])
   @@index([orgId, isActive])

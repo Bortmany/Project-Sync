@@ -17,6 +17,7 @@ process.env.DATA_DIR = path.join(os.tmpdir(), "tielora-test-data");
 import { prisma } from "@/lib/db";
 import { searchEverything } from "@/lib/search";
 import { ForbiddenError } from "@/lib/permissions";
+import { seal } from "@/lib/secret-box";
 import { storeFile, validateUpload } from "@/lib/upload";
 import type { ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
@@ -48,6 +49,13 @@ import {
   renamePhase,
   reorderPhases,
 } from "@/server/services/phases";
+import {
+  attachMicrosoftFile,
+  disconnectMicrosoft,
+  listMicrosoftDrives,
+  listMicrosoftFolder,
+  microsoftConnectionFor,
+} from "@/server/services/microsoft";
 import { getProjectForActor, listProjectsForActor } from "@/server/services/projects";
 import {
   completeDisciplineTask,
@@ -532,5 +540,83 @@ describe("one company's chat channel is not another company's", () => {
     });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy.mock.calls[0][0]).toBe(ACME_SLACK);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Microsoft 365 attachments                                           */
+/* ------------------------------------------------------------------ */
+
+describe("a company's Microsoft 365 connection", () => {
+  beforeEach(async () => {
+    process.env.MS_GRAPH_CLIENT_ID = "isolation-client-id";
+    process.env.MS_GRAPH_CLIENT_SECRET = "isolation-client-secret";
+
+    // Only Acme has connected. The connection is resolved from the actor's own orgId and nothing
+    // else, so nothing a rival sends can reach it.
+    await prisma.microsoftConnection.create({
+      data: {
+        orgId: acme.fixture.orgId,
+        tenantId: "acme-tenant",
+        tenantDomain: "acme.example",
+        connectedById: acme.admin.userId,
+        refreshTokenEnc: seal("microsoft.refresh-token", "acme-refresh-token"),
+        accessTokenEnc: seal("microsoft.access-token", "acme-access-token"),
+        accessTokenExpiresAt: new Date(Date.now() + 30 * 60_000),
+      },
+    });
+  });
+
+  afterEach(() => {
+    delete process.env.MS_GRAPH_CLIENT_ID;
+    delete process.env.MS_GRAPH_CLIENT_SECRET;
+  });
+
+  it("is invisible to the other company's administrator", async () => {
+    const mine = await microsoftConnectionFor(acme.admin);
+    const theirs = await microsoftConnectionFor(rival.admin);
+
+    expect(mine.connected).toBe(true);
+    expect(mine.tenantDomain).toBe("acme.example");
+    // Not "someone else's", not an error — simply nothing.
+    expect(theirs.connected).toBe(false);
+    expect(theirs.tenantDomain).toBeNull();
+    expect(JSON.stringify(theirs)).not.toContain("acme");
+  });
+
+  it("cannot be browsed, used or removed from the other company", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
+
+    // Their own, legitimate target — the refusal is about the connection, not the task.
+    await expect(
+      listMicrosoftDrives(rival.admin, {
+        projectId: rival.projectId,
+        mainTaskId: rival.mainTaskId,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    // Acme's project and task, from the rival's session: not found, never forbidden.
+    await expect(
+      listMicrosoftFolder(rival.admin, {
+        projectId: acme.projectId,
+        mainTaskId: acme.mainTaskId,
+        driveId: "b!acme-drive",
+      }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    await expect(
+      attachMicrosoftFile(rival.admin, {
+        projectId: acme.projectId,
+        mainTaskId: acme.mainTaskId,
+        driveId: "b!acme-drive",
+        itemId: "01ACMEITEM",
+      }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    await expect(disconnectMicrosoft(rival.admin)).rejects.toBeInstanceOf(NotFoundError);
+
+    // Nothing ever left the building, and Acme's connection is untouched.
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await prisma.microsoftConnection.count()).toBe(1);
   });
 });

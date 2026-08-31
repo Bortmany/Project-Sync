@@ -38,6 +38,10 @@ publicly reachable with no sign-in, following what this app *actually* stores:
 - **Notifications:** what each person was alerted about and whether they have read it.
 - **A personal to-do list**, added in the last UI round — private to each person, no audit trail
   (documented deviation), and now covered in the data inventory above.
+- **A Microsoft 365 connection**, if a company's administrator sets one up: the Microsoft work
+  domain, who connected it and when, and that account's sign-in tokens, encrypted at rest and never
+  shown to anybody. The privacy page has its own section explaining it, including that everybody
+  browses through the one connected account.
 
 Both pages carry an honest note that they are a template pending professional review, and are not yet
 reviewed by a lawyer — do that before relying on them for real launch. Because each company runs its
@@ -61,7 +65,10 @@ Set these in the Railway service's Variables tab — never in the repo, never in
 | `SENTRY_DSN` | Optional | Server-side error tracking. Leave unset and it stays completely inert (`/api/health` reports `"sentry": {"server": "dormant", ...}`). Set it and server errors go to Sentry (`"server": "configured"`). **Set it before the build**, because the Content-Security-Policy that lets the browser reach Sentry is baked into the build. |
 | `NEXT_PUBLIC_SENTRY_DSN` | Optional | Only if you also want errors from people's browsers. Inlined at build time, and reported separately as `"sentry": {..., "browser": "configured"}`. |
 | `SENTRY_TRACES_SAMPLE_RATE` | Optional | `0` by default — errors only, no tracing quota spent. |
-| `APP_BASE_URL` | Optional | The address this deployment answers on, e.g. `https://tielora.up.railway.app`, with no trailing slash. Used only to make the link inside a Slack or Teams message clickable. Unset is safe: chat messages name the page instead of linking to it, and nothing else in the app reads it. Not a secret. |
+| `APP_BASE_URL` | Optional | The address this deployment answers on, e.g. `https://tielora.up.railway.app`, with no trailing slash. Makes the link inside a Slack or Teams message clickable, and is **required** for Microsoft 365 attachments (it is what the callback address is built from). Unset is safe for chat: messages name the page instead of linking to it. Not a secret. |
+| `MS_GRAPH_CLIENT_ID` | Optional | The Application (client) ID of the Azure app registration (section 6). Not a secret, but the feature stays completely dormant until it and the secret below are both set: no card, no tab, and every Microsoft route answers "not set up". `/api/health` reports `"microsoft": {"status": "dormant", "connectedOrgs": 0}` until then. |
+| `MS_GRAPH_CLIENT_SECRET` | Optional | **A real secret.** The client secret Value from the same Azure app registration, shown once when it is created. Client secrets expire — set a calendar reminder before the date you chose, because when it expires every company's attachments stop working until it is replaced. |
+| `MS_GRAPH_REDIRECT_PATH` | Optional | Defaults to `/api/integrations/microsoft/callback`, which is the path to register in Azure. Only change it if something in front of the app rewrites that path. |
 | `SWEEP_DISABLED` | Optional | `1` switches off the hourly "due soon / overdue" notification sweep. Safe: nothing depends on the sweep having run, because overdue is always worked out fresh when a page is read. Useful as a kill switch, or on extra instances. |
 | `DATABASE_URL_TEST` | No | Local and CI only. Never set it in production — the tests empty that database. |
 
@@ -198,7 +205,59 @@ the document count makes the copy-out awkward.
 
 ---
 
-## 6. What is deliberately not built
+## 6. Microsoft 365 attachments — registering the Azure app (owner's one-off setup)
+
+This is what switches on "Attach from OneDrive or SharePoint" in the upload box. Until you do it,
+the whole feature is invisible to everybody and nothing else in the app changes. You need a
+Microsoft account that can create app registrations; it does **not** have to be a customer's.
+
+You register the app **once**, for the whole product. Each customer company's own administrator then
+presses Connect inside Tielora and signs in with their own Microsoft account — you never touch their
+tenant.
+
+1. Go to **portal.azure.com** → search **"App registrations"** → **New registration**.
+2. Name it **Tielora**. Under **Supported account types**, choose **"Accounts in any organizational
+   directory (Any Microsoft Entra ID tenant – Multitenant)"**. This is the setting that lets any
+   customer company connect, not only your own.
+3. **Redirect URI**: choose platform **Web** and enter your live callback address — your site
+   address plus `/api/integrations/microsoft/callback`, for example
+   `https://tielora.up.railway.app/api/integrations/microsoft/callback`. It must match `APP_BASE_URL`
+   exactly, including https and no trailing slash. (You may add a `http://localhost:3000/...` one for
+   development; remove it before launch if you prefer.)
+4. Click **Register**. On the **Overview** page copy the **Application (client) ID** — that is
+   `MS_GRAPH_CLIENT_ID`. It is not a secret.
+5. Go to **Certificates & secrets** → **New client secret** → pick an expiry (24 months is a
+   sensible start) → **copy the Value immediately**, it is shown once and never again. That is
+   `MS_GRAPH_CLIENT_SECRET`. Put both into Railway's Variables tab, never into the repo.
+   *Microsoft recommends a certificate instead of a secret for production; it is more secure but
+   more work to run. A secret is fine to start with — write the expiry date in your calendar,
+   because when it lapses every company's attachments stop until you replace it.*
+6. Go to **API permissions** → **Add a permission** → **Microsoft Graph** → **Delegated
+   permissions** → add `Files.Read.All` and `offline_access` (`openid` and `profile` are already
+   there by default and are what tell us which company connected). **Do not** press "Grant admin
+   consent" for your own tenant — each customer's own administrator approves for their company when
+   they press Connect.
+7. Redeploy so the new variables are picked up, then check `https://<domain>/api/health` reads
+   `"microsoft":{"status":"configured","connectedOrgs":0}`.
+8. Sign in as a company administrator, open **Admin → Integrations**, and the Microsoft 365 card is
+   now there. Pressing **Connect** goes to Microsoft, comes back, and the card shows the connected
+   work domain, who connected it and when.
+
+**What each customer's administrator should know before pressing Connect:** everyone in their
+company browses through the account that connects, so they should use an account whose file access
+they are happy to share. Nobody can attach a file to a task they could not already upload to, and
+the file itself is copied into Tielora as an ordinary revision — it stays even if the Microsoft
+original is later moved or deleted.
+
+**If a company's Microsoft administrator has locked consent down**, the sign-in comes back with
+"needs admin approval". Their Microsoft administrator can approve the app for the whole company by
+visiting `https://login.microsoftonline.com/organizations/v2.0/adminconsent?client_id=<your client
+id>&scope=https://graph.microsoft.com/Files.Read.All%20offline_access&redirect_uri=<your callback
+address>` once, after which the ordinary Connect button works.
+
+---
+
+## 7. What is deliberately not built
 
 Named here so nobody assumes otherwise:
 
@@ -218,6 +277,17 @@ Named here so nobody assumes otherwise:
   chat tool says "too many requests", and otherwise dropped with a logged line. Delivery state lives
   in the process, not in a table, exactly like rate limiting. In-app notifications are always written
   either way, so a dropped card costs a nudge and never the record.
+- **A Microsoft file picker in the browser** — the picker is ours, served by our own routes. No
+  Microsoft JavaScript is loaded, which is why the strict Content-Security-Policy needed no change.
+- **One Microsoft sign-in per person** — a company connects **once**, by an administrator, and
+  everyone browses through that account. Per-person sign-ins would show each person exactly their
+  own OneDrive; that is a bigger piece of work, and the card says plainly whose access is being
+  shared. Attaching is still limited by Tielora's own permissions: you can only attach to a task you
+  could already upload to.
+- **Browsing SharePoint sites the connected account does not already have** — Tielora asks only for
+  `Files.Read.All`, so the picker lists the libraries that account can already reach. Listing every
+  site in a company would need the broader `Sites.Read.All` permission, which is deliberately not
+  requested.
 - **A "Connect Slack" install button** — an administrator pastes the webhook address for both tools.
   The OAuth install flow Slack now prefers needs a Slack app published from our side; that is a
   separate piece of owner setup and is on the roadmap, not in this round.
