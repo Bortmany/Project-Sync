@@ -5,7 +5,7 @@
 import { prisma } from "@/lib/db";
 import type { DisciplineDTO, UserDTO } from "@/lib/zod-schemas";
 import { DisciplineDTO as DisciplineSchema, UserDTO as UserSchema } from "@/lib/zod-schemas";
-import type { ActorContext } from "@/server/actor";
+import { isExternal, type ActorContext } from "@/server/actor";
 import { checkDtoList } from "@/server/serialize";
 
 const USER_LIMIT = 50;
@@ -13,7 +13,14 @@ const USER_LIMIT = 50;
 /** Every discipline this company runs, in the order it lists them. */
 export async function listDisciplines(actor: ActorContext): Promise<DisciplineDTO[]> {
   const rows = await prisma.discipline.findMany({
-    where: { orgId: actor.orgId },
+    where: {
+      orgId: actor.orgId,
+      // A contractor sees the disciplines they actually work in — the company's full catalogue,
+      // like its people, is not theirs to browse.
+      ...(isExternal(actor)
+        ? { disciplineTasks: { some: { assigneeId: actor.userId, deletedAt: null } } }
+        : {}),
+    },
     orderBy: { sortOrder: "asc" },
   });
 
@@ -34,6 +41,10 @@ export async function listDisciplines(actor: ActorContext): Promise<DisciplineDT
  * the search box that reuses it) from ever showing someone from another customer.
  */
 export async function listUsers(actor: ActorContext, query?: string): Promise<UserDTO[]> {
+  // THE EXTERNAL RULE: a contractor gets no people directory at all. Not a filtered one — an empty
+  // one, so nothing about who works here can be inferred from what a search does or does not find.
+  if (isExternal(actor)) return [];
+
   const needle = query?.trim();
   const rows = await prisma.user.findMany({
     where: {
@@ -57,6 +68,7 @@ export async function listUsers(actor: ActorContext, query?: string): Promise<Us
       role: true,
       disciplineId: true,
       jobTitle: true,
+      companyName: true,
       isActive: true,
       createdAt: true,
       discipline: { select: { code: true } },
@@ -71,6 +83,7 @@ export async function listUsers(actor: ActorContext, query?: string): Promise<Us
     disciplineId: row.disciplineId,
     disciplineCode: row.discipline?.code ?? null,
     jobTitle: row.jobTitle,
+    companyName: row.companyName,
     isActive: row.isActive,
     createdAt: row.createdAt,
   }));

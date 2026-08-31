@@ -30,6 +30,7 @@ const ROLE_LABEL: Record<RoleName, string> = {
   PROJECT_MANAGER: "Project manager",
   DISCIPLINE_LEAD: "Discipline lead",
   ENGINEER: "Engineer",
+  EXTERNAL: "External",
 };
 
 const PROJECT_ROLES: RoleName[] = ["PROJECT_MANAGER", "DISCIPLINE_LEAD", "ENGINEER"];

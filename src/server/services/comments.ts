@@ -13,7 +13,7 @@ import {
   ActivityItemDTO as ActivityItemSchema,
   CommentDTO as CommentSchema,
 } from "@/lib/zod-schemas";
-import type { ActorContext } from "@/server/actor";
+import { externalTaskScope, isExternal, type ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
 import { checkDto } from "@/server/serialize";
 import { ACTIVITY, appendActivity, toActivityItemDTO } from "@/server/services/activity";
@@ -35,6 +35,8 @@ type CommentTarget = {
   projectId: string;
   /** The company the project belongs to — read from the row, never assumed. */
   orgId: string;
+  /** The discipline task's assignee, or null on a main task — a contractor's own-work check. */
+  assigneeId: string | null;
   mainTaskId: string | null;
   disciplineTaskId: string | null;
   /** The main task the comment ultimately sits under — used for links and notifications. */
@@ -66,7 +68,7 @@ export async function listComments(
       ? { mainTaskId: where.mainTaskId }
       : { disciplineTaskId: where.disciplineTaskId },
     orderBy: { createdAt: "asc" },
-    include: { author: { select: { name: true } } },
+    include: { author: { select: { name: true, companyName: true } } },
   });
 
   return rows.map(toCommentListItem);
@@ -84,12 +86,16 @@ export async function listActivity(
 ): Promise<ActivityItemDTO[]> {
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
 
+  // A whole project's history, and a main task's rolled-up history, are the company's record. A
+  // contractor reads the audit trail of their own discipline task and nothing wider.
   if (target.projectId) {
+    if (isExternal(actor)) throw new NotFoundError("We could not find that project.");
     await assertCanViewProject(actor, target.projectId);
     return readActivity({ projectId: target.projectId }, limit);
   }
 
   if (target.mainTaskId) {
+    if (isExternal(actor)) throw new NotFoundError("We could not find that task.");
     const mainTask = await prisma.mainTask.findFirst({
       where: { id: target.mainTaskId, ...notDeleted, project: { orgId: actor.orgId } },
       select: { id: true, projectId: true },
@@ -110,6 +116,7 @@ export async function listActivity(
       where: {
         id: target.disciplineTaskId,
         ...notDeleted,
+        ...externalTaskScope(actor),
         mainTask: { project: { orgId: actor.orgId } },
       },
       select: { id: true, mainTask: { select: { projectId: true } } },
@@ -132,7 +139,13 @@ export async function createComment(
   input: CreateCommentInput,
 ): Promise<CommentDTO> {
   const target = await resolveTarget(actor, input.mainTaskId ?? null, input.disciplineTaskId ?? null);
-  assertCan(actor, "COMMENT", { projectId: target.projectId, orgId: target.orgId });
+  // The assignee rides along because a contractor may only comment on work assigned to them; for
+  // everybody else COMMENT is a plain member action and the field is ignored.
+  assertCan(actor, "COMMENT", {
+    projectId: target.projectId,
+    orgId: target.orgId,
+    assigneeId: target.assigneeId,
+  });
 
   const body = input.body.trim();
   if (body.length === 0) throw new ServiceError("Write something first.");
@@ -327,6 +340,10 @@ async function resolveTarget(
   }
 
   if (mainTaskId) {
+    // A main task's thread is the company's conversation about the whole job. A contractor comments
+    // on their own discipline task and nowhere else, so for them the parent's thread does not exist.
+    if (isExternal(actor)) throw new NotFoundError("We could not find that task.");
+
     const task = await prisma.mainTask.findFirst({
       where: { id: mainTaskId, ...notDeleted, project: { orgId: actor.orgId } },
       select: {
@@ -342,6 +359,7 @@ async function resolveTarget(
     return {
       projectId: task.projectId,
       orgId: task.project.orgId,
+      assigneeId: null,
       mainTaskId: task.id,
       disciplineTaskId: null,
       parentMainTaskId: task.id,
@@ -357,6 +375,7 @@ async function resolveTarget(
     where: {
       id: disciplineTaskId as string,
       ...notDeleted,
+      ...externalTaskScope(actor),
       mainTask: { project: { orgId: actor.orgId } },
     },
     select: {
@@ -377,6 +396,7 @@ async function resolveTarget(
   return {
     projectId: task.mainTask.projectId,
     orgId: task.mainTask.project.orgId,
+    assigneeId: task.assigneeId,
     mainTaskId: null,
     disciplineTaskId: task.id,
     parentMainTaskId: task.mainTask.id,
@@ -437,7 +457,7 @@ type CommentRow = {
   editedAt: Date | null;
   deletedAt: Date | null;
   createdAt: Date;
-  author: { name: string };
+  author: { name: string; companyName?: string | null };
 };
 
 /** One comment. A removed comment keeps its place in the thread but loses its text. */
@@ -448,6 +468,7 @@ function toCommentDTO(row: CommentRow): CommentDTO {
     body: isDeleted ? TOMBSTONE_BODY : row.body,
     authorId: row.authorId,
     authorName: row.author.name,
+    authorCompanyName: row.author.companyName ?? null,
     mainTaskId: row.mainTaskId,
     disciplineTaskId: row.disciplineTaskId,
     mentions: isDeleted ? [] : row.mentions,
@@ -467,7 +488,7 @@ function toCommentListItem(row: CommentRow): CommentListItemDTO {
 async function buildCommentDTO(commentId: string): Promise<CommentDTO> {
   const row = await prisma.comment.findUnique({
     where: { id: commentId },
-    include: { author: { select: { name: true } } },
+    include: { author: { select: { name: true, companyName: true } } },
   });
   if (!row) throw new NotFoundError("We could not find that comment.");
 

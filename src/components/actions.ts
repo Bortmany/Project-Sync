@@ -4,6 +4,7 @@
 export {
   createProject,
   updateProject,
+  setExternalSignoffRequired,
   upsertMember,
   removeMember,
   upsertProjectDiscipline,
@@ -62,6 +63,8 @@ export {
   updateDisciplineTaskStatus,
   completeDisciplineTask,
   reopenDisciplineTask,
+  confirmDisciplineTaskReview,
+  rejectDisciplineTaskReview,
 } from "@/server/actions/discipline-tasks";
 
 // The sidebar's personal corner: starred shortcuts and a private to-do list. Neither is audited.

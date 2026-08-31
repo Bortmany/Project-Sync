@@ -50,6 +50,24 @@ export function activeProjectsForUser(orgId: string, userId: string) {
   });
 }
 
+/**
+ * Projects an EXTERNAL contractor may see: only the ones where they hold at least one live
+ * discipline task. Membership alone is not enough — a contractor left on a project after their work
+ * was reassigned sees nothing there, and the project simply is not in their list.
+ */
+export function activeProjectsForExternal(orgId: string, userId: string) {
+  return prisma.project.findMany({
+    where: {
+      orgId,
+      ...notDeleted,
+      mainTasks: {
+        some: { ...notDeleted, disciplineTasks: { some: { assigneeId: userId, ...notDeleted } } },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
 /** Live main tasks of a project, soonest deadline first. Another organisation's project yields nothing. */
 export function activeMainTasks(orgId: string, projectId: string) {
   return prisma.mainTask.findMany({

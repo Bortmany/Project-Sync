@@ -34,6 +34,10 @@ export const ACTIVITY = {
   STATUS_CHANGED: "STATUS_CHANGED",
   COMPLETED: "COMPLETED",
   REOPENED: "REOPENED",
+  /** A contractor handed work in for an internal sign-off — a request, never a completion. */
+  SUBMITTED_FOR_REVIEW: "SUBMITTED_FOR_REVIEW",
+  /** The reviewer sent it back, with what needs changing. A confirmation is a plain COMPLETED row. */
+  REVIEW_REJECTED: "REVIEW_REJECTED",
   DEPENDENCY_ADDED: "DEPENDENCY_ADDED",
   DEPENDENCY_REMOVED: "DEPENDENCY_REMOVED",
   DATES_UPDATED: "DATES_UPDATED",

@@ -29,7 +29,7 @@ import {
   BriefDTO as BriefSchema,
   ProjectBriefDTO as ProjectBriefSchema,
 } from "@/lib/zod-schemas";
-import type { ActorContext } from "@/server/actor";
+import { isExternal, type ActorContext } from "@/server/actor";
 import { NotFoundError } from "@/server/errors";
 import { checkDto } from "@/server/serialize";
 import { ACTIVITY } from "@/server/services/activity";
@@ -532,6 +532,11 @@ export async function projectBrief(
   projectId: string,
   now: Date = new Date(),
 ): Promise<ProjectBriefDTO> {
+  // "Where we stand" is the whole project's story — its blockers, its gates, everybody's progress.
+  // That is a company briefing, so for a contractor it does not exist. Their own day still works:
+  // /api/my-tasks/brief is per person and needs no narrowing.
+  if (isExternal(actor)) throw new NotFoundError("We could not find that project.");
+
   await assertCanViewProject(actor, projectId);
 
   const project = await prisma.project.findFirst({

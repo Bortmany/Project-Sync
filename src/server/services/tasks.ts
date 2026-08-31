@@ -7,7 +7,7 @@
 
 import type { Prisma } from "@/generated/prisma/client";
 import { activeMainTasks, notDeleted, prisma } from "@/lib/db";
-import { assertCan } from "@/lib/permissions";
+import { ForbiddenError, assertCan } from "@/lib/permissions";
 import {
   canCompleteDisciplineTask,
   deriveMainTask,
@@ -17,6 +17,7 @@ import {
 } from "@/lib/progress";
 import type {
   AddDependencyInput,
+  MyTaskItemDTO,
   CreateDisciplineTaskInput,
   CreateMainTaskInput,
   DisciplineTaskDTO,
@@ -34,11 +35,12 @@ import type {
 } from "@/lib/zod-schemas";
 import {
   DisciplineTaskDTO as DisciplineTaskSchema,
+  MyTaskItemDTO as MyTaskItemSchema,
   GanttDTO as GanttSchema,
   MainTaskDTO as MainTaskSchema,
   MainTaskListItemDTO as MainTaskListItemSchema,
 } from "@/lib/zod-schemas";
-import type { ActorContext } from "@/server/actor";
+import { externalTaskScope, isExternal, type ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
 import { checkDto, checkDtoList } from "@/server/serialize";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
@@ -49,7 +51,7 @@ import {
   gateChangesBetween,
   phaseStatesFor,
 } from "@/server/services/phases";
-import { assertCanViewProject } from "@/server/services/projects";
+import { assertCanViewProject, visibleProjects } from "@/server/services/projects";
 
 /** The filters the main-task list accepts. */
 export type MainTaskFilters = {
@@ -76,10 +78,10 @@ export async function listMainTasksForProject(
     where: { id: projectId },
     select: { code: true },
   });
-  const tasks = await activeMainTasks(actor.orgId, projectId);
+  const tasks = await mainTasksVisibleTo(actor, projectId);
   if (tasks.length === 0) return [];
 
-  const subtasks = await liveSubtasksFor(tasks.map((task) => task.id));
+  const subtasks = await liveSubtasksFor(tasks.map((task) => task.id), actor);
   const docCounts = await requiredDocCountsFor(
     [...subtasks.values()].flat().map((subtask) => subtask.id),
   );
@@ -108,7 +110,7 @@ export async function listMainTasksForProject(
 export async function getMainTaskForActor(actor: ActorContext, mainTaskId: string): Promise<MainTaskDTO> {
   const task = await loadMainTask(actor, mainTaskId);
   await assertCanViewProject(actor, task.projectId);
-  return buildMainTaskDTO(mainTaskId);
+  return buildMainTaskDTO(mainTaskId, actor);
 }
 
 /** One discipline task in full, including what is standing between it and being finished. */
@@ -125,7 +127,10 @@ export async function getDisciplineTaskForActor(
  * A named set of main tasks as list rows. Global search calls this with ids it has already
  * limited to the projects the person may see — this function does not re-check that.
  */
-export async function listMainTaskItems(mainTaskIds: string[]): Promise<MainTaskListItemDTO[]> {
+export async function listMainTaskItems(
+  mainTaskIds: string[],
+  viewer?: ActorContext,
+): Promise<MainTaskListItemDTO[]> {
   if (mainTaskIds.length === 0) return [];
 
   const tasks = await prisma.mainTask.findMany({
@@ -135,7 +140,7 @@ export async function listMainTaskItems(mainTaskIds: string[]): Promise<MainTask
   });
   if (tasks.length === 0) return [];
 
-  const subtasks = await liveSubtasksFor(tasks.map((task) => task.id));
+  const subtasks = await liveSubtasksFor(tasks.map((task) => task.id), viewer);
   const docCounts = await requiredDocCountsFor(
     [...subtasks.values()].flat().map((subtask) => subtask.id),
   );
@@ -150,14 +155,32 @@ export async function listMainTaskItems(mainTaskIds: string[]): Promise<MainTask
 /** The whole project on one timeline: every live main task with the discipline tasks beneath it. */
 export async function ganttForProject(actor: ActorContext, projectId: string): Promise<GanttDTO> {
   await assertCanViewProject(actor, projectId);
-  return buildGantt(await activeMainTasks(actor.orgId, projectId));
+  return buildGantt(await mainTasksVisibleTo(actor, projectId), actor);
+}
+
+/**
+ * The live main tasks of a project as this person may see them: all of them for a colleague, and
+ * for a contractor only the ones they hold work under. A contractor asking for a project they hold
+ * nothing on never gets here — assertCanViewProject has already said "not found".
+ */
+async function mainTasksVisibleTo(actor: ActorContext, projectId: string) {
+  if (!isExternal(actor)) return activeMainTasks(actor.orgId, projectId);
+  return prisma.mainTask.findMany({
+    where: {
+      projectId,
+      project: { orgId: actor.orgId },
+      ...notDeleted,
+      disciplineTasks: { some: { assigneeId: actor.userId, ...notDeleted } },
+    },
+    orderBy: { deadline: "asc" },
+  });
 }
 
 /** One main task on a timeline, with its own discipline tasks. Same shape as the project view. */
 export async function ganttForMainTask(actor: ActorContext, mainTaskId: string): Promise<GanttDTO> {
   const task = await loadMainTask(actor, mainTaskId);
   await assertCanViewProject(actor, task.projectId);
-  return buildGantt([task]);
+  return buildGantt([task], actor);
 }
 
 type GanttTaskRow = {
@@ -173,9 +196,9 @@ type GanttTaskRow = {
 };
 
 /** Shared by both Gantt reads. The status shown on a bar is the effective one, override included. */
-async function buildGantt(tasks: GanttTaskRow[]): Promise<GanttDTO> {
+async function buildGantt(tasks: GanttTaskRow[], viewer?: ActorContext): Promise<GanttDTO> {
   if (tasks.length === 0) return checkDto(GanttSchema, { mainTasks: [] }, "GanttDTO");
-  const subtasks = await liveSubtasksFor(tasks.map((task) => task.id));
+  const subtasks = await liveSubtasksFor(tasks.map((task) => task.id), viewer);
 
   const mainTasks = tasks.map((task) => ({
     id: task.id,
@@ -198,6 +221,73 @@ async function buildGantt(tasks: GanttTaskRow[]): Promise<GanttDTO> {
   }));
 
   return checkDto(GanttSchema, { mainTasks }, "GanttDTO");
+}
+
+/**
+ * "Needs your sign-off": the discipline tasks waiting for THIS person to accept or send back.
+ *
+ * Who that is comes from the same rule that will judge the confirmation — a project manager or an
+ * administrator anywhere on their own projects, a discipline lead inside their own discipline — so
+ * the queue never offers somebody a button the service would then refuse. A contractor has no queue
+ * at all: they can never sign off work, least of all their own.
+ */
+export async function listAwaitingMySignoff(actor: ActorContext): Promise<MyTaskItemDTO[]> {
+  if (isExternal(actor)) return [];
+
+  const projectCodes = await visibleProjects(actor);
+  if (projectCodes.size === 0) return [];
+
+  const reviewable: Prisma.DisciplineTaskWhereInput[] = [];
+  if (actor.role === "ADMIN") {
+    reviewable.push({ mainTask: { projectId: { in: [...projectCodes.keys()] } } });
+  }
+  for (const membership of actor.memberships) {
+    if (!projectCodes.has(membership.projectId)) continue;
+    if (membership.projectRole === "PROJECT_MANAGER" || membership.projectRole === "ADMIN") {
+      reviewable.push({ mainTask: { projectId: membership.projectId } });
+    } else if (membership.projectRole === "DISCIPLINE_LEAD" && membership.disciplineId) {
+      reviewable.push({
+        disciplineId: membership.disciplineId,
+        mainTask: { projectId: membership.projectId },
+      });
+    }
+  }
+  if (reviewable.length === 0) return [];
+
+  const rows = await prisma.disciplineTask.findMany({
+    where: {
+      status: "AWAITING_REVIEW",
+      ...notDeleted,
+      mainTask: { ...notDeleted, project: { orgId: actor.orgId, ...notDeleted } },
+      OR: reviewable,
+    },
+    orderBy: { deadline: "asc" },
+    take: 25,
+    include: {
+      discipline: { select: { code: true, colorHex: true } },
+      assignee: { select: { name: true, companyName: true } },
+      mainTask: { select: { projectId: true } },
+    },
+  });
+
+  const now = new Date();
+  const items = rows.map((task) => ({
+    id: task.id,
+    title: task.title,
+    projectCode: projectCodes.get(task.mainTask.projectId) ?? "",
+    mainTaskId: task.mainTaskId,
+    disciplineCode: task.discipline.code,
+    disciplineColorHex: task.discipline.colorHex,
+    status: task.status,
+    priority: task.priority,
+    startDate: task.startDate,
+    deadline: task.deadline,
+    isOverdue: isOverdue(task.deadline, task.status, now),
+    assigneeName: task.assignee?.name ?? null,
+    assigneeCompanyName: task.assignee?.companyName ?? null,
+  }));
+
+  return checkDtoList(MyTaskItemSchema, items, "MyTaskItemDTO");
 }
 
 /* ------------------------------------------------------------------ */
@@ -775,6 +865,13 @@ export async function completeDisciplineTask(
   // The stage gate comes before the completion gate: a locked phase refuses the attempt outright.
   await assertPhaseUnlocked(projectId, existing.mainTask.phaseId);
 
+  // THE SIGN-OFF. A contractor saying "done" is a request, not a completion, while the project asks
+  // for one: the work goes to AWAITING_REVIEW and somebody inside the company runs the real gate
+  // below. With the setting switched off, a contractor completes exactly as an engineer does.
+  if (isExternal(actor) && (await externalSignoffRequired(projectId))) {
+    return submitForReview(actor, existing, projectId, note);
+  }
+
   const completedNow = await prisma.$transaction(async (tx) => {
     // The gate is judged INSIDE the transaction, after the parent lock, so a document
     // removed or a predecessor reopened in flight can never slip a completion through.
@@ -835,6 +932,170 @@ export async function completeDisciplineTask(
   }
 
   return buildDisciplineTaskDTO(existing.id);
+}
+
+/* ------------------------------------------------------------------ */
+/* The contractor sign-off                                             */
+/* ------------------------------------------------------------------ */
+
+/** Does this project ask for an internal sign-off on a contractor's finished work? */
+async function externalSignoffRequired(projectId: string): Promise<boolean> {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { externalSignoffRequired: true },
+  });
+  return project?.externalSignoffRequired ?? true;
+}
+
+/**
+ * A contractor hands work in. Nothing is completed here and no gate is bypassed — the task moves to
+ * AWAITING_REVIEW, the parent is re-derived from that, and the people who can confirm it are told.
+ */
+async function submitForReview(
+  actor: ActorContext,
+  existing: { id: string; title: string; status: TaskStatusName; mainTaskId: string; disciplineId: string },
+  projectId: string,
+  note?: string,
+): Promise<DisciplineTaskDTO> {
+  if (existing.status === "AWAITING_REVIEW") return buildDisciplineTaskDTO(existing.id);
+
+  await prisma.$transaction(async (tx) => {
+    await lockMainTask(tx, existing.mainTaskId);
+    await tx.disciplineTask.update({
+      where: { id: existing.id },
+      data: { status: "AWAITING_REVIEW" },
+    });
+
+    await appendActivity(tx, {
+      actorId: actor.userId,
+      projectId,
+      entityType: "DisciplineTask",
+      entityId: existing.id,
+      action: ACTIVITY.SUBMITTED_FOR_REVIEW,
+      summary:
+        `${actor.name} submitted "${existing.title}" for sign-off` + (note ? ` — ${note}` : ""),
+      metadata: { before: existing.status, after: "AWAITING_REVIEW", note: note ?? null },
+    });
+
+    await recomputeMainTask(tx, existing.mainTaskId, actor, projectId);
+  });
+
+  await notify(actor, await reviewAudience(projectId, existing.disciplineId, actor.userId), "STATUS_CHANGED", {
+    title: "Work is waiting for your sign-off",
+    body: `${actor.name} submitted "${existing.title}" for sign-off.`,
+    linkUrl: `/discipline-tasks/${existing.id}`,
+  });
+
+  return buildDisciplineTaskDTO(existing.id);
+}
+
+/**
+ * Somebody inside the company accepts the work. This does NOT shortcut anything: it runs the real
+ * completeDisciplineTask, so the required documents, the open dependencies and the stage gate are
+ * all still judged, inside the transaction, exactly as they are for anyone else.
+ */
+export async function confirmDisciplineTaskReview(
+  actor: ActorContext,
+  input: { id: string },
+): Promise<DisciplineTaskDTO> {
+  const existing = await loadDisciplineTask(actor, input.id);
+  assertNotExternalReviewer(actor);
+
+  if (existing.status !== "AWAITING_REVIEW") {
+    throw new ServiceError("That task is not waiting for a sign-off.");
+  }
+
+  return completeDisciplineTask(actor, { id: existing.id }, "signed off after review");
+}
+
+/** Somebody inside the company sends the work back, saying what needs changing. */
+export async function rejectDisciplineTaskReview(
+  actor: ActorContext,
+  input: { id: string; note: string },
+): Promise<DisciplineTaskDTO> {
+  const existing = await loadDisciplineTask(actor, input.id);
+  const projectId = existing.mainTask.projectId;
+  const orgId = existing.mainTask.project.orgId;
+  assertNotExternalReviewer(actor);
+
+  // The same right that confirms is the right that sends back — a review has one reviewer, not two.
+  assertCan(actor, "COMPLETE_DISCIPLINE_TASK", {
+    projectId,
+    orgId,
+    disciplineId: existing.disciplineId,
+    assigneeId: existing.assigneeId,
+  });
+
+  const note = input.note.trim();
+  if (note.length < 5) throw new ServiceError("Say what needs changing (at least 5 characters).");
+  if (existing.status !== "AWAITING_REVIEW") {
+    throw new ServiceError("That task is not waiting for a sign-off.");
+  }
+
+  await assertPhaseUnlocked(projectId, existing.mainTask.phaseId);
+
+  await prisma.$transaction(async (tx) => {
+    await lockMainTask(tx, existing.mainTaskId);
+    await tx.disciplineTask.update({
+      where: { id: existing.id },
+      data: { status: "IN_PROGRESS" },
+    });
+
+    await appendActivity(tx, {
+      actorId: actor.userId,
+      projectId,
+      entityType: "DisciplineTask",
+      entityId: existing.id,
+      action: ACTIVITY.REVIEW_REJECTED,
+      summary: `${actor.name} sent "${existing.title}" back for more work — ${note}`,
+      metadata: { before: "AWAITING_REVIEW", after: "IN_PROGRESS", note },
+    });
+
+    await recomputeMainTask(tx, existing.mainTaskId, actor, projectId);
+  });
+
+  if (existing.assigneeId && existing.assigneeId !== actor.userId) {
+    await notify(actor, [existing.assigneeId], "STATUS_CHANGED", {
+      title: "Your work was sent back",
+      body: `${actor.name} sent "${existing.title}" back for more work. ${note}`,
+      linkUrl: `/discipline-tasks/${existing.id}`,
+    });
+  }
+
+  return buildDisciplineTaskDTO(existing.id);
+}
+
+/**
+ * A contractor never signs off a review — not somebody else's, and not their own. The permission
+ * rules already refuse it (an EXTERNAL holds no reviewer right anywhere), and this says so out loud
+ * before the rules are even asked, because "the person who did the work cannot approve it" is the
+ * whole point of the setting.
+ */
+function assertNotExternalReviewer(actor: ActorContext): void {
+  if (isExternal(actor)) throw new ForbiddenError("COMPLETE_DISCIPLINE_TASK");
+}
+
+/** Who signs a contractor's work off: the discipline's lead on that project, and its managers. */
+async function reviewAudience(
+  projectId: string,
+  disciplineId: string,
+  exceptUserId: string,
+): Promise<string[]> {
+  const [discipline, managers] = await Promise.all([
+    prisma.projectDiscipline.findUnique({
+      where: { projectId_disciplineId: { projectId, disciplineId } },
+      select: { leadId: true },
+    }),
+    prisma.projectMember.findMany({
+      where: { projectId, projectRole: { in: ["PROJECT_MANAGER", "ADMIN"] } },
+      select: { userId: true },
+    }),
+  ]);
+
+  const ids = [discipline?.leadId, ...managers.map((manager) => manager.userId)].filter(
+    (id): id is string => Boolean(id) && id !== exceptUserId,
+  );
+  return [...new Set(ids)];
 }
 
 /** Puts a completed task back in play. The reason is kept in the audit trail. */
@@ -1111,7 +1372,16 @@ export async function recomputeMainTask(
  */
 async function loadMainTask(actor: ActorContext, id: string) {
   const task = await prisma.mainTask.findFirst({
-    where: { id, ...notDeleted, project: { orgId: actor.orgId } },
+    where: {
+      id,
+      ...notDeleted,
+      project: { orgId: actor.orgId },
+      // THE EXTERNAL RULE: a contractor only reaches a main task they hold live work under, and
+      // any other one is NOT FOUND — the same answer another company's task gives.
+      ...(isExternal(actor)
+        ? { disciplineTasks: { some: { assigneeId: actor.userId, ...notDeleted } } }
+        : {}),
+    },
     include: { project: { select: { orgId: true } } },
   });
   if (!task) throw new NotFoundError("We could not find that task.");
@@ -1121,7 +1391,14 @@ async function loadMainTask(actor: ActorContext, id: string) {
 /** The same gate for a discipline task, reached through its main task's project. */
 async function loadDisciplineTask(actor: ActorContext, id: string) {
   const task = await prisma.disciplineTask.findFirst({
-    where: { id, ...notDeleted, mainTask: { project: { orgId: actor.orgId } } },
+    // For a contractor the scope adds `assigneeId: theirs`, so somebody else's task does not exist
+    // — for a read and for every mutation in this file alike.
+    where: {
+      id,
+      ...notDeleted,
+      ...externalTaskScope(actor),
+      mainTask: { project: { orgId: actor.orgId } },
+    },
     include: {
       mainTask: {
         select: {
@@ -1150,12 +1427,20 @@ async function unmetDependencyTitles(disciplineTaskId: string): Promise<string[]
     .map((edge) => edge.predecessor.title);
 }
 
-/** Live discipline tasks for a set of main tasks, grouped by main task. */
-async function liveSubtasksFor(mainTaskIds: string[]) {
+/**
+ * Live discipline tasks for a set of main tasks, grouped by main task. Pass the viewer and a
+ * contractor only ever gets their own rows back — which is what keeps every listing, card and
+ * timeline built on top of this from showing them somebody else's work.
+ */
+async function liveSubtasksFor(mainTaskIds: string[], viewer?: ActorContext) {
   const rows = await prisma.disciplineTask.findMany({
-    where: { mainTaskId: { in: mainTaskIds }, ...notDeleted },
+    where: {
+      mainTaskId: { in: mainTaskIds },
+      ...notDeleted,
+      ...(viewer ? externalTaskScope(viewer) : {}),
+    },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-    include: { discipline: true, assignee: { select: { name: true } } },
+    include: { discipline: true, assignee: { select: { name: true, companyName: true } } },
   });
 
   const grouped = new Map<string, typeof rows>();
@@ -1174,7 +1459,7 @@ type SubtaskRow = {
   status: TaskStatusName;
   deadline: Date;
   isMandatory: boolean;
-  assignee: { name: string } | null;
+  assignee: { name: string; companyName?: string | null } | null;
   discipline: { code: string; colorHex: string; sortOrder: number };
 };
 
@@ -1237,6 +1522,7 @@ function disciplineSummary(
         disciplineTaskId: subtask.id,
         title: subtask.title,
         assigneeName: subtask.assignee?.name ?? null,
+        assigneeCompanyName: subtask.assignee?.companyName ?? null,
         deadline: subtask.deadline,
         isOverdue: isOverdue(subtask.deadline, subtask.status, now),
         disciplineId: subtask.disciplineId,
@@ -1287,8 +1573,17 @@ function buildListItem(
   };
 }
 
-/** Builds the full main-task DTO. Callers have already checked that the person may see it. */
-export async function buildMainTaskDTO(mainTaskId: string): Promise<MainTaskDTO> {
+/**
+ * Builds the full main-task DTO. Callers have already checked that the person may see it.
+ *
+ * Pass the viewer and a contractor gets the filtered variant: the parent's title, phase and dates
+ * for context, but only their own discipline tasks under it, and counts over those alone.
+ */
+export async function buildMainTaskDTO(
+  mainTaskId: string,
+  viewer?: ActorContext,
+): Promise<MainTaskDTO> {
+  const scope = viewer ? externalTaskScope(viewer) : {};
   const task = await prisma.mainTask.findFirst({
     where: { id: mainTaskId, ...notDeleted },
     include: {
@@ -1298,9 +1593,9 @@ export async function buildMainTaskDTO(mainTaskId: string): Promise<MainTaskDTO>
       owner: { select: { name: true } },
       overriddenBy: { select: { name: true } },
       disciplineTasks: {
-        where: notDeleted,
+        where: { ...notDeleted, ...scope },
         orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-        include: { discipline: true, assignee: { select: { name: true } } },
+        include: { discipline: true, assignee: { select: { name: true, companyName: true } } },
       },
     },
   });
@@ -1312,13 +1607,19 @@ export async function buildMainTaskDTO(mainTaskId: string): Promise<MainTaskDTO>
     prisma.document.count({
       where: {
         ...notDeleted,
-        OR: [{ mainTaskId: task.id }, { disciplineTaskId: { in: subtaskIds } }],
+        // A contractor counts what hangs off their own tasks; the parent's own file drawer is not
+        // theirs to know about.
+        OR: viewer && isExternal(viewer)
+          ? [{ disciplineTaskId: { in: subtaskIds } }]
+          : [{ mainTaskId: task.id }, { disciplineTaskId: { in: subtaskIds } }],
       },
     }),
     prisma.comment.count({
       where: {
         ...notDeleted,
-        OR: [{ mainTaskId: task.id }, { disciplineTaskId: { in: subtaskIds } }],
+        OR: viewer && isExternal(viewer)
+          ? [{ disciplineTaskId: { in: subtaskIds } }]
+          : [{ mainTaskId: task.id }, { disciplineTaskId: { in: subtaskIds } }],
       },
     }),
   ]);
@@ -1367,7 +1668,7 @@ export async function buildDisciplineTaskDTO(disciplineTaskId: string): Promise<
     include: {
       mainTask: { select: { id: true, title: true, projectId: true, project: { select: { code: true } } } },
       discipline: true,
-      assignee: { select: { name: true } },
+      assignee: { select: { name: true, companyName: true } },
       completedBy: { select: { name: true } },
       requiredDocuments: { orderBy: { createdAt: "asc" } },
       predecessorEdges: {
@@ -1411,6 +1712,7 @@ export async function buildDisciplineTaskDTO(disciplineTaskId: string): Promise<
     description: task.description,
     assigneeId: task.assigneeId,
     assigneeName: task.assignee?.name ?? null,
+    assigneeCompanyName: task.assignee?.companyName ?? null,
     startDate: task.startDate,
     deadline: task.deadline,
     status: task.status,
@@ -1513,9 +1815,17 @@ async function taskAudience(disciplineTaskId: string, exceptUserId: string): Pro
   return [...new Set(ids)];
 }
 
-/** Everyone on a project, for the rare change that concerns all of them. */
+/**
+ * Everyone on a project, for the rare change that concerns all of them — EXCEPT the external
+ * contractors. A project-wide announcement ("X overrode the status of «some other task»") names
+ * work a contractor may not see, so a fan-out that included them would leak through the one door
+ * the read scoping cannot close.
+ */
 async function projectAudience(projectId: string, exceptUserId: string): Promise<string[]> {
-  const members = await prisma.projectMember.findMany({ where: { projectId }, select: { userId: true } });
+  const members = await prisma.projectMember.findMany({
+    where: { projectId, user: { role: { not: "EXTERNAL" } } },
+    select: { userId: true },
+  });
   return members.map((member) => member.userId).filter((userId) => userId !== exceptUserId);
 }
 

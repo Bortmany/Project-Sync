@@ -6,8 +6,23 @@ import { z } from "zod";
 /* Shared primitives                                                   */
 /* ------------------------------------------------------------------ */
 
-export const RoleSchema = z.enum(["ADMIN", "PROJECT_MANAGER", "DISCIPLINE_LEAD", "ENGINEER"]);
+export const RoleSchema = z.enum([
+  "ADMIN",
+  "PROJECT_MANAGER",
+  "DISCIPLINE_LEAD",
+  "ENGINEER",
+  /** A contractor from another company: their own assigned discipline tasks and nothing else. */
+  "EXTERNAL",
+]);
 export type RoleName = z.infer<typeof RoleSchema>;
+
+/** What a noticeboard post is. A string column in the database, validated here. */
+export const PostKindSchema = z.enum(["ANNOUNCEMENT", "BOARD"]);
+export type PostKindName = z.infer<typeof PostKindSchema>;
+
+/** Who may post a company-wide announcement. A string column in the database, validated here. */
+export const BroadcastPolicySchema = z.enum(["ADMIN_PM", "ADMIN"]);
+export type BroadcastPolicyName = z.infer<typeof BroadcastPolicySchema>;
 
 export const TaskStatusSchema = z.enum([
   "NOT_STARTED",
@@ -33,6 +48,7 @@ export const NotificationTypeSchema = z.enum([
   "DOCUMENT_UPLOADED",
   "COMMENT_ADDED",
   "OVERRIDE_APPLIED",
+  "ANNOUNCEMENT",
 ]);
 export type NotificationTypeName = z.infer<typeof NotificationTypeSchema>;
 
@@ -95,6 +111,8 @@ export const UserDTO = z.object({
   disciplineId: z.string().nullable(),
   disciplineCode: z.string().nullable().optional(),
   jobTitle: z.string().nullable(),
+  /** The company an EXTERNAL contractor works for. Null for a colleague. */
+  companyName: z.string().nullable().optional(),
   isActive: z.boolean(),
   // Only the admin user screens need sign-in history; the pickers must not carry it.
   lastLoginAt: dateOut.nullable().optional(),
@@ -109,6 +127,8 @@ export const CreateUserInput = z.object({
   role: RoleSchema,
   disciplineId: id.nullable().optional(),
   jobTitle: z.string().trim().max(120).nullable().optional(),
+  /** Required for an EXTERNAL contractor — the service refuses one without it. */
+  companyName: z.string().trim().max(120).nullable().optional(),
 });
 export type CreateUserInput = z.infer<typeof CreateUserInput>;
 
@@ -118,6 +138,7 @@ export const UpdateUserInput = z.object({
   role: RoleSchema.optional(),
   disciplineId: id.nullable().optional(),
   jobTitle: z.string().trim().max(120).nullable().optional(),
+  companyName: z.string().trim().max(120).nullable().optional(),
   isActive: z.boolean().optional(),
   password: z.string().min(12).max(200).optional(),
 });
@@ -162,6 +183,8 @@ export const ProjectMemberDTO = z.object({
   userId: id,
   userName: z.string(),
   userEmail: z.string(),
+  /** The contractor's own company, when this member is an EXTERNAL. */
+  companyName: z.string().nullable().optional(),
   projectRole: RoleSchema,
   disciplineId: z.string().nullable(),
   disciplineCode: z.string().nullable(),
@@ -191,6 +214,8 @@ export const ProjectDTO = z.object({
   createdById: id,
   createdByName: z.string(),
   createdAt: dateOut,
+  /** Work a contractor finishes waits for an internal sign-off while this is true. */
+  externalSignoffRequired: z.boolean(),
   disciplines: z.array(ProjectDisciplineDTO),
   members: z.array(ProjectMemberDTO),
   counts: z.object({
@@ -244,6 +269,23 @@ export const UpdateProjectInput = z.object({
   targetDate: dateIn.nullable().optional(),
 });
 export type UpdateProjectInput = z.infer<typeof UpdateProjectInput>;
+
+/** The project setting that decides whether a contractor's finished work waits for a sign-off. */
+export const SetExternalSignoffInput = z.object({
+  projectId: id,
+  required: z.boolean(),
+});
+export type SetExternalSignoffInput = z.infer<typeof SetExternalSignoffInput>;
+
+/** Confirming or sending back work a contractor submitted for review. */
+export const ConfirmReviewInput = z.object({ id: id });
+export type ConfirmReviewInput = z.infer<typeof ConfirmReviewInput>;
+
+export const RejectReviewInput = z.object({
+  id: id,
+  note: z.string().trim().min(5, "Say what needs changing (at least 5 characters).").max(500),
+});
+export type RejectReviewInput = z.infer<typeof RejectReviewInput>;
 
 export const UpsertMemberInput = z.object({
   projectId: id,
@@ -330,6 +372,8 @@ const DisciplineSummaryItem = z.object({
   disciplineTaskId: id,
   title: z.string(),
   assigneeName: z.string().nullable(),
+  /** Set when the assignee is a contractor, for the company badge on the row. */
+  assigneeCompanyName: z.string().nullable().optional(),
   deadline: dateOut,
   isOverdue: z.boolean(),
   disciplineId: id,
@@ -478,6 +522,8 @@ export const DisciplineTaskDTO = z.object({
   description: z.string().nullable(),
   assigneeId: z.string().nullable(),
   assigneeName: z.string().nullable(),
+  /** Set when the assignee is a contractor — the screens show "«Company» · External" beside them. */
+  assigneeCompanyName: z.string().nullable().optional(),
   startDate: dateOut.nullable(),
   deadline: dateOut,
   status: TaskStatusSchema,
@@ -584,6 +630,8 @@ export const DocumentDTO = z.object({
   category: z.string().nullable(),
   uploadedById: id,
   uploadedByName: z.string(),
+  /** Set when the person who uploaded it is a contractor. */
+  uploadedByCompanyName: z.string().nullable().optional(),
   createdAt: dateOut,
   currentRevision: DocumentVersionDTO.nullable(),
   versionsCount: z.number().int(),
@@ -611,6 +659,8 @@ export const CommentDTO = z.object({
   body: z.string(),
   authorId: id,
   authorName: z.string(),
+  /** Set when the author is a contractor. */
+  authorCompanyName: z.string().nullable().optional(),
   mainTaskId: z.string().nullable(),
   disciplineTaskId: z.string().nullable(),
   mentions: z.array(z.string()),
@@ -710,6 +760,26 @@ export const DashboardDTO = z.object({
       isOverdue: z.boolean(),
     }),
   ),
+  /**
+   * Work an external contractor has handed in that THIS person can sign off — empty for everybody
+   * who reviews nothing, and always empty for a contractor.
+   */
+  awaitingMySignoff: z
+    .array(
+      z.object({
+        id: id,
+        title: z.string(),
+        projectCode: z.string(),
+        mainTaskId: id,
+        disciplineCode: z.string(),
+        disciplineColorHex: z.string(),
+        deadline: dateOut,
+        isOverdue: z.boolean(),
+        assigneeName: z.string().nullable(),
+        assigneeCompanyName: z.string().nullable(),
+      }),
+    )
+    .default([]),
   disciplineProgress: z.array(
     z.object({
       disciplineId: id,
@@ -847,6 +917,10 @@ export const MyTaskItemDTO = z.object({
   startDate: dateOut.nullable(),
   deadline: dateOut,
   isOverdue: z.boolean(),
+  /** Who did the work — filled in on the sign-off queue, where it is somebody else's task. */
+  assigneeName: z.string().nullable().optional(),
+  /** Their company, when they are a contractor. */
+  assigneeCompanyName: z.string().nullable().optional(),
 });
 export type MyTaskItemDTO = z.infer<typeof MyTaskItemDTO>;
 

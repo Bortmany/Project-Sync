@@ -11,7 +11,7 @@
 import { notDeleted, prisma } from "@/lib/db";
 import type { FavoriteDTO, FavoriteTargetName, ToggleFavoriteInput } from "@/lib/zod-schemas";
 import { FavoriteDTO as FavoriteSchema } from "@/lib/zod-schemas";
-import type { ActorContext } from "@/server/actor";
+import { externalTaskScope, isExternal, type ActorContext } from "@/server/actor";
 import { NotFoundError } from "@/server/errors";
 import { checkDtoList } from "@/server/serialize";
 import { assertCanViewProject, visibleProjects } from "@/server/services/projects";
@@ -45,7 +45,21 @@ function targetColumns(targetType: FavoriteTargetName, targetId: string): Target
 async function projectIdForTarget(actor: ActorContext, input: ToggleFavoriteInput): Promise<string> {
   if (input.targetType === "PROJECT") {
     const project = await prisma.project.findFirst({
-      where: { id: input.targetId, orgId: actor.orgId, ...notDeleted },
+      where: {
+        id: input.targetId,
+        orgId: actor.orgId,
+        ...notDeleted,
+        ...(isExternal(actor)
+          ? {
+              mainTasks: {
+                some: {
+                  ...notDeleted,
+                  disciplineTasks: { some: { assigneeId: actor.userId, ...notDeleted } },
+                },
+              },
+            }
+          : {}),
+      },
       select: { id: true },
     });
     if (!project) throw new NotFoundError(NOT_FOUND);
@@ -54,7 +68,16 @@ async function projectIdForTarget(actor: ActorContext, input: ToggleFavoriteInpu
 
   if (input.targetType === "MAIN_TASK") {
     const mainTask = await prisma.mainTask.findFirst({
-      where: { id: input.targetId, ...notDeleted, project: { ...notDeleted, orgId: actor.orgId } },
+      where: {
+        id: input.targetId,
+        ...notDeleted,
+        project: { ...notDeleted, orgId: actor.orgId },
+        // A contractor can only star something they can see: a main task they hold work under, a
+        // task assigned to them, a project they are working on. Anything else is not found.
+        ...(isExternal(actor)
+          ? { disciplineTasks: { some: { assigneeId: actor.userId, ...notDeleted } } }
+          : {}),
+      },
       select: { projectId: true },
     });
     if (!mainTask) throw new NotFoundError(NOT_FOUND);
@@ -65,6 +88,7 @@ async function projectIdForTarget(actor: ActorContext, input: ToggleFavoriteInpu
     where: {
       id: input.targetId,
       ...notDeleted,
+      ...externalTaskScope(actor),
       mainTask: { ...notDeleted, project: { ...notDeleted, orgId: actor.orgId } },
     },
     select: { mainTask: { select: { projectId: true } } },
@@ -113,9 +137,23 @@ export async function toggleFavorite(
  */
 export async function listFavorites(actor: ActorContext): Promise<FavoriteDTO[]> {
   const visible = await visibleProjects(actor);
+  // A contractor's stars are re-checked against their work as well as their projects: a task moved
+  // to somebody else stops being theirs to see, so its shortcut quietly disappears too.
+  const external = isExternal(actor);
 
   const rows = await prisma.favorite.findMany({
-    where: { userId: actor.userId },
+    where: {
+      userId: actor.userId,
+      ...(external
+        ? {
+            OR: [
+              { projectId: { not: null } },
+              { mainTask: { disciplineTasks: { some: { assigneeId: actor.userId, ...notDeleted } } } },
+              { disciplineTask: { assigneeId: actor.userId } },
+            ],
+          }
+        : {}),
+    },
     orderBy: { createdAt: "desc" },
     take: LIST_LIMIT,
     select: {

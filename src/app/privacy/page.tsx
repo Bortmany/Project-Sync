@@ -43,6 +43,13 @@ export default function PrivacyPage() {
             hashed and never stored or shown in readable form, and whether the account is active.
           </li>
           <li>
+            <strong>External contractors:</strong> when someone from another company is invited in as
+            a contractor, the name of the company they work for is stored alongside their account and
+            shown beside their name on the work they touch, so everybody here knows who they are
+            dealing with. A contractor only ever sees the tasks assigned to them — not the team list,
+            not other people&apos;s work, and not another company&apos;s data.
+          </li>
+          <li>
             <strong>Your company:</strong> the company name given at sign-up, the handle made from it,
             and the industry template its starting list of disciplines came from.
           </li>

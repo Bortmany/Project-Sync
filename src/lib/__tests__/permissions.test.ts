@@ -67,6 +67,23 @@ const engineer: Actor = {
 
 const outsider: Actor = { userId: "u-out", orgId: ORG, role: "ENGINEER", memberships: [] };
 
+/** A contractor from another company, invited onto one project to deliver one task. */
+const contractor: Actor = {
+  userId: "u-ext",
+  orgId: ORG,
+  role: "EXTERNAL",
+  memberships: [{ projectId: PROJECT, projectRole: "EXTERNAL" }],
+};
+
+/**
+ * The same contractor with a ProjectMember row that says PROJECT_MANAGER — the shape a bad edit, a
+ * stale row or a hand-written database change would leave behind. Nothing about the answer changes.
+ */
+const escalatedContractor: Actor = {
+  ...contractor,
+  memberships: [{ projectId: PROJECT, projectRole: "PROJECT_MANAGER", disciplineId: MECH }],
+};
+
 /** ctx used for the table test: own project, own discipline, own assignment. */
 const ownCtx: PermissionContext = { projectId: PROJECT, orgId: ORG, disciplineId: MECH };
 
@@ -448,6 +465,81 @@ describe("the whole permission matrix", () => {
         });
       }
     }
+  });
+});
+
+describe("external contractor", () => {
+  const OWN = { projectId: PROJECT, orgId: ORG, disciplineId: MECH, assigneeId: "u-ext" };
+
+  it("may do their own assigned work: status, completion, uploads and comments", () => {
+    for (const action of [
+      "UPDATE_DISCIPLINE_TASK_STATUS",
+      "COMPLETE_DISCIPLINE_TASK",
+      "UPLOAD_DOCUMENT",
+      "COMMENT",
+    ] as Action[]) {
+      expect({ action, allowed: can(contractor, action, OWN) }).toEqual({ action, allowed: true });
+    }
+  });
+
+  it("may see the project they hold work on", () => {
+    expect(can(contractor, "VIEW_PROJECT", { projectId: PROJECT, orgId: ORG })).toBe(true);
+    expect(can(contractor, "VIEW_PROJECT", { projectId: OTHER_PROJECT, orgId: ORG })).toBe(false);
+  });
+
+  it("may do NOTHING on somebody else's task — commenting included", () => {
+    const somebodyElses = { ...OWN, assigneeId: "u-eng" };
+    for (const action of [
+      "UPDATE_DISCIPLINE_TASK_STATUS",
+      "COMPLETE_DISCIPLINE_TASK",
+      "UPLOAD_DOCUMENT",
+      "COMMENT",
+    ] as Action[]) {
+      expect({ action, allowed: can(contractor, action, somebodyElses) }).toEqual({
+        action,
+        allowed: false,
+      });
+    }
+  });
+
+  it("is tighter than an engineer: an engineer may comment anywhere on their project, a contractor may not", () => {
+    const projectWide = { projectId: PROJECT, orgId: ORG };
+    expect(can(engineer, "COMMENT", projectWide)).toBe(true);
+    expect(can(contractor, "COMMENT", projectWide)).toBe(false);
+  });
+
+  it("never gets a single managing, creating, editing, deleting or overriding action", () => {
+    const forbidden = ALL_ACTIONS.filter(
+      (action) =>
+        action !== "VIEW_PROJECT" &&
+        action !== "COMMENT" &&
+        action !== "UPDATE_DISCIPLINE_TASK_STATUS" &&
+        action !== "COMPLETE_DISCIPLINE_TASK" &&
+        action !== "UPLOAD_DOCUMENT",
+    );
+    for (const action of forbidden) {
+      expect({ action, allowed: can(contractor, action, OWN) }).toEqual({ action, allowed: false });
+    }
+    expect(can(contractor, "CREATE_PROJECT")).toBe(false);
+  });
+
+  it("cannot be escalated by a project role: a PROJECT_MANAGER membership row changes nothing", () => {
+    for (const action of ALL_ACTIONS.filter((candidate) => candidate !== "VIEW_PROJECT")) {
+      const allowed = can(escalatedContractor, action, { projectId: PROJECT, orgId: ORG, disciplineId: MECH });
+      expect({ action, allowed }).toEqual({ action, allowed: false });
+    }
+    // Their own work still works, and only their own work.
+    expect(
+      can(escalatedContractor, "COMPLETE_DISCIPLINE_TASK", { ...OWN, assigneeId: "u-ext" }),
+    ).toBe(true);
+    expect(
+      can(escalatedContractor, "COMPLETE_DISCIPLINE_TASK", { ...OWN, assigneeId: "u-eng" }),
+    ).toBe(false);
+  });
+
+  it("is refused across companies like everybody else", () => {
+    expect(can(contractor, "VIEW_PROJECT", { projectId: PROJECT, orgId: OTHER_ORG })).toBe(false);
+    expect(can(contractor, "COMMENT", { ...OWN, orgId: OTHER_ORG })).toBe(false);
   });
 });
 

@@ -36,6 +36,7 @@ const MAIN_NAV: NavItem[] = [
       { href: "/my-tasks?due=today", label: "Due today" },
       { href: "/my-tasks?due=week", label: "This week" },
       { href: "/my-tasks?due=overdue", label: "Overdue" },
+      { href: "/my-tasks?status=AWAITING_REVIEW", label: "Awaiting review" },
       { href: "/my-tasks/brief", label: "Your day" },
       { href: "/my-tasks?view=timeline", label: "Timeline" },
       { href: "/my-tasks/personal", label: "Personal list" },
@@ -51,7 +52,23 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/admin/integrations", label: "Integrations", icon: IntegrationsIcon },
 ];
 
+/**
+ * A contractor's menu is trimmed to the four things they actually have: their dashboard, the
+ * projects they hold work on, their own tasks and their notifications. The people directory, the
+ * project team and the whole Admin section are not rows they are given and not pages they can read
+ * — the server answers "not found" either way.
+ */
+const EXTERNAL_NAV: NavItem[] = MAIN_NAV.map((item) =>
+  item.href === "/my-tasks"
+    ? {
+        ...item,
+        children: (item.children ?? []).filter((child) => child.href !== "/my-tasks/personal"),
+      }
+    : item,
+);
+
 export function navItemsFor(role: RoleName): NavItem[] {
+  if (role === "EXTERNAL") return EXTERNAL_NAV;
   return role === "ADMIN" ? [...MAIN_NAV, ...ADMIN_NAV] : MAIN_NAV;
 }
 

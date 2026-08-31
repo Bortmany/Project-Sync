@@ -41,6 +41,46 @@ other model reaches its organisation through one of them. In practice:
 **Any change touching this area adds or extends a test in
 `src/server/__tests__/org-isolation.service.test.ts` in the same change.**
 
+## THE EXTERNAL RULE (the tenant rule, one level in)
+
+> An EXTERNAL contractor sees the discipline tasks assigned to them and the smallest amount of
+> parent context needed to understand them — never another person's task, never the team roster,
+> never a project they hold no work on. A miss is **not found**, never "forbidden".
+
+- `Role.EXTERNAL` is answered in `can()` **before** every other rule and never falls through to
+  them (`canExternal` in `src/lib/permissions.ts`). Their four actions —
+  `UPDATE_DISCIPLINE_TASK_STATUS`, `COMPLETE_DISCIPLINE_TASK`, `UPLOAD_DOCUMENT`, `COMMENT` — each
+  need `ctx.assigneeId === actor.userId`. `COMMENT` is therefore **tighter** than it is for a
+  colleague, who may comment anywhere on a project they belong to.
+- **A project role never widens a contractor.** `effectiveRole()` returns `EXTERNAL` whatever the
+  `ProjectMember` row says, and `upsertMember`/`createProject` refuse to write any other project
+  role for one (or that role for anybody else).
+- `VIEW_PROJECT` is only half the answer: `assertCanViewProject()` additionally requires **at least
+  one live discipline task assigned to them on that project**, checked before the permission rules
+  so the refusal is always "not found".
+- **The read side threads two helpers** — `isExternal(actor)` and `externalTaskScope(actor)` in
+  `src/server/actor.ts` (plus `activeProjectsForExternal` in `src/lib/db.ts` and
+  `projectsVisibleTo(actor)` in `projects.ts`) — through the project list and detail, main-task and
+  discipline-task loaders, both Gantt reads, documents (listing, versions and download), search,
+  the directory (empty for them), the dashboard, favorites and the comment/activity feeds. The
+  project brief and the project- and main-task-level activity feeds are refused outright; the
+  personal "your day" brief and My tasks are per-person already and work unchanged.
+- **A project-wide fan-out leaves contractors out.** `projectAudience()` (tasks.ts and phases.ts)
+  filters `role: { not: "EXTERNAL" }`: an override notification names work a contractor may not see,
+  and a notification body is the one door read scoping cannot close. Their own notifications —
+  assigned, status changed, sent back for more work — are unaffected.
+- **The sign-off.** With `Project.externalSignoffRequired` on (the default), a contractor's
+  completion becomes `AWAITING_REVIEW` with a `SUBMITTED_FOR_REVIEW` audit row and a notification to
+  the discipline lead and the project's managers. `confirmDisciplineTaskReview()` runs the **real**
+  `completeDisciplineTask()` — required documents, dependencies and the stage gate are all still
+  judged — and `rejectDisciplineTaskReview()` returns it to `IN_PROGRESS` with a note of at least 5
+  characters. **A contractor can never confirm or reject a review, including their own.** With the
+  setting off, their completion behaves exactly like an engineer's, gate included.
+
+**Any change touching this area adds or extends a test in
+`src/server/__tests__/external-scoping.service.test.ts` in the same change** (and the tenant half in
+`org-isolation.service.test.ts`, which now also probes from a contractor's seat).
+
 ## THE GOLDEN RULE (the core guarantee)
 
 > A main task's status and progress are always the truth of its discipline tasks — completion can
@@ -240,6 +280,24 @@ In practice:
     connection at all. The generated migration's five trigram `DropIndex` lines were deleted by
     hand.)
 
+  - `20260831073453_external_access_and_posts` (limited external access, plus the noticeboard's
+    schema so the two builds share one migration). **Additive only** — nothing is dropped, renamed
+    or made stricter, so it is safe on a populated database. `Role` gains `EXTERNAL` and
+    `NotificationType` gains `ANNOUNCEMENT` (two `ALTER TYPE ... ADD VALUE` statements, safe inside
+    the migration's transaction because neither new value is *used* in the same migration);
+    `User.companyName` is nullable (a contractor's employer, shown as the badge beside their name —
+    the privacy page was updated in the same change); `Project.externalSignoffRequired` defaults to
+    **true**, the safe direction, so every existing project asks for a sign-off from day one; and
+    `Organization.broadcastPolicy` defaults to `"ADMIN_PM"`. Two new models: `Post` (the
+    noticeboard — `kind` is a **plain string validated by zod** (`PostKindSchema`), not a Prisma
+    enum, the same choice `OrgIntegration.kind` made; cascading from `Organization`, `Project` and
+    `Discipline`, a one-level self-relation for replies cascading from the parent post, an author
+    relation that is **Restrict** exactly as a `Comment`'s is because nobody is ever hard-deleted,
+    and indexes on `[orgId, kind, createdAt desc]`, `[orgId, disciplineId]`, `[orgId, projectId]`
+    and `parentId`) and `PostDismissal` (`@@unique([postId, userId])`, cascading from both the post
+    and the person). The generated migration's five trigram `DropIndex` lines were deleted by hand,
+    and `pg_indexes` was checked on both databases afterwards.)
+
 - **Careful with `prisma migrate dev`:** the trigram search indexes are hand-written raw SQL that the
   Prisma schema does not know about, so the generated migration will try to DROP them. Delete those
   `DropIndex` lines from the generated `migration.sql` before it goes anywhere near a real database.
@@ -274,7 +332,7 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/notifications` | GET | — | `NotificationDTO[]` (the signed-in person's own, newest first, 100 max, read and unread together) |
 | `/api/notifications/unread-count` | GET | — | `{ unread: number }` (the bell's badge — its own tiny route so the topbar can poll it every 60 seconds without pulling the list) |
 | `/api/search?q=` | GET | `q` | `SearchResultsDTO` |
-| `/api/dashboard` | GET | — | `DashboardDTO` |
+| `/api/dashboard` | GET | — | `DashboardDTO` (adds `awaitingMySignoff` — the contractor work THIS person may sign off, empty for everybody who reviews nothing and always empty for a contractor) |
 | `/api/uploads` | POST | multipart: `file`, `projectId`, `mainTaskId?` \| `disciplineTaskId?`, `documentId?`, `requiredDocumentId?`, `title?`, `category?`, `note?` (validated by `UploadMeta`) | `DocumentVersionDTO` |
 | `/api/documents/versions/[versionId]/download` | GET | — | file stream |
 | `/api/auth/signup` | POST | `SignupInput` | `SignupResultDTO` + session cookie (public; `byIp` limited to 5 an hour) |
@@ -302,6 +360,7 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 |---|---|---|
 | `createProject` | `CreateProjectInput` | `ActionResult<ProjectDTO>` |
 | `updateProject` | `UpdateProjectInput` | `ActionResult<ProjectDTO>` |
+| `setExternalSignoffRequired` (EDIT_PROJECT; audited like any other project setting) | `SetExternalSignoffInput` | `ActionResult<ProjectDTO>` |
 | `upsertMember` | `UpsertMemberInput` | `ActionResult<ProjectMemberDTO>` |
 | `removeMember` | `{ projectId, userId }` | `ActionResult<{ removed: true }>` |
 | `upsertProjectDiscipline` | `UpsertProjectDisciplineInput` | `ActionResult<ProjectDisciplineDTO>` |
@@ -320,6 +379,8 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `updateDisciplineTask` | `UpdateDisciplineTaskInput` | `ActionResult<DisciplineTaskDTO>` |
 | `updateDisciplineTaskStatus` | `UpdateTaskStatusInput` | `ActionResult<DisciplineTaskDTO>` |
 | `completeDisciplineTask` | `{ id }` | `ActionResult<DisciplineTaskDTO>` |
+| `confirmDisciplineTaskReview` (lead / PM / ADMIN, never an EXTERNAL; runs the real completion gate) | `ConfirmReviewInput` | `ActionResult<DisciplineTaskDTO>` |
+| `rejectDisciplineTaskReview` (same people; note of 5 characters minimum, notifies the contractor) | `RejectReviewInput` | `ActionResult<DisciplineTaskDTO>` |
 | `reopenDisciplineTask` | `{ id, reason }` | `ActionResult<DisciplineTaskDTO>` |
 | `addDependency` | `AddDependencyInput` | `ActionResult<DisciplineTaskDTO>` |
 | `removeDependency` | `AddDependencyInput` | `ActionResult<DisciplineTaskDTO>` |
@@ -518,11 +579,14 @@ About the two seed steps:
 2. **Golden-rule violations** — a status or progress value written by hand, a completion that skips a
    mandatory document or open dependency, an override without a recorded reason, an updated or
    deleted `DocumentVersion` / `ActivityLog` row.
-3. **Missing server-side authorisation or scoping** — a route without `assertCan`, a query that is
+3. **External leaks** — a listing, loader or raw query reached by an `EXTERNAL` that is not narrowed
+   by `externalTaskScope(actor)` (or an equivalent filter), and any refusal that answers "forbidden"
+   where the external rule says "not found".
+4. **Missing server-side authorisation or scoping** — a route without `assertCan`, a query that is
    not limited to the signed-in person's projects.
-4. **Unvalidated input** — a body, query or form read without a zod parse; an upload trusted by name.
-5. **Audit-log gaps** — a mutation that does not append an `ActivityLog` row in the same transaction.
-6. **Conventions drift** — redefined DTO types, raw `findMany` in a listing, `console.log`, new hex
+5. **Unvalidated input** — a body, query or form read without a zod parse; an upload trusted by name.
+6. **Audit-log gaps** — a mutation that does not append an `ActivityLog` row in the same transaction.
+7. **Conventions drift** — redefined DTO types, raw `findMany` in a listing, `console.log`, new hex
    colours, a schema change after Milestone 1.
 
 ## Notes

@@ -2,10 +2,18 @@
 // Every mutation here: assertCan → transaction → audit row in the same transaction → typed result.
 
 import { assertCan } from "@/lib/permissions";
-import { activeMainTasks, activeProjects, activeProjectsForUser, notDeleted, prisma } from "@/lib/db";
+import {
+  activeMainTasks,
+  activeProjects,
+  activeProjectsForExternal,
+  activeProjectsForUser,
+  notDeleted,
+  prisma,
+} from "@/lib/db";
 import { effectiveStatus, isOverdue } from "@/lib/progress";
 import type {
   CreateProjectInput,
+  SetExternalSignoffInput,
   ProjectDTO,
   ProjectDisciplineDTO,
   ProjectListItemDTO,
@@ -21,7 +29,7 @@ import {
   ProjectDisciplineDTO as ProjectDisciplineSchema,
 } from "@/lib/zod-schemas";
 import type { Prisma } from "@/generated/prisma/client";
-import type { ActorContext } from "@/server/actor";
+import { isExternal, type ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
 import { phasesForTemplate, templateNameOf } from "@/server/industry-templates";
 import { checkDto, checkDtoList } from "@/server/serialize";
@@ -39,7 +47,30 @@ import { ACTIVITY, appendActivity } from "@/server/services/activity";
  */
 export async function assertCanViewProject(actor: ActorContext, projectId: string): Promise<void> {
   const project = await projectInOrg(actor, projectId);
+
+  // THE EXTERNAL RULE, second half, and it is answered BEFORE the permission rules so the answer is
+  // always "not found". Being a member is not enough for a contractor: they may only look at a
+  // project they hold live work on. A project they do not simply does not exist for them — the same
+  // answer another company's project gives, for the same reason.
+  if (isExternal(actor)) {
+    if (!(await hasAssignedWork(actor, project.id))) {
+      throw new NotFoundError("We could not find that project.");
+    }
+  }
+
   assertCan(actor, "VIEW_PROJECT", { projectId: project.id, orgId: project.orgId });
+}
+
+/** Does this person hold at least one live discipline task on this project? */
+export async function hasAssignedWork(actor: ActorContext, projectId: string): Promise<boolean> {
+  const count = await prisma.disciplineTask.count({
+    where: {
+      assigneeId: actor.userId,
+      ...notDeleted,
+      mainTask: { ...notDeleted, projectId, project: { orgId: actor.orgId, ...notDeleted } },
+    },
+  });
+  return count > 0;
 }
 
 /**
@@ -65,20 +96,23 @@ export async function projectInOrg(
  * ("my tasks", the sidebar's shortcuts) filter against this set.
  */
 export async function visibleProjects(actor: ActorContext): Promise<Map<string, string>> {
-  const projects =
-    actor.role === "ADMIN"
-      ? await activeProjects(actor.orgId)
-      : await activeProjectsForUser(actor.orgId, actor.userId);
+  const projects = await projectsVisibleTo(actor);
   return new Map(projects.map((project) => [project.id, project.code]));
+}
+
+/**
+ * The three answers to "which projects?", in one place so no caller has to remember the third:
+ * an administrator's whole company, a colleague's memberships, and a contractor's own work.
+ */
+export async function projectsVisibleTo(actor: ActorContext) {
+  if (isExternal(actor)) return activeProjectsForExternal(actor.orgId, actor.userId);
+  if (actor.role === "ADMIN") return activeProjects(actor.orgId);
+  return activeProjectsForUser(actor.orgId, actor.userId);
 }
 
 /** Projects the signed-in person may see: their own memberships, or all of them for an administrator. */
 export async function listProjectsForActor(actor: ActorContext): Promise<ProjectListItemDTO[]> {
-  const projects =
-    actor.role === "ADMIN"
-      ? await activeProjects(actor.orgId)
-      : await activeProjectsForUser(actor.orgId, actor.userId);
-  return buildProjectListItems(projects);
+  return buildProjectListItems(await projectsVisibleTo(actor), actor);
 }
 
 type ProjectRow = {
@@ -93,19 +127,46 @@ type ProjectRow = {
  * Turns project rows into list cards. Callers pass rows they have already limited to what the
  * person may see — global search reuses this so its project rows look exactly like the list page's.
  */
-export async function buildProjectListItems(projects: ProjectRow[]): Promise<ProjectListItemDTO[]> {
+export async function buildProjectListItems(
+  projects: ProjectRow[],
+  viewer?: ActorContext,
+): Promise<ProjectListItemDTO[]> {
   if (projects.length === 0) return [];
 
+  // A contractor's card counts THEIR work only — the number of tasks on a project, and how many of
+  // them are late, is the company's business, not a supplier's.
+  const external = viewer ? isExternal(viewer) : false;
   const projectIds = projects.map((project) => project.id);
   const disciplines = await prisma.projectDiscipline.findMany({
-    where: { projectId: { in: projectIds } },
+    where: {
+      projectId: { in: projectIds },
+      ...(external && viewer
+        ? {
+            discipline: {
+              disciplineTasks: {
+                some: {
+                  assigneeId: viewer.userId,
+                  ...notDeleted,
+                  mainTask: { projectId: { in: projectIds }, ...notDeleted },
+                },
+              },
+            },
+          }
+        : {}),
+    },
     include: { discipline: true },
   });
 
   // Cross-project read: the soft-delete filter from db.ts is applied by hand because the
   // per-project helper would mean one query per project on this page (the dashboard does the same).
   const allTasks = await prisma.mainTask.findMany({
-    where: { projectId: { in: projectIds }, ...notDeleted },
+    where: {
+      projectId: { in: projectIds },
+      ...notDeleted,
+      ...(external && viewer
+        ? { disciplineTasks: { some: { assigneeId: viewer.userId, ...notDeleted } } }
+        : {}),
+    },
     orderBy: { deadline: "asc" },
     select: { projectId: true, deadline: true, status: true, statusOverride: true, progressPct: true },
   });
@@ -148,7 +209,7 @@ export async function buildProjectListItems(projects: ProjectRow[]): Promise<Pro
 /** One project in full, with its disciplines, members and headline counts. */
 export async function getProjectForActor(actor: ActorContext, projectId: string): Promise<ProjectDTO> {
   await assertCanViewProject(actor, projectId);
-  return buildProjectDTO(projectId);
+  return buildProjectDTO(projectId, actor);
 }
 
 /* ------------------------------------------------------------------ */
@@ -175,7 +236,10 @@ export async function createProject(actor: ActorContext, input: CreateProjectInp
   await assertDisciplinesExist(actor, disciplineIds);
 
   const members = withCreatorAsManager(actor, input.members);
-  await assertUsersAreActive(actor, members.map((member) => member.userId));
+  const people = await assertUsersAreActive(actor, members.map((member) => member.userId));
+  for (const member of members) {
+    assertProjectRoleMatchesPerson(people, member.userId, member.projectRole);
+  }
   for (const member of members) {
     if (member.disciplineId && !disciplineIds.includes(member.disciplineId)) {
       throw new ServiceError(
@@ -269,6 +333,48 @@ export async function updateProject(actor: ActorContext, input: UpdateProjectInp
   return buildProjectDTO(existing.id);
 }
 
+/**
+ * Switches the contractor sign-off on or off for one project. Anyone who may edit the project may
+ * change it, and the change is audited like any other project setting — turning a check off is
+ * exactly the kind of decision an audit trail exists to record.
+ */
+export async function setExternalSignoffRequired(
+  actor: ActorContext,
+  input: SetExternalSignoffInput,
+): Promise<ProjectDTO> {
+  const existing = await prisma.project.findFirst({
+    where: { id: input.projectId, orgId: actor.orgId, ...notDeleted },
+  });
+  if (!existing) throw new NotFoundError("We could not find that project.");
+  assertCan(actor, "EDIT_PROJECT", { projectId: existing.id, orgId: existing.orgId });
+
+  if (existing.externalSignoffRequired === input.required) return buildProjectDTO(existing.id, actor);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.project.update({
+      where: { id: existing.id },
+      data: { externalSignoffRequired: input.required },
+    });
+
+    await appendActivity(tx, {
+      actorId: actor.userId,
+      projectId: existing.id,
+      entityType: "Project",
+      entityId: existing.id,
+      action: ACTIVITY.PROJECT_UPDATED,
+      summary: input.required
+        ? `${actor.name} turned on contractor sign-off for ${existing.name}`
+        : `${actor.name} turned off contractor sign-off for ${existing.name}`,
+      metadata: {
+        before: { externalSignoffRequired: existing.externalSignoffRequired },
+        after: { externalSignoffRequired: input.required },
+      },
+    });
+  });
+
+  return buildProjectDTO(existing.id, actor);
+}
+
 /** Adds someone to a project, or changes the role or discipline they hold on it. */
 export async function upsertMember(actor: ActorContext, input: UpsertMemberInput): Promise<ProjectMemberDTO> {
   const project = await prisma.project.findFirst({
@@ -278,6 +384,7 @@ export async function upsertMember(actor: ActorContext, input: UpsertMemberInput
   assertCan(actor, "MANAGE_MEMBERS", { projectId: project.id, orgId: project.orgId });
 
   const [user] = await assertUsersAreActive(actor, [input.userId]);
+  assertProjectRoleMatchesPerson([user], input.userId, input.projectRole);
   if (input.disciplineId) await assertDisciplineEnabled(project.id, input.disciplineId);
 
   const existing = await prisma.projectMember.findUnique({
@@ -475,8 +582,18 @@ export async function removeProjectDiscipline(
 /* Serializers and small helpers                                       */
 /* ------------------------------------------------------------------ */
 
-/** Builds the full project DTO. Callers have already checked that the person may see it. */
-export async function buildProjectDTO(projectId: string): Promise<ProjectDTO> {
+/**
+ * Builds the full project DTO. Callers have already checked that the person may see it.
+ *
+ * Pass the viewer and a contractor gets the FILTERED variant: no team roster at all, only the
+ * disciplines their own work sits in, and headline counts over their own main tasks. Without a
+ * viewer (the mutation paths, which only a manager or administrator can reach) it is unchanged.
+ */
+export async function buildProjectDTO(
+  projectId: string,
+  viewer?: ActorContext,
+): Promise<ProjectDTO> {
+  const external = viewer ? isExternal(viewer) : false;
   const project = await prisma.project.findFirst({
     where: { id: projectId, ...notDeleted },
     include: {
@@ -484,7 +601,7 @@ export async function buildProjectDTO(projectId: string): Promise<ProjectDTO> {
       disciplines: { include: { discipline: true, lead: { select: { name: true } } } },
       members: {
         include: {
-          user: { select: { name: true, email: true } },
+          user: { select: { name: true, email: true, companyName: true } },
           discipline: { select: { code: true } },
         },
       },
@@ -492,7 +609,18 @@ export async function buildProjectDTO(projectId: string): Promise<ProjectDTO> {
   });
   if (!project) throw new NotFoundError("We could not find that project.");
 
-  const tasks = await activeMainTasks(project.orgId, project.id);
+  const tasks =
+    external && viewer
+      ? await prisma.mainTask.findMany({
+          where: {
+            projectId: project.id,
+            ...notDeleted,
+            disciplineTasks: { some: { assigneeId: viewer.userId, ...notDeleted } },
+          },
+          orderBy: { deadline: "asc" },
+        })
+      : await activeMainTasks(project.orgId, project.id);
+  const myDisciplineIds = external && viewer ? await disciplineIdsWorkedBy(viewer, project.id) : null;
   const now = new Date();
   const completed = tasks.filter(
     (task) => effectiveStatus(task.status, task.statusOverride) === "COMPLETED",
@@ -512,8 +640,10 @@ export async function buildProjectDTO(projectId: string): Promise<ProjectDTO> {
     createdById: project.createdById,
     createdByName: project.createdBy.name,
     createdAt: project.createdAt,
+    externalSignoffRequired: project.externalSignoffRequired,
     disciplines: project.disciplines
       .slice()
+      .filter((row) => !myDisciplineIds || myDisciplineIds.has(row.disciplineId))
       .sort((a, b) => a.discipline.sortOrder - b.discipline.sortOrder)
       .map((row) => ({
         id: row.id,
@@ -525,7 +655,8 @@ export async function buildProjectDTO(projectId: string): Promise<ProjectDTO> {
         leadId: row.leadId,
         leadName: row.lead?.name ?? null,
       })),
-    members: project.members
+    // A contractor never sees who else is on the project.
+    members: (external ? [] : project.members)
       .slice()
       .sort((a, b) => a.user.name.localeCompare(b.user.name))
       .map((member) => ({
@@ -534,6 +665,7 @@ export async function buildProjectDTO(projectId: string): Promise<ProjectDTO> {
         userId: member.userId,
         userName: member.user.name,
         userEmail: member.user.email,
+        companyName: member.user.companyName,
         projectRole: member.projectRole,
         disciplineId: member.disciplineId,
         disciplineCode: member.discipline?.code ?? null,
@@ -548,7 +680,10 @@ export async function buildProjectDTO(projectId: string): Promise<ProjectDTO> {
 async function buildMemberDTO(memberId: string): Promise<ProjectMemberDTO> {
   const member = await prisma.projectMember.findUnique({
     where: { id: memberId },
-    include: { user: { select: { name: true, email: true } }, discipline: { select: { code: true } } },
+    include: {
+      user: { select: { name: true, email: true, companyName: true } },
+      discipline: { select: { code: true } },
+    },
   });
   if (!member) throw new NotFoundError("That person is not on this project.");
 
@@ -560,6 +695,7 @@ async function buildMemberDTO(memberId: string): Promise<ProjectMemberDTO> {
       userId: member.userId,
       userName: member.user.name,
       userEmail: member.user.email,
+      companyName: member.user.companyName,
       projectRole: member.projectRole,
       disciplineId: member.disciplineId,
       disciplineCode: member.discipline?.code ?? null,
@@ -614,6 +750,20 @@ async function createDefaultPhases(
   return names;
 }
 
+/** The disciplines this person actually holds live work in, on one project. */
+async function disciplineIdsWorkedBy(actor: ActorContext, projectId: string): Promise<Set<string>> {
+  const rows = await prisma.disciplineTask.findMany({
+    where: {
+      assigneeId: actor.userId,
+      ...notDeleted,
+      mainTask: { projectId, ...notDeleted },
+    },
+    select: { disciplineId: true },
+    distinct: ["disciplineId"],
+  });
+  return new Set(rows.map((row) => row.disciplineId));
+}
+
 /** A project's headline percentage: the average of its main tasks' own derived progress. */
 function averageProgress(tasks: { progressPct: number }[], completedCount: number): number {
   if (tasks.length === 0) return 0;
@@ -651,12 +801,38 @@ async function assertUsersAreActive(actor: ActorContext, userIds: string[]) {
   const unique = [...new Set(userIds)];
   const users = await prisma.user.findMany({
     where: { id: { in: unique }, orgId: actor.orgId, isActive: true },
-    select: { id: true, name: true },
+    select: { id: true, name: true, role: true },
   });
   if (users.length !== unique.length) {
     throw new ServiceError("One of those people is no longer active in Tielora.");
   }
   return users;
+}
+
+/**
+ * A contractor is a contractor on every project, and nobody else can be given a contractor's
+ * seat. The permission rules already refuse to escalate an EXTERNAL, so this is belt and braces —
+ * it keeps the stored ProjectMember rows saying the same thing the rules do.
+ */
+function assertProjectRoleMatchesPerson(
+  people: { id: string; role: string }[],
+  userId: string,
+  projectRole: string,
+): void {
+  const person = people.find((candidate) => candidate.id === userId);
+  if (!person) return;
+  if (person.role === "EXTERNAL" && projectRole !== "EXTERNAL") {
+    throw new ServiceError(
+      "An external contractor can only join a project as an external contractor.",
+      { projectRole: ["Contractors join as External."] },
+    );
+  }
+  if (person.role !== "EXTERNAL" && projectRole === "EXTERNAL") {
+    throw new ServiceError(
+      "Only an external contractor can hold the External role on a project.",
+      { projectRole: ["Pick a role for a colleague."] },
+    );
+  }
 }
 
 /** Role names as people say them, for audit summaries. */
@@ -668,6 +844,8 @@ function roleWords(role: ProjectMemberDTO["projectRole"]): string {
       return "project manager";
     case "DISCIPLINE_LEAD":
       return "discipline lead";
+    case "EXTERNAL":
+      return "external contractor";
     default:
       return "engineer";
   }

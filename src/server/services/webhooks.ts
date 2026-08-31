@@ -67,6 +67,9 @@ const TOGGLE_FOR_TYPE: Record<NotificationTypeName, FanOutToggle | null> = {
   OVERRIDE_APPLIED: "gateOverride",
   DOCUMENT_UPLOADED: null,
   COMMENT_ADDED: null,
+  // A noticeboard announcement is already broadcast to everyone in the app; a chat copy of it is a
+  // separate decision with its own switch, not something this map should smuggle in.
+  ANNOUNCEMENT: null,
 };
 
 export function toggleForType(type: NotificationTypeName): IntegrationEventName | null {

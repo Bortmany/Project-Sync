@@ -20,6 +20,7 @@ import { CommentComposer, type Mentionable } from "@/components/comments/comment
 import {
   Avatar,
   Button,
+  CompanyBadge,
   EmptyState,
   ErrorBanner,
   Modal,
@@ -96,7 +97,8 @@ function CommentRow({
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex items-start gap-2">
           <p className="min-w-0 flex-1 text-sm text-[var(--brand-gray)]">
-            <span className="font-semibold text-[var(--brand-ink)]">{comment.authorName}</span> ·{" "}
+            <span className="font-semibold text-[var(--brand-ink)]">{comment.authorName}</span>{" "}
+            <CompanyBadge companyName={comment.authorCompanyName} /> ·{" "}
             {formatRelative(comment.createdAt)}
             {comment.editedAt ? " · (edited)" : ""}
           </p>

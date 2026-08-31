@@ -98,6 +98,14 @@ export function isManager(me: MeDTO | undefined): boolean {
   return me?.role === "ADMIN" || me?.role === "PROJECT_MANAGER";
 }
 
+/**
+ * A contractor from another company. The server narrows everything they read anyway; this is only
+ * so the screens do not offer them tabs and buttons that would come back empty or refused.
+ */
+export function isExternalUser(me: MeDTO | undefined): boolean {
+  return me?.role === "EXTERNAL";
+}
+
 /** Roles allowed to steer work inside a discipline (plus the task's own assignee). */
 export function isLeadOrAbove(me: MeDTO | undefined): boolean {
   return isManager(me) || me?.role === "DISCIPLINE_LEAD";

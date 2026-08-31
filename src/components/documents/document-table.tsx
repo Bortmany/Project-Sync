@@ -12,7 +12,15 @@ import { formatDate } from "@/components/format";
 import { FileTypeIcon, formatFileSize } from "@/components/documents/file-icon";
 import { UploadDropzone } from "@/components/documents/upload-dropzone";
 import { VersionHistoryPanel } from "@/components/documents/version-history-panel";
-import { Avatar, Badge, Button, ErrorBanner, Modal, SkeletonRows } from "@/components/ui";
+import {
+  Avatar,
+  Badge,
+  Button,
+  CompanyBadge,
+  ErrorBanner,
+  Modal,
+  SkeletonRows,
+} from "@/components/ui";
 import type { DocumentDTO } from "@/lib/zod-schemas";
 
 /** A titled block of rows — "Shared documents", one per discipline, or one per main task. */
@@ -133,9 +141,10 @@ function DocumentRow({
       {location !== undefined ? <td className="px-3 text-xs">{location}</td> : null}
 
       <td className="px-3">
-        <span className="inline-flex items-center gap-2 text-xs text-[var(--brand-text)]">
+        <span className="inline-flex flex-wrap items-center gap-2 text-xs text-[var(--brand-text)]">
           <Avatar name={document.uploadedByName} size={24} />
           {document.uploadedByName}
+          <CompanyBadge companyName={document.uploadedByCompanyName} />
         </span>
       </td>
 

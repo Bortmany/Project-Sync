@@ -19,7 +19,7 @@ import { searchEverything } from "@/lib/search";
 import { ForbiddenError } from "@/lib/permissions";
 import { seal } from "@/lib/secret-box";
 import { storeFile, validateUpload } from "@/lib/upload";
-import type { ActorContext } from "@/server/actor";
+import { actorForUser, type ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
 import { createUser, deactivateUser, listAllUsers, updateUser } from "@/server/services/admin";
 import { createComment, listComments } from "@/server/services/comments";
@@ -73,6 +73,7 @@ import {
   inThirtyDays,
   makeOrg,
   makeProjectFixture,
+  makeUser,
   resetDatabase,
   subtaskIdsByTitle,
   type Fixture,
@@ -710,5 +711,44 @@ describe("a brief never reaches across companies", () => {
     const body = String((init as RequestInit).body);
     expect(body).toContain(acmeProject.code);
     expect(body).not.toContain(rivalProject.code);
+  });
+});
+
+describe("an external contractor is bound by the company door too", () => {
+  it("cannot reach the other company's work, and cannot reach anything but their own here", async () => {
+    // A contractor of Acme, invited onto Acme's project to do Acme's one discipline task.
+    const external = await makeUser({
+      name: "Yusuf Contractor",
+      role: "EXTERNAL",
+      orgId: acme.fixture.orgId,
+    });
+    await prisma.user.update({
+      where: { id: external.id },
+      data: { companyName: "Al Hassan Engineering" },
+    });
+    await prisma.projectMember.create({
+      data: { projectId: acme.projectId, userId: external.id, projectRole: "EXTERNAL" },
+    });
+    await prisma.disciplineTask.update({
+      where: { id: acme.disciplineTaskId },
+      data: { assigneeId: external.id },
+    });
+    const contractor = await actorForUser(external.id);
+
+    // The rival company: not found, exactly as it is for Acme's own administrator.
+    await expect(getProjectForActor(contractor, rival.projectId)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(getMainTaskForActor(contractor, rival.mainTaskId)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      getDisciplineTaskForActor(contractor, rival.disciplineTaskId),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(getVersionForDownload(contractor, rival.versionId)).rejects.toBeInstanceOf(NotFoundError);
+
+    // Their own company: only the task they were given, and no people directory at all.
+    const mine = await getDisciplineTaskForActor(contractor, acme.disciplineTaskId);
+    expect(mine.id).toBe(acme.disciplineTaskId);
+    expect(await listUsers(contractor)).toEqual([]);
+    expect((await listProjectsForActor(contractor)).map((project) => project.id)).toEqual([
+      acme.projectId,
+    ]);
   });
 });

@@ -1,6 +1,11 @@
 // Pure permission rules — the single source of truth for who may do what. No database access lives here.
 
-export type RoleValue = "ADMIN" | "PROJECT_MANAGER" | "DISCIPLINE_LEAD" | "ENGINEER";
+export type RoleValue =
+  | "ADMIN"
+  | "PROJECT_MANAGER"
+  | "DISCIPLINE_LEAD"
+  | "ENGINEER"
+  | "EXTERNAL";
 
 export type Membership = {
   projectId: string;
@@ -82,6 +87,20 @@ const ENGINEER_OWN_TASK_ACTIONS: Action[] = [
   "UPLOAD_DOCUMENT",
 ];
 
+/**
+ * Everything an EXTERNAL contractor may ever do, and only on a discipline task assigned to them.
+ *
+ * The same shape as ENGINEER_OWN_TASK_ACTIONS with one deliberate difference: COMMENT is in here,
+ * which makes it TIGHTER than it is for a colleague. A member of the company may comment anywhere on
+ * a project they belong to; a contractor may only comment on their own work.
+ */
+const EXTERNAL_OWN_TASK_ACTIONS: Action[] = [
+  "UPDATE_DISCIPLINE_TASK_STATUS",
+  "COMPLETE_DISCIPLINE_TASK",
+  "UPLOAD_DOCUMENT",
+  "COMMENT",
+];
+
 function membershipFor(actor: Actor, projectId?: string): Membership | undefined {
   if (!projectId) return undefined;
   return actor.memberships.find((membership) => membership.projectId === projectId);
@@ -91,10 +110,33 @@ function membershipFor(actor: Actor, projectId?: string): Membership | undefined
  * The role that applies inside a project is the PROJECT role — per-project assignment
  * always wins, in both directions: a global manager added to someone else's project as
  * an engineer acts as an engineer there. Admins bypass this entirely in can().
+ *
+ * EXTERNAL is the one role that never escalates. A contractor is a contractor on every project,
+ * whatever a ProjectMember row says — the services also refuse to write any other project role for
+ * one, so the two agree, but this function does not depend on that being true.
  */
 function effectiveRole(actor: Actor, membership: Membership | undefined): RoleValue {
+  if (actor.role === "EXTERNAL") return "EXTERNAL";
   if (!membership) return actor.role;
   return membership.projectRole;
+}
+
+/**
+ * A contractor from another company: their own assigned work and nothing else.
+ *
+ * VIEW_PROJECT here means "may look at the project at all", and it is only half the answer — the
+ * read side narrows it again in `assertCanViewProject`, which requires at least one live discipline
+ * task in that project actually assigned to them, and every listing they touch is filtered to those
+ * tasks. Nothing that manages, creates, edits, deletes or overrides is reachable from here.
+ */
+function canExternal(actor: Actor, action: Action, ctx: PermissionContext): boolean {
+  const membership = membershipFor(actor, ctx.projectId);
+  if (!ctx.projectId || !membership) return false;
+  if (action === "VIEW_PROJECT") return true;
+  if (EXTERNAL_OWN_TASK_ACTIONS.includes(action)) {
+    return Boolean(ctx.assigneeId) && ctx.assigneeId === actor.userId;
+  }
+  return false;
 }
 
 /** Answers "may this person do this?" — the only place that question is answered. */
@@ -102,6 +144,10 @@ export function can(actor: Actor, action: Action, ctx: PermissionContext = {}): 
   // The organisation boundary comes first and applies to everybody, administrators included: being
   // an ADMIN makes you the administrator of your OWN company, never of anyone else's.
   if (ctx.orgId && ctx.orgId !== actor.orgId) return false;
+
+  // A contractor is answered here and never falls through to the rules below — no project role, no
+  // membership and no admin flag can widen what an EXTERNAL may do.
+  if (actor.role === "EXTERNAL") return canExternal(actor, action, ctx);
 
   if (actor.role === "ADMIN") return true;
   if (ADMIN_ONLY.includes(action)) return false;
@@ -206,6 +252,17 @@ export const PERMISSION_MATRIX: Record<RoleValue, { always: Action[]; conditiona
     ],
   },
   ENGINEER: {
+    always: [],
+    conditional: [
+      "VIEW_PROJECT",
+      "COMMENT",
+      "UPDATE_DISCIPLINE_TASK_STATUS",
+      "COMPLETE_DISCIPLINE_TASK",
+      "UPLOAD_DOCUMENT",
+    ],
+  },
+  // A contractor: everything is conditional, and every condition is "this task is assigned to me".
+  EXTERNAL: {
     always: [],
     conditional: [
       "VIEW_PROJECT",

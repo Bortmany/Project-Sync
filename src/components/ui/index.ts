@@ -9,6 +9,7 @@ export {
   ProgressBar,
   StatTile,
   Avatar,
+  CompanyBadge,
   initialsOf,
   statusColor,
   statusLabel,

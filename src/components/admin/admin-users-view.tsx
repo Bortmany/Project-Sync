@@ -12,6 +12,7 @@ import {
   Avatar,
   Badge,
   Button,
+  CompanyBadge,
   DisciplineDot,
   EmptyState,
   ErrorBanner,
@@ -31,6 +32,7 @@ const ROLE_OPTIONS: { value: RoleName; label: string }[] = [
   { value: "PROJECT_MANAGER", label: "Project manager" },
   { value: "DISCIPLINE_LEAD", label: "Discipline lead" },
   { value: "ENGINEER", label: "Engineer" },
+  { value: "EXTERNAL", label: "External contractor" },
 ];
 
 const ROLE_LABEL: Record<RoleName, string> = {
@@ -38,6 +40,7 @@ const ROLE_LABEL: Record<RoleName, string> = {
   PROJECT_MANAGER: "Project manager",
   DISCIPLINE_LEAD: "Discipline lead",
   ENGINEER: "Engineer",
+  EXTERNAL: "External",
 };
 
 /** The roles whose work always sits inside one discipline. */
@@ -89,12 +92,14 @@ function NewUserDialog({
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<RoleName>("ENGINEER");
+  const [companyName, setCompanyName] = useState("");
   const [disciplineId, setDisciplineId] = useState("");
   const [jobTitle, setJobTitle] = useState("");
   const [password, setPassword] = useState(generatePassword);
   const [created, setCreated] = useState<UserDTO | null>(null);
 
   const needsDiscipline = DISCIPLINE_ROLES.includes(role);
+  const needsCompany = role === "EXTERNAL";
 
   function close() {
     setCreated(null);
@@ -137,7 +142,12 @@ function NewUserDialog({
           </Button>
           <Button
             loading={pending}
-            disabled={!name.trim() || !email.trim() || (needsDiscipline && !disciplineId)}
+            disabled={
+              !name.trim() ||
+              !email.trim() ||
+              (needsDiscipline && !disciplineId) ||
+              (needsCompany && !companyName.trim())
+            }
             onClick={() =>
               run(
                 () =>
@@ -148,6 +158,7 @@ function NewUserDialog({
                     role,
                     disciplineId: disciplineId || null,
                     jobTitle: jobTitle.trim() || null,
+                    companyName: companyName.trim() || null,
                   }),
                 {
                   success: "User created.",
@@ -206,6 +217,19 @@ function NewUserDialog({
             </Select>
           </Field>
         </div>
+        {needsCompany ? (
+          <Field
+            label="Company"
+            hint="Shown beside their name everywhere, so everyone knows whose engineer they are."
+            error={fieldError(fieldErrors, "companyName")}
+          >
+            <Input
+              value={companyName}
+              placeholder="e.g. Al Hassan Engineering"
+              onChange={(event) => setCompanyName(event.target.value)}
+            />
+          </Field>
+        ) : null}
         <Field label="Job title" hint="Optional — how the role reads on their profile.">
           <Input value={jobTitle} onChange={(event) => setJobTitle(event.target.value)} />
         </Field>
@@ -235,11 +259,13 @@ function EditUserDialog({
   const { run, pending, error, fieldErrors } = useAction();
   const [name, setName] = useState(user.name);
   const [role, setRole] = useState<RoleName>(user.role);
+  const [companyName, setCompanyName] = useState(user.companyName ?? "");
   const [disciplineId, setDisciplineId] = useState(user.disciplineId ?? "");
   const [jobTitle, setJobTitle] = useState(user.jobTitle ?? "");
   const [password, setPassword] = useState("");
 
   const needsDiscipline = DISCIPLINE_ROLES.includes(role);
+  const needsCompany = role === "EXTERNAL";
 
   return (
     <Modal
@@ -253,7 +279,9 @@ function EditUserDialog({
           </Button>
           <Button
             loading={pending}
-            disabled={!name.trim() || (needsDiscipline && !disciplineId)}
+            disabled={
+              !name.trim() || (needsDiscipline && !disciplineId) || (needsCompany && !companyName.trim())
+            }
             onClick={() =>
               run(
                 () =>
@@ -263,6 +291,7 @@ function EditUserDialog({
                     role,
                     disciplineId: disciplineId || null,
                     jobTitle: jobTitle.trim() || null,
+                    companyName: companyName.trim() || null,
                     ...(password ? { password } : {}),
                   }),
                 {
@@ -314,6 +343,19 @@ function EditUserDialog({
             </Select>
           </Field>
         </div>
+        {needsCompany ? (
+          <Field
+            label="Company"
+            hint="Shown beside their name everywhere, so everyone knows whose engineer they are."
+            error={fieldError(fieldErrors, "companyName")}
+          >
+            <Input
+              value={companyName}
+              placeholder="e.g. Al Hassan Engineering"
+              onChange={(event) => setCompanyName(event.target.value)}
+            />
+          </Field>
+        ) : null}
         <Field label="Job title">
           <Input value={jobTitle} onChange={(event) => setJobTitle(event.target.value)} />
         </Field>
@@ -520,9 +562,10 @@ export function AdminUsersView({
                     className={`h-11 hover:bg-[var(--page-bg)] ${user.isActive ? "" : "opacity-60"}`}
                   >
                     <td className="px-3">
-                      <span className="flex items-center gap-2 font-semibold text-[var(--brand-ink)]">
+                      <span className="flex flex-wrap items-center gap-2 font-semibold text-[var(--brand-ink)]">
                         <Avatar name={user.name} size={24} />
                         {user.name}
+                        <CompanyBadge companyName={user.companyName} />
                       </span>
                     </td>
                     <td className="px-3 text-[var(--brand-text)]">{user.email}</td>

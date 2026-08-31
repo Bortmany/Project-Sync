@@ -1,12 +1,14 @@
 // The home screen: one query pass over the projects this person belongs to, then everything derived at read time.
 
-import { activeProjects, activeProjectsForUser, notDeleted, prisma } from "@/lib/db";
+import { notDeleted, prisma } from "@/lib/db";
 import { effectiveStatus, isOverdue } from "@/lib/progress";
 import type { DashboardDTO } from "@/lib/zod-schemas";
 import { DashboardDTO as DashboardSchema } from "@/lib/zod-schemas";
-import type { ActorContext } from "@/server/actor";
+import { externalTaskScope, isExternal, type ActorContext } from "@/server/actor";
 import { checkDto } from "@/server/serialize";
 import { recentActivityForProjects } from "@/server/services/activity";
+import { projectsVisibleTo } from "@/server/services/projects";
+import { listAwaitingMySignoff } from "@/server/services/tasks";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DUE_SOON_DAYS = 7;
@@ -16,11 +18,13 @@ const UPCOMING_LIMIT = 20;
 
 /** Everything the dashboard shows, scoped to the projects this person may see. */
 export async function getDashboardForActor(actor: ActorContext): Promise<DashboardDTO> {
-  const projects =
-    actor.role === "ADMIN"
-      ? await activeProjects(actor.orgId)
-      : await activeProjectsForUser(actor.orgId, actor.userId);
+  const projects = await projectsVisibleTo(actor);
   const projectIds = projects.map((project) => project.id);
+  // A contractor's home screen is a view of THEIR work: every count, bar and deadline below is
+  // narrowed to the discipline tasks assigned to them, and the project-wide activity feed is not
+  // theirs to read at all.
+  const external = isExternal(actor);
+  const ownWork = externalTaskScope(actor);
   const projectCodes = new Map(projects.map((project) => [project.id, project.code]));
 
   if (projectIds.length === 0) return checkDto(DashboardSchema, emptyDashboard(), "DashboardDTO");
@@ -31,9 +35,14 @@ export async function getDashboardForActor(actor: ActorContext): Promise<Dashboa
 
   // Cross-project reads: the soft-delete filter from db.ts is applied by hand because the
   // per-project helpers would mean one query per project here.
-  const [mainTasks, myTasks, upcomingSubtasks, disciplineRows, recentActivity] = await Promise.all([
+  const [mainTasks, myTasks, upcomingSubtasks, disciplineRows, recentActivity, signoffQueue] =
+    await Promise.all([
     prisma.mainTask.findMany({
-      where: { projectId: { in: projectIds }, ...notDeleted },
+      where: {
+        projectId: { in: projectIds },
+        ...notDeleted,
+        ...(external ? { disciplineTasks: { some: { ...ownWork, ...notDeleted } } } : {}),
+      },
       orderBy: { deadline: "asc" },
       select: {
         id: true,
@@ -63,6 +72,7 @@ export async function getDashboardForActor(actor: ActorContext): Promise<Dashboa
         deadline: { lte: upcomingCutoff },
         status: { not: "COMPLETED" },
         ...notDeleted,
+        ...ownWork,
         mainTask: { projectId: { in: projectIds }, ...notDeleted },
       },
       orderBy: { deadline: "asc" },
@@ -73,10 +83,16 @@ export async function getDashboardForActor(actor: ActorContext): Promise<Dashboa
     // every discipline task of every project into memory to count them would grow without limit.
     prisma.disciplineTask.groupBy({
       by: ["disciplineId", "status"],
-      where: { ...notDeleted, mainTask: { projectId: { in: projectIds }, ...notDeleted } },
+      where: {
+        ...notDeleted,
+        ...ownWork,
+        mainTask: { projectId: { in: projectIds }, ...notDeleted },
+      },
       _count: { _all: true },
     }),
-    recentActivityForProjects(projectIds, 15),
+    external ? [] : recentActivityForProjects(projectIds, 15),
+    // "Needs your sign-off" — the same rule that will judge the confirmation decides the queue.
+    listAwaitingMySignoff(actor),
   ]);
 
   const shownStatus = (task: { status: DashboardStatus; statusOverride: DashboardStatus | null }) =>
@@ -169,6 +185,18 @@ export async function getDashboardForActor(actor: ActorContext): Promise<Dashboa
       deadline: task.deadline,
       isOverdue: isOverdue(task.deadline, task.status, now),
     })),
+    awaitingMySignoff: signoffQueue.map((task) => ({
+      id: task.id,
+      title: task.title,
+      projectCode: task.projectCode,
+      mainTaskId: task.mainTaskId,
+      disciplineCode: task.disciplineCode,
+      disciplineColorHex: task.disciplineColorHex,
+      deadline: task.deadline,
+      isOverdue: task.isOverdue,
+      assigneeName: task.assigneeName ?? null,
+      assigneeCompanyName: task.assigneeCompanyName ?? null,
+    })),
     disciplineProgress: [...disciplineTotals.entries()]
       .sort((a, b) => a[1].sortOrder - b[1].sortOrder)
       .map(([disciplineId, entry]) => ({
@@ -191,6 +219,7 @@ function emptyDashboard(): DashboardDTO {
   return {
     counts: { total: 0, inProgress: 0, completed: 0, blocked: 0, overdue: 0, dueSoon: 0 },
     myTasks: [],
+    awaitingMySignoff: [],
     disciplineProgress: [],
     upcomingDeadlines: [],
     recentActivity: [],
