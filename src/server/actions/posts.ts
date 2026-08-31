@@ -5,6 +5,7 @@
 
 import { revalidatePath } from "next/cache";
 import type {
+  AcknowledgePostInput,
   ActionResult,
   BroadcastSettingDTO,
   CreatePostInput,
@@ -15,6 +16,7 @@ import type {
   SetBroadcastPolicyInput,
 } from "@/lib/zod-schemas";
 import {
+  AcknowledgePostInput as AcknowledgePostSchema,
   CreatePostInput as CreatePostSchema,
   DeletePostInput as DeletePostSchema,
   DismissAnnouncementInput as DismissAnnouncementSchema,
@@ -45,6 +47,9 @@ export async function createPost(input: CreatePostInput): Promise<ActionResult<P
   try {
     const post = await posts.createPost(guard.actor, parsed.data);
     revalidateBoards();
+    // An announcement changes "Your day" for everybody it reached — including a contractor, for
+    // whom that page is the only place a notice ever appears.
+    revalidatePath("/my-tasks/brief");
     return { ok: true, data: post };
   } catch (error) {
     return toFailure(error, { action: "createPost" });
@@ -115,6 +120,30 @@ export async function dismissAnnouncement(
     return { ok: true, data: result };
   } catch (error) {
     return toFailure(error, { action: "dismissAnnouncement" });
+  }
+}
+
+/**
+ * Confirming you have read an announcement that asked for it. Unlike a dismissal this IS audited —
+ * the service writes the row — and it refreshes "Your day" too, because the brief's "Waiting for
+ * your acknowledgement" section is one item shorter the moment this succeeds.
+ */
+export async function acknowledgePost(
+  input: AcknowledgePostInput,
+): Promise<ActionResult<PostDTO>> {
+  const parsed = AcknowledgePostSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: CHECK_FIELDS, fieldErrors: toFieldErrors(parsed.error) };
+
+  const guard = await beginMutation("acknowledge-post");
+  if (guard.failure) return guard.failure;
+
+  try {
+    const post = await posts.acknowledgePost(guard.actor, parsed.data);
+    revalidateBoards();
+    revalidatePath("/my-tasks/brief");
+    return { ok: true, data: post };
+  } catch (error) {
+    return toFailure(error, { action: "acknowledgePost" });
   }
 }
 

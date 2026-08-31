@@ -198,6 +198,7 @@ model User {
   personalTasks         PersonalTask[]
   posts                 Post[]              @relation("PostAuthor")
   postDismissals        PostDismissal[]
+  postAcks              PostAck[]
   emailTokens           EmailToken[]
   createdIntegrations   OrgIntegration[]    @relation("OrgIntegrationCreatedBy")
   microsoftConnections  MicrosoftConnection[] @relation("MicrosoftConnectionConnectedBy")
@@ -503,6 +504,8 @@ model Document {
 
   versions          DocumentVersion[]
   requiredDocuments RequiredDocument[]
+  /// Board posts pointing at this document. Restrict on that side: nothing here is hard-deleted.
+  posts             Post[]
 
   @@index([projectId, deletedAt])
   @@index([mainTaskId])
@@ -654,6 +657,17 @@ model Post {
   expiresAt    DateTime?
   /// The post this one replies to. One level only.
   parentId     String?
+  /// ANNOUNCEMENTS ONLY: the audience is asked to confirm they have read it, and stays counted
+  /// until they do. False is what every post written before this existed means, so nothing changes
+  /// for any of them.
+  requiresAck  Boolean   @default(false)
+  /// ANNOUNCEMENTS ONLY: this notice also reaches the contractors of its audience. Off by default —
+  /// a contractor otherwise has no noticeboard at all.
+  includeExternals Boolean @default(false)
+  /// BOARD POSTS ONLY: one document that already exists, pointed at rather than described. The chip
+  /// resolves through the reader's own visibility, so a document somebody may not see is simply
+  /// absent from what they are sent.
+  documentId   String?
   createdAt    DateTime  @default(now())
   editedAt     DateTime?
   deletedAt    DateTime?
@@ -665,9 +679,13 @@ model Post {
   // deactivated), so a post can never be left without the person who wrote it.
   author       User         @relation("PostAuthor", fields: [authorId], references: [id])
   parent       Post?        @relation("PostReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  // Restrict, and it never bites: documents are soft-deleted in this app (deletedAt) and never
+  // hard-deleted, so a post can never be left pointing at a row that is gone.
+  document     Document?    @relation(fields: [documentId], references: [id], onDelete: Restrict)
 
   replies    Post[]          @relation("PostReplies")
   dismissals PostDismissal[]
+  acks       PostAck[]
 
   @@index([orgId, kind, createdAt(sort: Desc)])
   @@index([orgId, disciplineId])
@@ -678,6 +696,23 @@ model Post {
 /// "I have read this one" — a person hiding a noticeboard post from their own view.
 /// Personal preference, not project work: no ActivityLog row is ever written for one.
 model PostDismissal {
+  id        String   @id @default(cuid())
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@index([userId])
+}
+
+/// "I have read this and I am saying so" — one person acknowledging an announcement that asked for
+/// it. The same shape as PostDismissal, and the opposite kind of thing: a dismissal is private read
+/// state, an acknowledgement is an attestation the author relies on, so it DOES write an
+/// ActivityLog row (POST_ACKNOWLEDGED). One row per person per post, ever.
+model PostAck {
   id        String   @id @default(cuid())
   postId    String
   userId    String

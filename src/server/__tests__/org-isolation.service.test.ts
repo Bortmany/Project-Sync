@@ -58,6 +58,7 @@ import {
 } from "@/server/services/microsoft";
 import { orgDigest, personBrief, projectBrief } from "@/server/services/briefs";
 import {
+  acknowledgePost,
   createPost,
   deletePost,
   dismissAnnouncement,
@@ -899,6 +900,97 @@ describe("the noticeboard stops at the company door too", () => {
     const rivalIds = new Set([rival.admin.userId, rival.engineer.userId]);
     expect(rows.some((row) => rivalIds.has(row.userId))).toBe(false);
     expect(rows.some((row) => row.userId === acme.engineer.userId)).toBe(true);
+  });
+
+  it("never acknowledges, or counts, across the company door", async () => {
+    const theirs = await createPost(rival.admin, {
+      kind: "ANNOUNCEMENT",
+      body: "Rival Energy: please confirm you have read this.",
+      requiresAck: true,
+    });
+
+    // Another company's announcement does not exist here, so acknowledging it is a miss — an
+    // administrator is refused exactly like anybody else, and never learns the id is real.
+    await expect(acknowledgePost(acme.admin, { id: theirs.id })).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+    expect(await prisma.postAck.count()).toBe(0);
+
+    // And the count the author sees is their own company's people, nobody else's.
+    await acknowledgePost(rival.engineer, { id: theirs.id });
+    const forRival = (await listAnnouncementsForUser(rival.admin))[0];
+    expect(forRival?.ackProgress?.ackCount).toBe(1);
+    expect(forRival?.ackProgress?.audienceCount).toBe(
+      await prisma.user.count({ where: { orgId: rival.admin.orgId, isActive: true, role: { not: "EXTERNAL" } } }),
+    );
+  });
+
+  it("never attaches, or resolves, another company's document to a post", async () => {
+    // Rival Energy's document does not exist for Acme, so attaching it is a miss — and the refusal
+    // is "not found", so the id is never confirmed as real.
+    await expect(
+      createPost(acme.admin, {
+        kind: "BOARD",
+        projectId: acme.projectId,
+        body: "Pointing at the rival's file.",
+        documentId: rival.documentId,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    // Even a row written straight into the database with the wrong company's document on it shows
+    // no chip: the chip is resolved through the READER's own visibility, not the foreign key.
+    const smuggled = await createPost(acme.admin, {
+      kind: "BOARD",
+      projectId: acme.projectId,
+      body: "Nothing to see.",
+    });
+    await prisma.post.update({
+      where: { id: smuggled.id },
+      data: { documentId: rival.documentId },
+    });
+
+    const board = await listBoard(acme.admin, {
+      kind: "PROJECT",
+      projectId: acme.projectId,
+      disciplineId: null,
+    });
+    expect(board).toHaveLength(1);
+    expect(board[0]?.attachment).toBeNull();
+  });
+
+  it("keeps an included announcement's contractors inside the company", async () => {
+    // One contractor in each company, each with live work on their own company's project.
+    const contractors = await Promise.all(
+      [acme, rival].map(async (company) => {
+        const user = await makeUser({
+          name: "Contractor",
+          role: "EXTERNAL",
+          orgId: company.fixture.orgId,
+        });
+        await prisma.disciplineTask.update({
+          where: { id: company.disciplineTaskId },
+          data: { assigneeId: user.id },
+        });
+        return { orgId: company.fixture.orgId, userId: user.id };
+      }),
+    );
+    const [acmeContractor, rivalContractor] = contractors;
+
+    await createPost(acme.admin, {
+      kind: "ANNOUNCEMENT",
+      body: "Acme news, contractors included.",
+      includeExternals: true,
+    });
+
+    const told = (
+      await prisma.notification.findMany({ where: { type: "ANNOUNCEMENT" }, select: { userId: true } })
+    ).map((row) => row.userId);
+    expect(told).toContain(acmeContractor.userId);
+    expect(told).not.toContain(rivalContractor.userId);
+
+    // And the other company's contractor is told nothing on their brief either.
+    const theirs = await personBrief(await actorForUser(rivalContractor.userId));
+    expect(theirs.announcements.total).toBe(0);
   });
 
   it("changes one company's broadcast setting and nobody else's", async () => {

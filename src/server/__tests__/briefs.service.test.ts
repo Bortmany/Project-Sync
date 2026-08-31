@@ -20,12 +20,15 @@ import {
   updateDisciplineTaskStatus,
 } from "@/server/services/tasks";
 import { createComment } from "@/server/services/comments";
+import { acknowledgePost, createPost } from "@/server/services/posts";
 import { saveIntegration, setEventToggles, setIntegrationEnabled } from "@/server/services/integrations";
 import { DIGEST_HOUR_UTC, digestBoundary, postDailyDigests } from "@/server/sweep";
+import { actorForUser } from "@/server/actor";
 import {
   inThirtyDays,
   makeOrg,
   makeProjectFixture,
+  makeUser,
   resetDatabase,
   subtaskIdsByTitle,
   type Fixture,
@@ -307,6 +310,88 @@ describe("Your day — the personal brief", () => {
     expect(brief.overdue.total).toBe(0);
     expect(brief.newlyUnblocked.total).toBe(0);
     expect(brief.awaitingReview.total).toBe(0);
+  });
+
+  it("lists the announcements still waiting for this person's acknowledgement", async () => {
+    const asking = await createPost(fixture.adminActor, {
+      kind: "ANNOUNCEMENT",
+      title: "Site access closures",
+      body: "Gate 3 is shut this weekend.",
+      requiresAck: true,
+    });
+    await createPost(fixture.adminActor, {
+      kind: "ANNOUNCEMENT",
+      title: "Canteen hours",
+      body: "Nothing to confirm here.",
+    });
+
+    const before = await personBrief(fixture.engineerActor);
+    expect(before.announcements.total).toBe(2);
+    expect(before.awaitingAcknowledgement.total).toBe(1);
+    expect(before.awaitingAcknowledgement.items[0].title).toBe("Site access closures");
+    expect(before.awaitingAcknowledgement.items[0].linkUrl).toBe("/messages?tab=everyone");
+    expect(before.awaitingAcknowledgement.items[0].projectCode).toBe("Everyone");
+
+    // Acknowledging is the only thing that takes it off the list — dismissing cannot, and is
+    // refused until it has been acknowledged anyway.
+    await acknowledgePost(fixture.engineerActor, { id: asking.id });
+    const after = await personBrief(fixture.engineerActor);
+    expect(after.awaitingAcknowledgement.total).toBe(0);
+    expect(after.announcements.total).toBe(2);
+  });
+
+  it("caps that list too, and still says how many there are", async () => {
+    for (let index = 0; index < SECTION_LIMIT + 2; index += 1) {
+      await createPost(fixture.adminActor, {
+        kind: "ANNOUNCEMENT",
+        title: `Please confirm ${index}`,
+        body: "Something to acknowledge.",
+        requiresAck: true,
+      });
+    }
+
+    const brief = await personBrief(fixture.engineerActor);
+    expect(brief.awaitingAcknowledgement.items).toHaveLength(SECTION_LIMIT);
+    expect(brief.awaitingAcknowledgement.total).toBe(SECTION_LIMIT + 2);
+  });
+
+  it("carries a contractor's included notices, and caps them the same way", async () => {
+    const contractor = await makeUser({
+      name: "Idris Contractor",
+      role: "EXTERNAL",
+      orgId: fixture.orgId,
+    });
+    const parent = await makeMainTask("Contractor work", ["Weld inspection"]);
+    const taskId = (await subtaskIdsByTitle(parent.id)).get("Weld inspection") as string;
+    await prisma.disciplineTask.update({
+      where: { id: taskId },
+      data: { assigneeId: contractor.id },
+    });
+    const actor = await actorForUser(contractor.id);
+
+    for (let index = 0; index < SECTION_LIMIT + 2; index += 1) {
+      await createPost(fixture.adminActor, {
+        kind: "ANNOUNCEMENT",
+        title: `Included notice ${index}`,
+        body: "Something a contractor may read.",
+        includeExternals: true,
+      });
+    }
+    // One that nobody included them in: it must not appear, capped list or not.
+    await createPost(fixture.adminActor, {
+      kind: "ANNOUNCEMENT",
+      title: "Internal only",
+      body: "Not for contractors.",
+    });
+
+    const brief = await personBrief(actor);
+    expect(brief.announcements.items).toHaveLength(SECTION_LIMIT);
+    expect(brief.announcements.total).toBe(SECTION_LIMIT + 2);
+    expect(brief.announcements.items.map((item) => item.title)).not.toContain("Internal only");
+    // Every line carries the notice itself and points nowhere, and nothing asks them to confirm.
+    expect(brief.announcements.items.every((item) => item.linkUrl === "")).toBe(true);
+    expect(brief.announcements.items[0].body).toBe("Something a contractor may read.");
+    expect(brief.awaitingAcknowledgement.total).toBe(0);
   });
 });
 

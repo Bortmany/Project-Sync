@@ -13,6 +13,7 @@ const TABLES = [
   "ActivityLog",
   "Notification",
   "PostDismissal",
+  "PostAck",
   "Post",
   "Favorite",
   "PersonalTask",

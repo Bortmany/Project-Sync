@@ -23,6 +23,7 @@ import type {
   BriefOverdueByDisciplineDTO,
   BriefSectionDTO,
   BriefDTO,
+  PostDTO,
   ProjectBriefDTO,
 } from "@/lib/zod-schemas";
 import {
@@ -34,7 +35,7 @@ import { NotFoundError } from "@/server/errors";
 import { checkDto } from "@/server/serialize";
 import { ACTIVITY } from "@/server/services/activity";
 import { phaseStatesFor } from "@/server/services/phases";
-import { listAnnouncementsForUser } from "@/server/services/posts";
+import { listAnnouncementsForUser, listNoticesForExternal } from "@/server/services/posts";
 import { assertCanViewProject, visibleProjects } from "@/server/services/projects";
 import type { ChatMessage } from "@/server/services/webhooks";
 
@@ -193,9 +194,10 @@ export function gateOpenMoments(
 /* ------------------------------------------------------------------ */
 
 /**
- * One person's day, computed. Five sections, each with its own window stated on the page:
- * due today, overdue, newly unblocked in the last 24 hours, mentions in the last 24 hours, and the
- * main tasks they own that are waiting for their review.
+ * One person's day, computed. Each section says its own window on the page: due today, overdue,
+ * newly unblocked in the last 24 hours, mentions in the last 24 hours, the main tasks they own that
+ * are waiting for their review, the announcements running for them, and the ones still waiting for
+ * their acknowledgement.
  *
  * Everything is scoped twice over: to the projects this person may see, and to rows that are theirs
  * (assigned to them, owned by them, or addressed to them).
@@ -206,6 +208,9 @@ export async function personBrief(actor: ActorContext, now: Date = new Date()): 
   const projectIds = [...projectCodes.keys()];
 
   if (projectIds.length === 0) {
+    // Somebody on no project at all still hears the company's news, so these two sections are
+    // filled in on this path too rather than left empty with the task ones.
+    const noticeboard = await noticeboardSections(actor, now);
     return checkDto(
       BriefSchema,
       {
@@ -216,9 +221,8 @@ export async function personBrief(actor: ActorContext, now: Date = new Date()): 
         newlyUnblocked: emptySection(),
         mentions: await mentionsSection(actor, since),
         awaitingReview: emptySection(),
-        // Somebody on no project at all still hears the company's news, so this section is filled
-        // in on this path too rather than left empty with the task ones.
-        announcements: await announcementsSection(actor, now),
+        announcements: noticeboard.announcements,
+        awaitingAcknowledgement: noticeboard.awaitingAcknowledgement,
       },
       "BriefDTO",
     );
@@ -264,6 +268,7 @@ export async function personBrief(actor: ActorContext, now: Date = new Date()): 
     ]);
 
   const codeOf = (projectId: string): string => projectCodes.get(projectId) ?? "";
+  const noticeboard = await noticeboardSections(actor, now);
 
   const dto: BriefDTO = {
     generatedAt: now,
@@ -277,6 +282,7 @@ export async function personBrief(actor: ActorContext, now: Date = new Date()): 
         disciplineCode: task.discipline.code,
         deadline: task.deadline,
         daysOverdue: null,
+        body: null,
         note: null,
         at: null,
       })),
@@ -291,6 +297,7 @@ export async function personBrief(actor: ActorContext, now: Date = new Date()): 
         disciplineCode: task.discipline.code,
         deadline: task.deadline,
         daysOverdue: daysOver(task.deadline, now),
+        body: null,
         note: null,
         at: null,
       })),
@@ -307,43 +314,91 @@ export async function personBrief(actor: ActorContext, now: Date = new Date()): 
         disciplineCode: null,
         deadline: task.deadline,
         daysOverdue: null,
+        body: null,
         note: `${task.progressPct}% complete`,
         at: null,
       })),
       total: reviewTotal,
     },
-    announcements: await announcementsSection(actor, now),
+    announcements: noticeboard.announcements,
+    awaitingAcknowledgement: noticeboard.awaitingAcknowledgement,
   };
 
   return checkDto(BriefSchema, dto, "BriefDTO");
 }
 
 /**
- * The announcements still running for this person's audiences. Read through the noticeboard service
- * so the audience rule is written down once: company-wide, their projects, their department(s).
+ * The two noticeboard sections, from ONE read: everything still running for this person's
+ * audiences, and the subset of it still waiting for their acknowledgement. Read through the
+ * noticeboard service so the audience rule is written down once: company-wide, their projects,
+ * their department(s).
  *
  * A brief line has no project of its own here, so `projectCode` carries the audience label — the
  * same chip the noticeboard shows — and `deadline` carries the day it stops showing. Dismissing one
- * on the dashboard does not hide it here: this is what is running, not what is unread. A contractor
- * has no noticeboard at all, so the section is simply empty for them rather than an error.
+ * on the dashboard does not hide it here: this is what is running, not what is unread.
+ *
+ * A contractor takes the other road: they have no noticeboard, so their first section is the
+ * announcements an author explicitly INCLUDED them in — read-only, on this page and nowhere else —
+ * and their second is always empty, because they can acknowledge nothing.
  */
-async function announcementsSection(actor: ActorContext, now: Date): Promise<BriefSectionDTO> {
-  if (isExternal(actor)) return emptySection();
+async function noticeboardSections(
+  actor: ActorContext,
+  now: Date,
+): Promise<{ announcements: BriefSectionDTO; awaitingAcknowledgement: BriefSectionDTO }> {
+  const toItem = (post: PostDTO): BriefItemDTO => ({
+    id: post.id,
+    title: post.title ?? post.body.slice(0, 120),
+    linkUrl: `/messages?tab=${post.audience.key}`,
+    projectCode: post.audience.label,
+    disciplineCode: null,
+    deadline: post.expiresAt,
+    daysOverdue: null,
+    body: null,
+    note: `Posted by ${post.authorName}`,
+    at: post.createdAt,
+  });
+
+  // A contractor's half of this: the announcements somebody explicitly included them in, read-only.
+  // The line carries the whole notice — title, body, who posted it, when — because there is no page
+  // for it to open: /messages is not found for them, so `linkUrl` is deliberately empty and the
+  // screen draws the title as plain text rather than a link into a wall.
+  //
+  // They can acknowledge nothing, so the second section stays empty for them exactly as it always
+  // has, and the flag itself is computed here at read time — nothing about it is stored.
+  if (isExternal(actor)) {
+    const notices = await listNoticesForExternal(actor, now);
+    return {
+      announcements: {
+        items: notices.slice(0, SECTION_LIMIT).map((post) => ({
+          ...toItem(post),
+          linkUrl: "",
+          body: post.body,
+        })),
+        total: notices.length,
+      },
+      awaitingAcknowledgement: emptySection(),
+    };
+  }
 
   const announcements = await listAnnouncementsForUser(actor, now);
+
+  // The ones still waiting on THIS person: they asked to be acknowledged and this person has not.
+  // Dismissing the dashboard card cannot take a notice off this list — that is the point of it.
+  const waiting = announcements.filter((post) => post.requiresAck && !post.acked);
+
   return {
-    items: announcements.slice(0, SECTION_LIMIT).map((post) => ({
-      id: post.id,
-      title: post.title ?? post.body.slice(0, 120),
-      linkUrl: `/messages?tab=${post.audience.key}`,
-      projectCode: post.audience.label,
-      disciplineCode: null,
-      deadline: post.expiresAt,
-      daysOverdue: null,
-      note: `Posted by ${post.authorName}`,
-      at: post.createdAt,
-    })),
-    total: announcements.length,
+    announcements: {
+      items: announcements.slice(0, SECTION_LIMIT).map(toItem),
+      total: announcements.length,
+    },
+    awaitingAcknowledgement: {
+      items: waiting.slice(0, SECTION_LIMIT).map((post) => ({
+        ...toItem(post),
+        // The expiry is beside the point on this list: what matters is that it is still open.
+        deadline: null,
+      })),
+      total: waiting.length,
+    },
   };
 }
 
@@ -387,6 +442,7 @@ async function mentionsSection(actor: ActorContext, since: Date): Promise<BriefS
       disciplineCode: null,
       deadline: null,
       daysOverdue: null,
+      body: null,
       note: row.actor?.name ? `From ${row.actor.name}` : null,
       at: row.createdAt,
     })),
@@ -536,6 +592,7 @@ async function newlyUnblockedSection(
       disciplineCode: task.discipline.code,
       deadline: task.deadline,
       daysOverdue: isOverdue(task.deadline, task.status, now) ? daysOver(task.deadline, now) : null,
+      body: null,
       note: gateWins
         ? `The "${phaseState?.name ?? "next"}" gate opened`
         : `Waiting on "${lastTitle}", which is now complete`,
@@ -732,6 +789,7 @@ export async function projectBrief(
     daysOverdue: isOverdue(task.deadline, effectiveStatus(task.status, task.statusOverride), now)
       ? daysOver(task.deadline, now)
       : null,
+    body: null,
     note: `${task.progressPct}% complete`,
     at: null,
   });
