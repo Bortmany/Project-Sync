@@ -81,15 +81,19 @@ export async function getDashboardForActor(actor: ActorContext): Promise<Dashboa
     }),
     // Counted in the database, not in Node: the per-discipline bars only need totals, and pulling
     // every discipline task of every project into memory to count them would grow without limit.
-    prisma.disciplineTask.groupBy({
-      by: ["disciplineId", "status"],
-      where: {
-        ...notDeleted,
-        ...ownWork,
-        mainTask: { projectId: { in: projectIds }, ...notDeleted },
-      },
-      _count: { _all: true },
-    }),
+    // A contractor gets no bars at all: "Discipline progress" is a department's standing, which is
+    // a summary of work they may not see, so their variant carries no discipline aggregate.
+    external
+      ? []
+      : prisma.disciplineTask.groupBy({
+          by: ["disciplineId", "status"],
+          where: {
+            ...notDeleted,
+            ...ownWork,
+            mainTask: { projectId: { in: projectIds }, ...notDeleted },
+          },
+          _count: { _all: true },
+        }),
     external ? [] : recentActivityForProjects(projectIds, 15),
     // "Needs your sign-off" — the same rule that will judge the confirmation decides the queue.
     listAwaitingMySignoff(actor),

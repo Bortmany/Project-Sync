@@ -46,7 +46,21 @@ import {
   Tabs,
   Textarea,
 } from "@/components/ui";
+import {
+  completeButtonFor,
+  statusChoicesFor,
+  submitsForSignoff,
+  type TaskActionContext,
+} from "@/lib/task-actions";
 import type { RequiredDocumentDTO, TaskStatusName } from "@/lib/zod-schemas";
+
+const STATUS_LABEL: Record<TaskStatusName, string> = {
+  NOT_STARTED: "Not started",
+  IN_PROGRESS: "In progress",
+  BLOCKED: "Blocked",
+  AWAITING_REVIEW: "Awaiting review",
+  COMPLETED: "Completed",
+};
 
 /**
  * The one-line count on the "What's required" card. Mandatory documents lead, because they are what
@@ -139,6 +153,20 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
     userId: member.userId,
     userName: member.userName,
   }));
+
+  // The action bar's two halves, decided together so they can never say different things: a
+  // contractor on a sign-off project submits their work instead of completing it, and the "Awaiting
+  // review" status is not theirs to set by hand. Default to asking for a sign-off while the project
+  // is still loading — the safer of the two, and the server decides in the end anyway.
+  const actionContext: TaskActionContext = {
+    isExternal: isExternalUser(me.data),
+    signoffRequired: project.data?.externalSignoffRequired ?? true,
+    status: data.status,
+    canComplete: data.canComplete,
+  };
+  const statusChoices = statusChoicesFor(actionContext);
+  const completeButton = completeButtonFor(actionContext);
+  const handingIn = submitsForSignoff(actionContext);
 
   function setStatus(status: TaskStatusName, note?: string) {
     run(() => updateDisciplineTaskStatus({ id: data.id, status, note }), {
@@ -236,13 +264,11 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
                       setStatus(next);
                     }}
                   >
-                    <option value="NOT_STARTED">Not started</option>
-                    <option value="IN_PROGRESS">In progress</option>
-                    <option value="BLOCKED">Blocked</option>
-                    <option value="AWAITING_REVIEW">Awaiting review</option>
-                    {data.status === "COMPLETED" ? (
-                      <option value="COMPLETED">Completed</option>
-                    ) : null}
+                    {statusChoices.map((status) => (
+                      <option key={status} value={status}>
+                        {STATUS_LABEL[status]}
+                      </option>
+                    ))}
                   </Select>
                 </div>
               </>
@@ -252,16 +278,18 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
               <Button
                 className="min-h-11 w-full sm:ml-auto sm:w-auto"
                 loading={pending}
-                disabled={!data.canComplete || pending}
+                disabled={completeButton.disabled || pending}
                 onClick={() =>
                   run(() => completeDisciplineTask({ id: data.id }), {
-                    success: "Marked complete.",
-                    failure: "Couldn't mark this complete. Try again.",
+                    success: handingIn ? "Sent for sign-off." : "Marked complete.",
+                    failure: handingIn
+                      ? "Couldn't send this for sign-off. Try again."
+                      : "Couldn't mark this complete. Try again.",
                     onSuccess: refresh,
                   })
                 }
               >
-                Mark complete
+                {completeButton.label}
               </Button>
             ) : null}
 
@@ -280,7 +308,14 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
           {canControl && data.status !== "COMPLETED" && !data.canComplete ? (
             <p className="text-sm text-[var(--brand-text)]">
               {/* Each blocker is already a full sentence with its own full stop — don't add another. */}
-              You can&apos;t mark this complete yet: {data.blockers.join(" ")}
+              {handingIn ? (
+                <>
+                  You can still send this for sign-off. The person reviewing it will need:{" "}
+                  {data.blockers.join(" ")}
+                </>
+              ) : (
+                <>You can&apos;t mark this complete yet: {data.blockers.join(" ")}</>
+              )}
             </p>
           ) : null}
 

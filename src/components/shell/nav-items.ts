@@ -56,23 +56,38 @@ const ADMIN_NAV: NavItem[] = [
 ];
 
 /**
- * A contractor's menu is trimmed to the four things they actually have: their dashboard, the
- * projects they hold work on, their own tasks and their notifications. The people directory, the
+ * A contractor's menu is trimmed to the three things they actually have: their own tasks, the
+ * projects they hold work on and their notifications. My tasks leads, because it is their home —
+ * the dashboard is a company overview and they hold no company view. The people directory, the
  * project team, the noticeboard and the whole Admin section are not rows they are given and not
  * pages they can read — the server answers "not found" either way.
  */
-const EXTERNAL_NAV: NavItem[] = MAIN_NAV.filter((item) => item.href !== "/messages").map((item) =>
-  item.href === "/my-tasks"
-    ? {
-        ...item,
-        children: (item.children ?? []).filter((child) => child.href !== "/my-tasks/personal"),
-      }
-    : item,
-);
+const EXTERNAL_ORDER = ["/my-tasks", "/projects", "/notifications"];
+
+const EXTERNAL_NAV: NavItem[] = EXTERNAL_ORDER.flatMap((href) => {
+  const item = MAIN_NAV.find((row) => row.href === href);
+  if (!item) return [];
+  if (item.href !== "/my-tasks") return [item];
+  return [
+    {
+      ...item,
+      children: (item.children ?? []).filter((child) => child.href !== "/my-tasks/personal"),
+    },
+  ];
+});
 
 export function navItemsFor(role: RoleName): NavItem[] {
   if (role === "EXTERNAL") return EXTERNAL_NAV;
   return role === "ADMIN" ? [...MAIN_NAV, ...ADMIN_NAV] : MAIN_NAV;
+}
+
+/**
+ * Where signing in lands, and where /dashboard sends somebody who has no dashboard: the first row
+ * of that person's own menu. A contractor's home is My tasks — the same page their sidebar leads
+ * with — so the two can never disagree.
+ */
+export function homePathFor(role: RoleName): string {
+  return navItemsFor(role)[0]?.href ?? "/dashboard";
 }
 
 /**

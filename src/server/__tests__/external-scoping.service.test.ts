@@ -579,6 +579,16 @@ describe("a contractor's documents, search, directory and briefs are all narrowe
     expect(dashboard.awaitingMySignoff).toEqual([]);
   });
 
+  it("gets no discipline aggregate at all — a department's standing is not theirs to read", async () => {
+    // "Discipline progress" summarises a whole department's work, most of which a contractor may
+    // not see. Their variant carries no such bar; a colleague on the same project still gets one.
+    const dashboard = await getDashboardForActor(contractor);
+    expect(dashboard.disciplineProgress).toEqual([]);
+
+    const colleague = await getDashboardForActor(fixture.engineerActor);
+    expect(colleague.disciplineProgress.length).toBeGreaterThan(0);
+  });
+
   it("is left out of a project-wide announcement about work they cannot see", async () => {
     // An override on the INTERNAL main task notifies "the whole project". A contractor is not part
     // of that whole: the message would name work they may not see.
@@ -621,6 +631,54 @@ describe("the sign-off: a contractor hands work in, somebody here signs it off",
   it("does the same when they move the status straight to COMPLETED", async () => {
     const task = await updateDisciplineTaskStatus(contractor, { id: myTaskId, status: "COMPLETED" });
     expect(task.status).toBe("AWAITING_REVIEW");
+  });
+
+  it("treats a straight move to AWAITING_REVIEW as a submission, notification and all", async () => {
+    // The API path to the same status must not be a quieter one: a contractor moving their own work
+    // to "Awaiting review" is handing it in, so it earns the same audit row and the same message to
+    // the people who sign it off.
+    const task = await updateDisciplineTaskStatus(contractor, {
+      id: myTaskId,
+      status: "AWAITING_REVIEW",
+    });
+    expect(task.status).toBe("AWAITING_REVIEW");
+
+    const activity = await listActivity(contractor, { disciplineTaskId: myTaskId });
+    expect(activity.some((row) => row.action === "SUBMITTED_FOR_REVIEW")).toBe(true);
+    expect(activity.some((row) => row.action === "STATUS_CHANGED")).toBe(false);
+
+    const told = await prisma.notification.findMany({
+      where: { userId: fixture.pmActor.userId, linkUrl: `/discipline-tasks/${myTaskId}` },
+    });
+    expect(told.some((row) => row.title === "Work is waiting for your sign-off")).toBe(true);
+
+    // And it shows up where a submission shows up.
+    const queue = await listAwaitingMySignoff(fixture.pmActor);
+    expect(queue.map((item) => item.id)).toEqual([myTaskId]);
+  });
+
+  it("leaves a colleague's move to AWAITING_REVIEW exactly as it was", async () => {
+    const task = await updateDisciplineTaskStatus(fixture.engineerActor, {
+      id: theirTaskId,
+      status: "AWAITING_REVIEW",
+    });
+    expect(task.status).toBe("AWAITING_REVIEW");
+
+    const activity = await listActivity(fixture.pmActor, { disciplineTaskId: theirTaskId });
+    expect(activity.some((row) => row.action === "STATUS_CHANGED")).toBe(true);
+    expect(activity.some((row) => row.action === "SUBMITTED_FOR_REVIEW")).toBe(false);
+  });
+
+  it("with the sign-off switched off, a contractor's move to AWAITING_REVIEW is an ordinary one", async () => {
+    await setExternalSignoffRequired(fixture.pmActor, {
+      projectId: fixture.projectId,
+      required: false,
+    });
+
+    await updateDisciplineTaskStatus(contractor, { id: myTaskId, status: "AWAITING_REVIEW" });
+    const activity = await listActivity(contractor, { disciplineTaskId: myTaskId });
+    expect(activity.some((row) => row.action === "STATUS_CHANGED")).toBe(true);
+    expect(activity.some((row) => row.action === "SUBMITTED_FOR_REVIEW")).toBe(false);
   });
 
   it("still runs the real completion gate when the lead confirms it", async () => {
@@ -735,6 +793,29 @@ describe("a contractor's seat cannot be widened by a project role", () => {
         projectRole: "ENGINEER",
       }),
     ).rejects.toBeInstanceOf(ServiceError);
+  });
+
+  it("adds them the ordinary way, as a contractor in their own discipline", async () => {
+    // The normal path the Team tab walks: pick the person, the form locks the role to External
+    // contractor and the discipline to the one on their account, and the service accepts it. This
+    // is the pairing the screen must offer — anything else is refused, which is the test above.
+    const member = await upsertMember(fixture.adminActor, {
+      projectId: otherProjectId,
+      userId: contractor.userId,
+      projectRole: "EXTERNAL",
+      disciplineId: fixture.disciplineId,
+    });
+
+    expect(member.projectRole).toBe("EXTERNAL");
+    expect(member.disciplineId).toBe(fixture.disciplineId);
+    expect(member.userId).toBe(contractor.userId);
+
+    // And the row is there for the discipline-task assignee list to find, under that discipline.
+    const project = await getProjectForActor(fixture.adminActor, otherProjectId);
+    const inDiscipline = project.members.filter(
+      (row) => row.disciplineId === fixture.disciplineId,
+    );
+    expect(inDiscipline.some((row) => row.userId === contractor.userId)).toBe(true);
   });
 
   it("refuses to give a colleague the contractor's seat", async () => {

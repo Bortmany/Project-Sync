@@ -4,7 +4,9 @@
 
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { homePathFor } from "@/components/shell/nav-items";
 import { Button, Field, Input } from "@/components/ui";
+import type { RoleName } from "@/lib/zod-schemas";
 
 export function LoginForm() {
   const router = useRouter();
@@ -23,12 +25,17 @@ export function LoginForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
-      const result = (await response.json()) as { ok: boolean; error?: string };
+      const result = (await response.json()) as {
+        ok: boolean;
+        error?: string;
+        data?: { role?: RoleName };
+      };
       if (!result.ok) {
         setError(result.error ?? "Something went wrong. Please try again.");
         return;
       }
-      router.replace("/dashboard");
+      // A contractor's home is My tasks, not the dashboard — the same page their sidebar leads with.
+      router.replace(result.data?.role ? homePathFor(result.data.role) : "/dashboard");
       router.refresh();
     } catch {
       setError("We could not reach the server. Check your connection and try again.");

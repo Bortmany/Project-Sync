@@ -4,6 +4,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
+import { homePathFor } from "@/components/shell/nav-items";
 import { AuthLegalLinks, AuthSplit } from "../auth-split";
 import { LoginForm } from "./login-form";
 
@@ -11,7 +12,7 @@ export const metadata = { title: "Sign in — Tielora" };
 
 export default async function LoginPage() {
   const user = await getSessionUser();
-  if (user) redirect("/dashboard");
+  if (user) redirect(homePathFor(user.role));
 
   return (
     <AuthSplit>

@@ -801,6 +801,18 @@ export async function updateDisciplineTaskStatus(
     return completeDisciplineTask(actor, { id: existing.id }, input.note);
   }
 
+  // THE SIGN-OFF, by the other door. A contractor moving their own work straight to "Awaiting
+  // review" IS handing it in, so it is treated exactly as pressing Submit for sign-off would be:
+  // the same SUBMITTED_FOR_REVIEW audit row and the same notification to the lead and the
+  // managers. Without this, the API path could reach the same status and tell nobody.
+  if (
+    input.status === "AWAITING_REVIEW" &&
+    isExternal(actor) &&
+    (await externalSignoffRequired(projectId))
+  ) {
+    return submitForReview(actor, existing, projectId, input.note);
+  }
+
   // The dependency rule: nothing starts while the work it waits on is still open.
   const startingWork = existing.status === "NOT_STARTED" || existing.status === "BLOCKED";
   if (startingWork && input.status !== "NOT_STARTED" && input.status !== "BLOCKED") {

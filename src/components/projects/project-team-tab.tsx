@@ -30,10 +30,18 @@ const ROLE_LABEL: Record<RoleName, string> = {
   PROJECT_MANAGER: "Project manager",
   DISCIPLINE_LEAD: "Discipline lead",
   ENGINEER: "Engineer",
-  EXTERNAL: "External",
+  EXTERNAL: "External contractor",
 };
 
 const PROJECT_ROLES: RoleName[] = ["PROJECT_MANAGER", "DISCIPLINE_LEAD", "ENGINEER"];
+// A contractor's only seat, and nobody else's: the server refuses every other pairing
+// (assertProjectRoleMatchesPerson in src/server/services/projects.ts), so the form never offers one.
+const CONTRACTOR_ROLES: RoleName[] = ["EXTERNAL"];
+
+/** The project roles this person may hold, decided by who they are rather than by the form. */
+function rolesFor(role: RoleName | undefined): RoleName[] {
+  return role === "EXTERNAL" ? CONTRACTOR_ROLES : PROJECT_ROLES;
+}
 
 export function ProjectTeamTab({
   project,
@@ -68,6 +76,24 @@ export function ProjectTeamTab({
   const available = (disciplines.data ?? []).filter(
     (discipline) => !project.disciplines.some((item) => item.disciplineId === discipline.id),
   );
+
+  // Who the picked person is decides the rest of the form. A contractor joins as a contractor, in
+  // the discipline on their account — the server accepts nothing else, so nothing else is offered.
+  const pickedIsContractor = picked?.role === "EXTERNAL";
+  const pickedRole: RoleName = pickedIsContractor ? "EXTERNAL" : newRole;
+  const contractorDiscipline = pickedIsContractor
+    ? (disciplines.data ?? []).find((discipline) => discipline.id === picked?.disciplineId)
+    : undefined;
+  const contractorDisciplineOnProject =
+    contractorDiscipline !== undefined &&
+    project.disciplines.some((row) => row.disciplineId === contractorDiscipline.id);
+  const contractorProblem = !pickedIsContractor
+    ? null
+    : !contractorDiscipline
+      ? "This contractor has no discipline on their account yet. An administrator sets one before they can join a project."
+      : !contractorDisciplineOnProject
+        ? `${contractorDiscipline.name} isn't on this project yet. Add the discipline first, then add this contractor.`
+        : null;
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
@@ -202,7 +228,8 @@ export function ProjectTeamTab({
                       aria-label={`Project role for ${member.userName}`}
                       className="w-44"
                       value={member.projectRole}
-                      disabled={pending}
+                      // A contractor's seat cannot be changed into a colleague's, here or anywhere.
+                      disabled={pending || member.projectRole === "EXTERNAL"}
                       onChange={(event) =>
                         run(
                           () =>
@@ -220,7 +247,7 @@ export function ProjectTeamTab({
                         )
                       }
                     >
-                      {PROJECT_ROLES.map((role) => (
+                      {rolesFor(member.projectRole).map((role) => (
                         <option key={role} value={role}>
                           {ROLE_LABEL[role]}
                         </option>
@@ -337,7 +364,9 @@ export function ProjectTeamTab({
           <Button
             loading={pending}
             disabled={
-              !picked || (newRole !== "PROJECT_MANAGER" && newDiscipline.length === 0)
+              !picked ||
+              contractorProblem !== null ||
+              (pickedRole !== "PROJECT_MANAGER" && newDiscipline.length === 0)
             }
             onClick={() =>
               run(
@@ -345,8 +374,8 @@ export function ProjectTeamTab({
                   upsertMember({
                     projectId: project.id,
                     userId: picked?.id ?? "",
-                    projectRole: newRole,
-                    disciplineId: newRole === "PROJECT_MANAGER" ? null : newDiscipline || null,
+                    projectRole: pickedRole,
+                    disciplineId: pickedRole === "PROJECT_MANAGER" ? null : newDiscipline || null,
                   }),
                 {
                   success: `${picked?.name ?? "Member"} added to this project.`,
@@ -367,13 +396,23 @@ export function ProjectTeamTab({
         }
       >
         <div className="space-y-3">
-          <UserPicker value={picked} onChange={setPicked} label="Person" />
+          <UserPicker
+            value={picked}
+            label="Person"
+            onChange={(user) => {
+              setPicked(user);
+              // Picking a contractor sets both fields for them; picking a colleague clears them.
+              setNewRole(user?.role === "EXTERNAL" ? "EXTERNAL" : "ENGINEER");
+              setNewDiscipline(user?.role === "EXTERNAL" ? (user.disciplineId ?? "") : "");
+            }}
+          />
           <Select
             aria-label="Project role"
-            value={newRole}
+            value={pickedRole}
+            disabled={pickedIsContractor}
             onChange={(event) => setNewRole(event.target.value as RoleName)}
           >
-            {PROJECT_ROLES.map((role) => (
+            {rolesFor(picked?.role).map((role) => (
               <option key={role} value={role}>
                 {ROLE_LABEL[role]}
               </option>
@@ -382,16 +421,29 @@ export function ProjectTeamTab({
           <Select
             aria-label="Discipline"
             value={newDiscipline}
-            disabled={newRole === "PROJECT_MANAGER"}
+            disabled={pickedIsContractor || pickedRole === "PROJECT_MANAGER"}
             onChange={(event) => setNewDiscipline(event.target.value)}
           >
             <option value="">Discipline…</option>
+            {contractorDiscipline && !contractorDisciplineOnProject ? (
+              <option value={contractorDiscipline.id}>{contractorDiscipline.name}</option>
+            ) : null}
             {project.disciplines.map((discipline) => (
               <option key={discipline.id} value={discipline.disciplineId}>
                 {discipline.name}
               </option>
             ))}
           </Select>
+
+          {pickedIsContractor ? (
+            <p className="text-xs text-[var(--brand-text)]">
+              {picked?.name} works for another company. Contractors join as external contractors, in
+              their own discipline, and only see the tasks assigned to them.
+            </p>
+          ) : null}
+          {contractorProblem ? (
+            <p className="text-xs text-[var(--status-blocked)]">{contractorProblem}</p>
+          ) : null}
         </div>
       </Modal>
 

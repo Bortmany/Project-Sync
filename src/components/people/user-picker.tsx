@@ -5,8 +5,18 @@
 import { useEffect, useRef, useState } from "react";
 import { useUsers } from "@/components/hooks/use-api";
 import { Avatar, Input, Skeleton } from "@/components/ui";
+import type { RoleName } from "@/lib/zod-schemas";
 
-export type PickedUser = { id: string; name: string; email: string };
+// The role and discipline travel with the person because who they ARE decides what they may be
+// added as: an external contractor joins a project as a contractor, in their own discipline, and
+// nothing else (upsertMember refuses anything else, so the form must not offer it).
+export type PickedUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: RoleName;
+  disciplineId: string | null;
+};
 
 export function UserPicker({
   value,
@@ -86,7 +96,13 @@ export function UserPicker({
                 key={person.id}
                 type="button"
                 onClick={() => {
-                  onChange({ id: person.id, name: person.name, email: person.email });
+                  onChange({
+                    id: person.id,
+                    name: person.name,
+                    email: person.email,
+                    role: person.role,
+                    disciplineId: person.disciplineId,
+                  });
                   setQuery("");
                   setOpen(false);
                 }}
