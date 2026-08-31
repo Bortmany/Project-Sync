@@ -114,6 +114,24 @@ const COMMENTS: SeedComment[] = [
     mainTask: "Prepare Package A for Final Approval",
     body: "Package A is on track apart from the inspection certificates. Everything else should be with the client by the first week of November.",
   },
+  // The contractors. A contractor may only comment on work assigned to them, so these two threads
+  // are also a live check that the reassignments above really happened.
+  {
+    author: "rashid.albalushi@tielora.example",
+    disciplineTask: "Mechanical datasheets compiled",
+    body: "All 14 datasheets are complete and the rev B pack is uploaded. Handing this over for sign-off.",
+  },
+  {
+    author: "khalid.alfarsi@tielora.example",
+    disciplineTask: "Mechanical datasheets compiled",
+    body: "@Rashid al-Balushi thank you. I will check the nozzle summary against the design register before I sign it off this week.",
+    mentions: ["rashid.albalushi@tielora.example"],
+  },
+  {
+    author: "elena.petrova@tielora.example",
+    disciplineTask: "Inspection release certificates collected",
+    body: "Our radiography reports are ready. We are still waiting on the vendor's own release notes for the two spare exchangers.",
+  },
 ];
 
 /** Posts the demo conversation. Called by prisma/seed.ts once the project and its tasks exist. */

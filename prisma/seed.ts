@@ -1,5 +1,10 @@
-// Seed: one demo organisation, its eight disciplines, a demo administrator, a demo team and one
-// fully worked demo project.
+// Seed: the demo data the app ships with — two companies, so the tenant rule can be seen as well as
+// claimed.
+//
+// Meridian Energy Demo is the main one: eight disciplines, a full team, two contractors from other
+// companies, a worked project with stage gates, documents, conversations and a live noticeboard.
+// Northbay Construction (prisma/seed-northbay.ts) is a small second company on a different industry
+// template, and the second tenant every isolation check is measured against.
 //
 // Everything after the people is created THROUGH THE SERVICE LAYER, so the demo data has real audit
 // rows, real derived progress and real gating — nothing is written straight into the tables.
@@ -15,13 +20,21 @@ import type { RoleName, TaskStatusName } from "@/lib/zod-schemas";
 import { actorForUser, type ActorContext } from "@/server/actor";
 import { seedComments } from "./seed-comments";
 import { seedDocuments } from "./seed-documents";
-import { createProject } from "@/server/services/projects";
+import {
+  NORTHBAY_ADMIN_EMAIL,
+  NORTHBAY_ORG_NAME,
+  reportNorthbay,
+  seedNorthbay,
+} from "./seed-northbay";
+import { seedPosts } from "./seed-posts";
+import { createProject, upsertMember } from "@/server/services/projects";
 import {
   addDependency,
   completeDisciplineTask,
   createMainTask,
   overrideMainTaskStatus,
   setMainTaskPhase,
+  updateDisciplineTask,
   updateDisciplineTaskStatus,
 } from "@/server/services/tasks";
 
@@ -74,6 +87,61 @@ const PEOPLE: Person[] = [
   { email: "priya.nair@tielora.example", name: "Priya Nair", role: "ENGINEER", discipline: "INST", jobTitle: "Instrumentation engineer" },
   { email: "ahmed.albalushi@tielora.example", name: "Ahmed al-Balushi", role: "ENGINEER", discipline: "ELEC", jobTitle: "Electrical engineer" },
 ];
+
+/**
+ * The two contractors from other companies. They are ordinary accounts with `EXTERNAL` and a
+ * company name; everything that makes them contractors — the project seat, the work handed to them
+ * and the sign-off their finished work waits for — is done through the services below.
+ */
+type Contractor = Person & { companyName: string };
+
+const CONTRACTORS: Contractor[] = [
+  {
+    email: "rashid.albalushi@tielora.example",
+    name: "Rashid al-Balushi",
+    role: "EXTERNAL",
+    discipline: "MECH",
+    jobTitle: "Mechanical package engineer",
+    companyName: "Gulf Fabrication LLC",
+  },
+  {
+    email: "elena.petrova@tielora.example",
+    name: "Elena Petrova",
+    role: "EXTERNAL",
+    discipline: "INSP",
+    jobTitle: "NDT inspection engineer",
+    companyName: "Coastal NDT Services",
+  },
+];
+
+/** Work handed over to a contractor, and who hands it over — always that discipline's own lead. */
+const CONTRACTOR_HANDOVERS: { task: string; to: string; by: string }[] = [
+  {
+    task: "Mechanical datasheets compiled",
+    to: "rashid.albalushi@tielora.example",
+    by: "khalid.alfarsi@tielora.example",
+  },
+  {
+    task: "Mechanical completion walkdown",
+    to: "rashid.albalushi@tielora.example",
+    by: "khalid.alfarsi@tielora.example",
+  },
+  {
+    task: "Inspection release certificates collected",
+    to: "elena.petrova@tielora.example",
+    by: "aisha.alkindi@tielora.example",
+  },
+];
+
+/**
+ * The one piece of contractor work that is handed in and waiting for a colleague to accept it, so
+ * the dashboard really does say "Needs your sign-off (1)". It goes through the ordinary completion
+ * path as the contractor: the service itself turns that into AWAITING_REVIEW.
+ */
+const CONTRACTOR_SUBMISSION = {
+  task: "Mechanical datasheets compiled",
+  by: "rashid.albalushi@tielora.example",
+};
 
 // Task dates are always stored at UTC midnight — the same invariant the services enforce.
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
@@ -275,9 +343,23 @@ const out = (line: string) => process.stdout.write(`${line}\n`);
 async function main() {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not set. Copy .env.example to .env.");
 
+  // One hash for every demo account, in both companies — argon2 is deliberately slow, so it is
+  // computed once and reused rather than per person.
+  const passwordHash = await argon2.hash(DEMO_PASSWORD, { type: argon2.argon2id });
+
+  await seedMeridian(passwordHash);
+  await seedNorthbay({ passwordHash });
+
+  await report();
+  await reportNorthbay();
+  await reportLogins();
+}
+
+/** The main demo company: eight disciplines, a full team, two contractors and one worked project. */
+async function seedMeridian(passwordHash: string): Promise<void> {
   const org = await seedOrganization();
   const disciplineIdByCode = await seedDisciplines(org.id);
-  const userIdByEmail = await seedPeople(org.id, disciplineIdByCode);
+  const userIdByEmail = await seedPeople(org.id, disciplineIdByCode, passwordHash);
 
   const existing = await prisma.project.findUnique({
     where: { orgId_code: { orgId: org.id, code: PROJECT_CODE } },
@@ -285,7 +367,6 @@ async function main() {
   if (existing && process.env.SEED_RESET !== "1") {
     out(`The demo project ${PROJECT_CODE} is already here, so nothing was rebuilt.`);
     out("Run SEED_RESET=1 npm run seed to rebuild it from scratch (development data only).");
-    await report();
     return;
   }
   if (existing) {
@@ -294,7 +375,7 @@ async function main() {
         "SEED_RESET deletes audit and document history and is refused in production.",
       );
     }
-    await resetDemoProject(existing.id);
+    await resetDemoProject(org.id, existing.id);
   }
 
   const adminActor = await actorForUser(userIdByEmail.get(ADMIN_EMAIL) as string);
@@ -397,6 +478,17 @@ async function main() {
     }
   }
 
+  // The contractors join and take their work over. This happens BEFORE the gates go on, for the
+  // same reason every other status change above does: a locked phase would (rightly) refuse the
+  // hand-in that has to be waiting for a sign-off when the demo opens.
+  await seedContractors({
+    projectId: project.id,
+    disciplineIdByCode,
+    userIdByEmail,
+    adminActor,
+    actorFor,
+  });
+
   // The stage gates. createProject already made the five OIL_AND_GAS phases; the work is put behind
   // them LAST, once every completion above has happened, because a locked phase refuses exactly
   // those transitions. The result is a realistic mid-project picture: FEED is still open (the civil
@@ -422,8 +514,55 @@ async function main() {
 
   await seedDocuments({ projectId: project.id, userIdByEmail });
   await seedComments({ projectId: project.id, userIdByEmail, actorFor });
+  await seedPosts({ projectId: project.id, disciplineIdByCode, actorFor });
+}
 
-  await report();
+/**
+ * The contractors' part of the demo, all of it through the real doors:
+ * `upsertMember` for the project seat, `updateDisciplineTask` for the hand-over, and the ordinary
+ * completion path for the hand-in — which the service turns into AWAITING_REVIEW by itself, because
+ * the project asks for an internal sign-off on a contractor's finished work.
+ */
+async function seedContractors(ctx: {
+  projectId: string;
+  disciplineIdByCode: Map<string, string>;
+  userIdByEmail: Map<string, string>;
+  adminActor: ActorContext;
+  actorFor: (email: string) => Promise<ActorContext>;
+}): Promise<void> {
+  for (const contractor of CONTRACTORS) {
+    await upsertMember(ctx.adminActor, {
+      projectId: ctx.projectId,
+      userId: ctx.userIdByEmail.get(contractor.email) as string,
+      projectRole: "EXTERNAL",
+      disciplineId: ctx.disciplineIdByCode.get(contractor.discipline as string) as string,
+    });
+  }
+
+  const taskIdByTitle = new Map(
+    (
+      await prisma.disciplineTask.findMany({
+        where: { mainTask: { projectId: ctx.projectId } },
+        select: { id: true, title: true },
+      })
+    ).map((task) => [task.title, task.id]),
+  );
+  const taskId = (title: string): string => {
+    const id = taskIdByTitle.get(title);
+    if (!id) throw new Error(`The seed has no discipline task called "${title}".`);
+    return id;
+  };
+
+  for (const handover of CONTRACTOR_HANDOVERS) {
+    await updateDisciplineTask(await ctx.actorFor(handover.by), {
+      id: taskId(handover.task),
+      assigneeId: ctx.userIdByEmail.get(handover.to) as string,
+    });
+  }
+
+  await completeDisciplineTask(await ctx.actorFor(CONTRACTOR_SUBMISSION.by), {
+    id: taskId(CONTRACTOR_SUBMISSION.task),
+  });
 }
 
 /** The demo company itself. Everything else the seed writes belongs to it. */
@@ -453,8 +592,8 @@ async function seedDisciplines(orgId: string): Promise<Map<string, string>> {
 async function seedPeople(
   orgId: string,
   disciplineIdByCode: Map<string, string>,
+  passwordHash: string,
 ): Promise<Map<string, string>> {
-  const passwordHash = await argon2.hash(DEMO_PASSWORD, { type: argon2.argon2id });
   const map = new Map<string, string>();
 
   const admin = await prisma.user.upsert({
@@ -489,11 +628,38 @@ async function seedPeople(
     map.set(row.email, row.id);
   }
 
+  // The contractors. The company name is what shows as the badge beside their name on every task,
+  // comment and document, and an EXTERNAL account is never allowed to be without one.
+  for (const contractor of CONTRACTORS) {
+    const row = await prisma.user.upsert({
+      where: { email: contractor.email },
+      update: {
+        name: contractor.name,
+        role: "EXTERNAL",
+        disciplineId: disciplineIdByCode.get(contractor.discipline as string) as string,
+        jobTitle: contractor.jobTitle,
+        companyName: contractor.companyName,
+        isActive: true,
+      },
+      create: {
+        orgId,
+        email: contractor.email,
+        name: contractor.name,
+        passwordHash,
+        role: "EXTERNAL",
+        disciplineId: disciplineIdByCode.get(contractor.discipline as string) as string,
+        jobTitle: contractor.jobTitle,
+        companyName: contractor.companyName,
+      },
+    });
+    map.set(row.email, row.id);
+  }
+
   return map;
 }
 
 /** Clears the demo project so it can be rebuilt. Development data only — never run against real data. */
-async function resetDemoProject(projectId: string): Promise<void> {
+async function resetDemoProject(orgId: string, projectId: string): Promise<void> {
   const mainTasks = await prisma.mainTask.findMany({ where: { projectId }, select: { id: true } });
   const mainTaskIds = mainTasks.map((task) => task.id);
   const subtasks = await prisma.disciplineTask.findMany({
@@ -517,6 +683,10 @@ async function resetDemoProject(projectId: string): Promise<void> {
   await prisma.projectPhase.deleteMany({ where: { projectId } });
   await prisma.projectMember.deleteMany({ where: { projectId } });
   await prisma.projectDiscipline.deleteMany({ where: { projectId } });
+  // The noticeboard goes with it. A company-wide or department announcement belongs to no project,
+  // so deleting the project alone would leave it behind and the next run would post a second copy.
+  await prisma.post.deleteMany({ where: { orgId } });
+  await prisma.activityLog.deleteMany({ where: { entityType: "Post", actor: { orgId } } });
   await prisma.activityLog.deleteMany({ where: { projectId } });
   await prisma.project.delete({ where: { id: projectId } });
 
@@ -597,14 +767,38 @@ async function report(): Promise<void> {
     );
   }
 
+  const [awaitingSignoff, announcements] = await Promise.all([
+    prisma.disciplineTask.count({
+      where: { status: "AWAITING_REVIEW", deletedAt: null, mainTask: { projectId: project.id } },
+    }),
+    prisma.post.count({
+      where: { orgId: project.orgId, kind: "ANNOUNCEMENT", parentId: null, deletedAt: null },
+    }),
+  ]);
+
   out("");
   out(`${users} people, ${mainTasks.length} main tasks, ${activity} audit entries on this project.`);
+  out(
+    `${awaitingSignoff} piece${awaitingSignoff === 1 ? "" : "s"} of contractor work waiting for a sign-off, ` +
+      `${announcements} announcement${announcements === 1 ? "" : "s"} running.`,
+  );
+}
+
+/** Every demo login, in one place at the end of the run. Development only. */
+async function reportLogins(): Promise<void> {
   out("");
   out(`Demo logins for ${ORG_NAME} (development only — every account uses the same password):`);
   out(`  administrator   ${ADMIN_EMAIL}`);
   out(`  project manager ${PEOPLE[0].email}`);
   out(`  discipline lead ${PEOPLE[5].email}`);
   out(`  engineer        ${PEOPLE[10].email}`);
+  for (const contractor of CONTRACTORS) {
+    out(`  contractor      ${contractor.email.padEnd(34)} ${contractor.companyName}`);
+  }
+  out("");
+  out(`Demo login for ${NORTHBAY_ORG_NAME} (the second company — same password):`);
+  out(`  administrator   ${NORTHBAY_ADMIN_EMAIL}`);
+  out("");
   out(`  password        ${DEMO_PASSWORD}`);
 }
 
