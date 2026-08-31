@@ -276,6 +276,34 @@ describe("the recorded override — the only way through a shut gate", () => {
     expect(parent.progressPct).toBe(100);
   });
 
+  it("tells the rest of the project that a gate was opened", async () => {
+    const [first, second] = await makePhases();
+    await makeTask(first.id, "Piling");
+    await makeTask(second.id, "Steel erection");
+
+    await overridePhaseLock(fixture.pmActor, {
+      id: second.id,
+      reason: "Client instruction to start steel early",
+    });
+
+    // Same shape as a main-task status override: OVERRIDE_APPLIED, to everyone on the project
+    // except the person who did it, written after the transaction committed.
+    const notifications = await prisma.notification.findMany({
+      where: { type: "OVERRIDE_APPLIED" },
+      select: { userId: true, title: true, body: true, linkUrl: true },
+    });
+
+    expect(notifications.length).toBeGreaterThan(0);
+    expect(notifications.map((row) => row.userId)).not.toContain(fixture.pmActor.userId);
+    expect(notifications.map((row) => row.userId).sort()).toEqual(
+      [fixture.adminActor.userId, fixture.engineerActor.userId].sort(),
+    );
+    expect(notifications[0].title).toBe("A locked phase was opened");
+    expect(notifications[0].body).toContain("Structure");
+    expect(notifications[0].body).toContain("Client instruction to start steel early");
+    expect(notifications[0].linkUrl).toBe(`/projects/${fixture.projectId}`);
+  });
+
   it("insists on a reason of at least five characters", async () => {
     const [, second] = await makePhases();
 

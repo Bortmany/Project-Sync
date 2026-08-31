@@ -4,6 +4,7 @@
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import type { NotificationTypeName } from "@/lib/zod-schemas";
+import { deliverToOrgWebhooks } from "@/server/services/webhooks";
 
 export type NotifyPayload = {
   /** Short headline, e.g. "New task assigned to you". */
@@ -52,6 +53,16 @@ export async function notify(
         linkUrl: payload.linkUrl,
         actorId: actor.userId,
       })),
+    });
+
+    // The chat copy, once per organisation rather than once per person, and only when the company
+    // has switched that kind of event on. Deliberately NOT awaited: the in-app rows above are the
+    // truth, and nobody waits on Slack to see their own change go through. It never throws.
+    void deliverToOrgWebhooks(actor.orgId, {
+      type,
+      title: payload.title,
+      body: payload.body,
+      linkUrl: payload.linkUrl,
     });
   } catch (error) {
     logger.error("Could not save notifications", { type, linkUrl: payload.linkUrl, error });

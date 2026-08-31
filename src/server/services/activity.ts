@@ -48,6 +48,14 @@ export const ACTIVITY = {
   USER_REACTIVATED: "USER_REACTIVATED",
   DISCIPLINE_CREATED: "DISCIPLINE_CREATED",
   DISCIPLINE_UPDATED: "DISCIPLINE_UPDATED",
+  // Chat integrations. None of these rows ever carries the webhook address — kind and switches only.
+  INTEGRATION_CONNECTED: "INTEGRATION_CONNECTED",
+  INTEGRATION_UPDATED: "INTEGRATION_UPDATED",
+  INTEGRATION_ENABLED: "INTEGRATION_ENABLED",
+  INTEGRATION_DISABLED: "INTEGRATION_DISABLED",
+  INTEGRATION_EVENTS_CHANGED: "INTEGRATION_EVENTS_CHANGED",
+  INTEGRATION_TEST_SENT: "INTEGRATION_TEST_SENT",
+  INTEGRATION_REMOVED: "INTEGRATION_REMOVED",
 } as const;
 
 export type ActivityAction = (typeof ACTIVITY)[keyof typeof ACTIVITY];
@@ -67,7 +75,8 @@ export type AppendActivityInput = {
     | "Document"
     // Admin-section rows carry no project — they are about the organisation, not one project.
     | "User"
-    | "Discipline";
+    | "Discipline"
+    | "OrgIntegration";
   entityId: string;
   action: ActivityAction;
   /** Plain English, e.g. "Ahmed al-Balushi marked Electrical review complete". */

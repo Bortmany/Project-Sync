@@ -86,7 +86,9 @@ In practice:
   `canCompleteDisciplineTask()`. `deriveMainTask()` remains the only writer of a main task's status.
 - The only way through is `overridePhaseLock()`: ADMIN / PROJECT_MANAGER, a reason of at least 5
   characters, who / why / when written on the phase and a `PHASE_OVERRIDE_APPLIED` activity row in
-  the same transaction. An overridden phase stays open permanently.
+  the same transaction. An overridden phase stays open permanently. It also **notifies the whole
+  project** afterwards, exactly as `overrideMainTaskStatus` does — an `OVERRIDE_APPLIED`
+  notification, sent after the transaction commits, so opening a gate is never a quiet act.
 - Default phases come from the company's industry template (`PHASE_TEMPLATES` in
   `src/server/industry-templates.ts`) and are created inside `createProject`'s own transaction.
 
@@ -125,6 +127,22 @@ In practice:
 11. **Secrets in env only.** `SESSION_SECRET` must be 32+ characters; the app refuses to boot in
     production without it. New integrations stay dormant until their env var is set and are reported
     in `/api/health`.
+    - **Chat integrations are the one thing configured per company rather than per deployment**: a
+      Slack or Teams webhook address is pasted by that company's administrator in Admin →
+      Integrations and stored on `OrgIntegration`. The rule is unchanged in spirit — nothing is
+      switched on until somebody configures it, and `/api/health` reports it: `"integrations":
+      {"slack": 0, "teams": 0}` while nobody has one enabled. `APP_BASE_URL` (optional, not a
+      secret) only decides whether the link inside a chat message is clickable.
+    - **A webhook address is a bearer secret.** It is written once and never read back: no API
+      returns it, no `ActivityLog` row records it, no log line contains it (a failure is logged with
+      the kind and the organisation id only), and the admin screen only ever sees scheme + host.
+      Changing one means pasting it again. Only https, and only the per-kind host allowlist in
+      `webhookUrlProblem()` — checked when it is saved **and again at delivery time**, which is the
+      SSRF guard.
+    - **Delivery is best-effort and per-process**, the same accepted limitation rate limiting
+      carries: one attempt, one retry on 429 respecting `Retry-After` (capped at ten seconds), then
+      the message is dropped with a logged line. There is no queue table. In-app Notifications
+      remain the source of truth.
 12. **Privacy:** if a change starts storing a new piece of personal data, the privacy page (`/privacy`,
     alongside `/terms`) is part of the same change (see the engineering standards, section 6). Both
     pages are a template pending a real legal review before launch — see `docs/GO-LIVE.md` gate 1.
@@ -179,6 +197,16 @@ In practice:
     populated install every existing main task simply stays unphased and ungated. The generated
     migration's five trigram `DropIndex` lines were deleted by hand.)
 
+  - `20260831004624_org_integrations` (chat notifications. One new model, `OrgIntegration` — a
+    company's Slack or Teams webhook: `orgId` (cascading), `kind`, `webhookUrl`, `enabled`,
+    `eventToggles` (Json), a nullable `createdById` (`onDelete: SetNull`, the same shape a phase's
+    override columns use) and `@@unique([orgId, kind])`, so one channel per kind per company.
+    **`kind` is a plain string column, not a Prisma enum, deliberately**: it is validated by
+    `IntegrationKindSchema` in zod, so a third chat tool later needs no migration. Additive only:
+    no existing model, field, enum value or index was changed, and a company with no row here has no
+    integration at all — dormant by default, and the seed deliberately does not create one. The
+    generated migration's five trigram `DropIndex` lines were deleted by hand.)
+
 - **Careful with `prisma migrate dev`:** the trigram search indexes are hand-written raw SQL that the
   Prisma schema does not know about, so the generated migration will try to DROP them. Delete those
   `DropIndex` lines from the generated `migration.sql` before it goes anywhere near a real database.
@@ -219,7 +247,7 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/auth/login` | POST | `LoginInput` | session cookie |
 | `/api/auth/logout` | POST | — | `{ signedOut: true }` |
 | `/api/auth/me` | GET | — | signed-in user |
-| `/api/health` | GET | — | health JSON |
+| `/api/health` | GET | — | health JSON (adds `integrations` — how many companies have each chat kind switched on, numbers only: `{"slack": 0, "teams": 0}` when nobody has) |
 | `/api/my-tasks` | GET | — | `MyTasksDTO` (everything assigned to the signed-in person: up to 200 open tasks by deadline **plus** the 50 most recently completed, read in two windows so history never crowds out live work, with `truncated`; `totals` counted in the database over all of it) |
 | `/api/my-tasks/gantt` | GET | — | `GanttDTO` (only the signed-in person's discipline tasks, grouped under their main tasks; bounded — open work plus work whose deadline fell inside the last 90 days, 300 bars max) |
 | `/api/favorites` | GET | — | `FavoriteDTO[]` (the signed-in person's own shortcuts, newest first, 50 max; deleted targets and anything in a project they may no longer see are skipped) |
@@ -240,7 +268,7 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `renamePhase` (ADMIN / PM) | `RenamePhaseInput` | `ActionResult<PhaseDTO>` |
 | `reorderPhases` (ADMIN / PM; the FULL ordered id list, never a partial one) | `ReorderPhasesInput` | `ActionResult<PhaseDTO[]>` |
 | `deletePhase` (ADMIN / PM; refused while any main task still references it) | `DeletePhaseInput` | `ActionResult<{ removed: true }>` |
-| `overridePhaseLock` (ADMIN / PM; reason 5 characters minimum, writes `PHASE_OVERRIDE_APPLIED`) | `OverridePhaseLockInput` | `ActionResult<PhaseDTO>` |
+| `overridePhaseLock` (ADMIN / PM; reason 5 characters minimum, writes `PHASE_OVERRIDE_APPLIED`, notifies the project with `OVERRIDE_APPLIED`) | `OverridePhaseLockInput` | `ActionResult<PhaseDTO>` |
 | `setMainTaskPhase` (allowed even into a locked phase — only completing is refused) | `SetMainTaskPhaseInput` | `ActionResult<MainTaskDTO>` |
 | `createMainTask` | `CreateMainTaskInput` | `ActionResult<MainTaskDTO>` |
 | `updateMainTask` | `UpdateMainTaskInput` | `ActionResult<MainTaskDTO>` |
@@ -269,6 +297,11 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `createPersonalTask` (own list only; no audit row) | `CreatePersonalTaskInput` | `ActionResult<PersonalTaskDTO>` |
 | `togglePersonalTask` (own list only — someone else's item does not exist) | `TogglePersonalTaskInput` | `ActionResult<PersonalTaskDTO>` |
 | `deletePersonalTask` (own list only; a private jotting has no audit trail to keep) | `DeletePersonalTaskInput` | `ActionResult<{ removed: true }>` |
+| `saveIntegration` (ADMIN in their own company; the address is validated per kind and never returned) | `SaveIntegrationInput` | `ActionResult<OrgIntegrationDTO>` |
+| `setIntegrationEnabled` (ADMIN; needs an address saved first) | `SetIntegrationEnabledInput` | `ActionResult<OrgIntegrationDTO>` |
+| `setEventToggles` (ADMIN; all five events are saved together) | `SetEventTogglesInput` | `ActionResult<OrgIntegrationDTO>` |
+| `sendTestMessage` (ADMIN; rate limited hard — five a minute per person, because each press posts into a real channel) | `IntegrationKindInput` | `ActionResult<IntegrationTestResultDTO>` |
+| `deleteIntegration` (ADMIN; removes the address with the connection, audit rows stay) | `IntegrationKindInput` | `ActionResult<{ removed: true }>` |
 
 ## Notifications and the deadline sweep
 
@@ -299,6 +332,35 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
     (`isOverdue()`); a skipped run costs a nudge, never correctness.
   - `SWEEP_DISABLED=1` stops the scheduler (the tests set it). `runSweepOnce()` itself ignores the
     flag so tests can call it directly.
+
+## Chat delivery (Slack and Microsoft Teams)
+
+- **Text somebody typed is never allowed to become a link in a chat channel.** A Slack mrkdwn field
+  turns `<url|label>` into a link and a Teams Adaptive Card TextBlock renders `[label](url)`, so a
+  task title is escaped on the way into both (`slackEscape` / `teamsEscape` in `webhooks.ts`) — the
+  Slack fallback `text` included. Slack's `plain_text` header is deliberately not escaped: Slack
+  never parses that field, so escaping it would only show people `&lt;`.
+- **In-app notifications are the truth; a chat message is a copy.** `deliverToOrgWebhooks()`
+  (`src/server/services/webhooks.ts`) is called from `notify()` **after** the notification rows are
+  committed, and deliberately not awaited — nobody waits on Slack to see their own change go
+  through. The hourly sweep's reminders take the same road: `sweepDeadlineNotifications()` returns
+  the events it wrote and `runSweepOnce()` posts them once its transaction has committed, never
+  inside it — capped at 20 per company per run **and** at a 30-second budget for the whole chat step
+  (checked after each send, so one message always goes). Anything held back is a nudge; the
+  notification rows are already committed.
+- **Only enabled + toggled events are delivered.** Each `NotificationType` maps to one of the five
+  toggles (`taskAssigned`, `mention`, `statusChange`, `overdueReminder`, `gateOverride`);
+  `DOCUMENT_UPLOADED` and `COMMENT_ADDED` map to nothing and stay in the app.
+- **The fan-out cannot leave the company**, for the same reason `notify()` cannot: the lookup is
+  `where: { orgId, enabled: true }`, and the `orgId` is the actor's (or, in the sweep, the
+  recipient's, who is always a member of that task's project).
+- Payloads are Slack Block Kit and the Teams Adaptive Card envelope (version 1.4 pinned), both
+  bounded by the 28 KB Teams cap — an oversized message is dropped rather than sent to be rejected.
+  Links use `APP_BASE_URL`; unset, the message names the page instead.
+
+**Any change touching this area adds or extends a test in
+`src/server/__tests__/integrations.service.test.ts` in the same change — and the tests never touch
+the network: `global.fetch` is mocked.**
 
 ## Verify recipe (run in this order, all must pass)
 

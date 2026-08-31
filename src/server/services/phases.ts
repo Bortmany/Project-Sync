@@ -26,6 +26,7 @@ import type { ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
 import { checkDto, checkDtoList } from "@/server/serialize";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
+import { notify } from "@/server/services/notify";
 // One direction only: phases reach projects for the tenant loaders, never the other way round —
 // createProject builds its own default phases (src/server/services/projects.ts).
 import { assertCanViewProject, projectInOrg } from "@/server/services/projects";
@@ -388,7 +389,26 @@ export async function overridePhaseLock(
     });
   });
 
+  // Everybody on the project hears about a gate being opened, exactly as they hear about a main
+  // task being force-completed (overrideMainTaskStatus in tasks.ts) — same type, same shape, after
+  // the transaction has committed. OVERRIDE_APPLIED is also the type the chat integrations map to
+  // their "gate opened or override applied" toggle.
+  await notify(actor, await projectAudience(existing.projectId, actor.userId), "OVERRIDE_APPLIED", {
+    title: "A locked phase was opened",
+    body: `${actor.name} opened the phase "${existing.name}" by override. Reason: ${reason}`,
+    linkUrl: `/projects/${existing.projectId}`,
+  });
+
   return buildPhaseDTO(existing.id);
+}
+
+/** Everyone on the project except the person who did it — the same audience tasks.ts notifies. */
+async function projectAudience(projectId: string, exceptUserId: string): Promise<string[]> {
+  const members = await prisma.projectMember.findMany({
+    where: { projectId },
+    select: { userId: true },
+  });
+  return members.map((member) => member.userId).filter((userId) => userId !== exceptUserId);
 }
 
 /* ------------------------------------------------------------------ */

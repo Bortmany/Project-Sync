@@ -94,6 +94,16 @@ export function DisciplinesIcon({ size = 18, className }: IconProps) {
   );
 }
 
+/** A chat bubble with a link through it — the Slack and Teams connections. */
+export function IntegrationsIcon({ size = 18, className }: IconProps) {
+  return (
+    <svg {...base(size, className)}>
+      <path d="M16.5 11.5a2 2 0 0 1-2 2H8l-3.5 2.5v-2.5a2 2 0 0 1-1-1.7V6a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2z" />
+      <path d="M7.5 8.8h5M7.5 11h3" />
+    </svg>
+  );
+}
+
 export function SearchIcon({ size = 16, className }: IconProps) {
   return (
     <svg {...base(size, className)}>

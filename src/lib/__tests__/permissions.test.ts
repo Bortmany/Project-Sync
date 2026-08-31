@@ -38,6 +38,7 @@ const ALL_ACTIONS: Action[] = [
   "COMMENT",
   "MANAGE_USERS",
   "MANAGE_DISCIPLINES",
+  "MANAGE_INTEGRATIONS",
   "VIEW_PROJECT",
 ];
 
@@ -79,7 +80,10 @@ describe("admin", () => {
 
 describe("project manager", () => {
   const allowedInOwnProject: Action[] = ALL_ACTIONS.filter(
-    (action) => action !== "MANAGE_USERS" && action !== "MANAGE_DISCIPLINES",
+    (action) =>
+      action !== "MANAGE_USERS" &&
+      action !== "MANAGE_DISCIPLINES" &&
+      action !== "MANAGE_INTEGRATIONS",
   );
 
   it("may run everything inside their own project", () => {
@@ -91,9 +95,10 @@ describe("project manager", () => {
     }
   });
 
-  it("may never manage users or disciplines", () => {
+  it("may never manage users, disciplines or chat integrations", () => {
     expect(can(pm, "MANAGE_USERS", ownCtx)).toBe(false);
     expect(can(pm, "MANAGE_DISCIPLINES", ownCtx)).toBe(false);
+    expect(can(pm, "MANAGE_INTEGRATIONS", ownCtx)).toBe(false);
   });
 
   it("may not touch a project they do not belong to", () => {
@@ -286,7 +291,10 @@ type MatrixCase = {
 };
 
 const EVERYTHING_BUT_ADMIN_ONLY: Action[] = ALL_ACTIONS.filter(
-  (action) => action !== "MANAGE_USERS" && action !== "MANAGE_DISCIPLINES",
+  (action) =>
+    action !== "MANAGE_USERS" &&
+    action !== "MANAGE_DISCIPLINES" &&
+    action !== "MANAGE_INTEGRATIONS",
 );
 const MEMBER_ONLY: Action[] = ["VIEW_PROJECT", "COMMENT"];
 const LEAD_IN_OWN_DISCIPLINE: Action[] = [

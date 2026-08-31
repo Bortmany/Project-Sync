@@ -9,6 +9,7 @@ import { NotificationDTO as NotificationSchema } from "@/lib/zod-schemas";
 import type { ActorContext } from "@/server/actor";
 import { NotFoundError } from "@/server/errors";
 import { checkDto, checkDtoList } from "@/server/serialize";
+import type { WebhookEvent } from "@/server/services/webhooks";
 
 /** The newest notifications a person can hold on screen. Older ones stay in the database. */
 const LIST_LIMIT = 100;
@@ -111,6 +112,16 @@ export async function markAllNotificationsRead(actor: ActorContext): Promise<{ c
 
 export type SweepCounts = { approaching: number; overdue: number };
 
+/**
+ * What the sweep wrote, ready for the chat copy. The organisation comes from the person the
+ * notification was written for — who is always a member of that task's project — so a reminder can
+ * no more leave its company than any other fan-out can.
+ */
+export type SweepWebhookEvent = { orgId: string } & WebhookEvent;
+
+/** The rows that were written, plus the chat events they should produce once the sweep commits. */
+export type SweepOutcome = { counts: SweepCounts; events: SweepWebhookEvent[] };
+
 type Candidate = {
   userId: string;
   linkUrl: string;
@@ -135,7 +146,7 @@ type Candidate = {
 export async function sweepDeadlineNotifications(
   tx: Prisma.TransactionClient,
   now: Date = new Date(),
-): Promise<SweepCounts> {
+): Promise<SweepOutcome> {
   const soon = new Date(now.getTime() + APPROACHING_WINDOW_MS);
   // Deadlines mean "by the end of that day" (see isOverdue in src/lib/progress.ts), so a task is
   // only overdue once its deadline day has fully passed; until then it still counts as approaching.
@@ -149,7 +160,10 @@ export async function sweepDeadlineNotifications(
   const approaching = await writeNew(tx, "DEADLINE_APPROACHING", approachingCandidates, now);
   const overdue = await writeNew(tx, "OVERDUE", overdueCandidates, now);
 
-  return { approaching, overdue };
+  return {
+    counts: { approaching: approaching.count, overdue: overdue.count },
+    events: [...approaching.events, ...overdue.events],
+  };
 }
 
 /** Open tasks whose deadline falls in the given window, with the person who should hear about it. */
@@ -200,14 +214,15 @@ async function writeNew(
   type: "DEADLINE_APPROACHING" | "OVERDUE",
   rows: Candidate[],
   now: Date,
-): Promise<number> {
-  if (rows.length === 0) return 0;
+): Promise<{ count: number; events: SweepWebhookEvent[] }> {
+  if (rows.length === 0) return { count: 0, events: [] };
 
   const active = await tx.user.findMany({
     where: { id: { in: [...new Set(rows.map((row) => row.userId))] }, isActive: true },
-    select: { id: true },
+    select: { id: true, orgId: true },
   });
   const activeIds = new Set(active.map((user) => user.id));
+  const orgOf = new Map(active.map((user) => [user.id, user.orgId]));
 
   const sent = await tx.notification.findMany({
     where: { type, linkUrl: { in: [...new Set(rows.map((row) => row.linkUrl))] } },
@@ -236,8 +251,22 @@ async function writeNew(
       createdAt: now,
     }));
 
-  if (data.length === 0) return 0;
+  if (data.length === 0) return { count: 0, events: [] };
 
   const result = await tx.notification.createMany({ data });
-  return result.count;
+
+  // One chat event per company per task, even in the unlikely case two rows share a link. The
+  // sweep's own caller posts these only after the transaction has committed.
+  const seen = new Set<string>();
+  const events: SweepWebhookEvent[] = [];
+  for (const row of data) {
+    const orgId = orgOf.get(row.userId);
+    if (!orgId) continue;
+    const key = `${orgId}:${row.linkUrl}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    events.push({ orgId, type, title: row.title, body: row.body, linkUrl: row.linkUrl });
+  }
+
+  return { count: result.count, events };
 }

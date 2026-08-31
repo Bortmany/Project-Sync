@@ -36,6 +36,7 @@ export type Action =
   | "COMMENT"
   | "MANAGE_USERS"
   | "MANAGE_DISCIPLINES"
+  | "MANAGE_INTEGRATIONS"
   | "VIEW_PROJECT";
 
 /**
@@ -62,7 +63,7 @@ export class ForbiddenError extends Error {
 }
 
 /** Actions only an administrator ever performs. */
-const ADMIN_ONLY: Action[] = ["MANAGE_USERS", "MANAGE_DISCIPLINES"];
+const ADMIN_ONLY: Action[] = ["MANAGE_USERS", "MANAGE_DISCIPLINES", "MANAGE_INTEGRATIONS"];
 
 /** Actions a discipline lead may perform inside their own discipline on a project they belong to. */
 const LEAD_DISCIPLINE_ACTIONS: Action[] = [
@@ -166,6 +167,7 @@ export const PERMISSION_MATRIX: Record<RoleValue, { always: Action[]; conditiona
       "COMMENT",
       "MANAGE_USERS",
       "MANAGE_DISCIPLINES",
+      "MANAGE_INTEGRATIONS",
       "VIEW_PROJECT",
     ],
     conditional: [],

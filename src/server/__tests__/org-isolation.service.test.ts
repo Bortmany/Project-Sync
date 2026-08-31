@@ -10,7 +10,7 @@
 
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 process.env.DATA_DIR = path.join(os.tmpdir(), "tielora-test-data");
 
@@ -33,6 +33,14 @@ import {
 } from "@/server/services/documents";
 import { toggleFavorite } from "@/server/services/favorites";
 import {
+  deleteIntegration,
+  listIntegrationsForAdmin,
+  saveIntegration,
+  sendIntegrationTest,
+  setEventToggles,
+  setIntegrationEnabled,
+} from "@/server/services/integrations";
+import {
   createPhase,
   deletePhase,
   listPhasesForProject,
@@ -51,6 +59,7 @@ import {
   updateDisciplineTaskStatus,
 } from "@/server/services/tasks";
 import { runSweepOnce } from "@/server/sweep";
+import { deliverToOrgWebhooks } from "@/server/services/webhooks";
 import {
   inThirtyDays,
   makeOrg,
@@ -448,5 +457,80 @@ describe("the hourly deadline sweep stays inside each company", () => {
       const taskOrgId = task?.mainTask.project.orgId ?? mainTask?.project.orgId;
       expect(taskOrgId).toBe(notification.user.orgId);
     }
+  });
+});
+
+describe("one company's chat channel is not another company's", () => {
+  const ACME_SLACK = "https://hooks.slack.com/services/TACME/BACME/AcmeSecretTokenValue";
+
+  beforeEach(async () => {
+    await saveIntegration(acme.admin, { kind: "SLACK", webhookUrl: ACME_SLACK });
+    await setIntegrationEnabled(acme.admin, { kind: "SLACK", enabled: true });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("does not appear on the other company's Integrations screen", async () => {
+    const mine = await listIntegrationsForAdmin(acme.admin);
+    const theirs = await listIntegrationsForAdmin(rival.admin);
+
+    expect(mine.find((item) => item.kind === "SLACK")?.configured).toBe(true);
+    // The rival administrator sees an empty card, not a masked address and not an error.
+    expect(theirs.find((item) => item.kind === "SLACK")?.configured).toBe(false);
+    expect(JSON.stringify(theirs)).not.toContain("hooks.slack.com");
+  });
+
+  it("is NOT FOUND to the other company's administrator, never merely forbidden", async () => {
+    // Not found, not forbidden: a rival must not even learn that Acme has Slack connected.
+    await expect(
+      setIntegrationEnabled(rival.admin, { kind: "SLACK", enabled: false }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      setEventToggles(rival.admin, {
+        kind: "SLACK",
+        eventToggles: {
+          taskAssigned: false,
+          mention: false,
+          statusChange: false,
+          overdueReminder: false,
+          gateOverride: false,
+        },
+      }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      sendIntegrationTest(rival.admin, { kind: "SLACK" }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      deleteIntegration(rival.admin, { kind: "SLACK" }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    // And Acme's connection is untouched by any of that.
+    expect(await prisma.orgIntegration.count()).toBe(1);
+  });
+
+  it("never carries the other company's news, even for the same kind of event", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("ok", { status: 200 }));
+
+    await deliverToOrgWebhooks(rival.fixture.orgId, {
+      type: "ASSIGNED",
+      title: "New task assigned to you",
+      body: `A rival company's work: ${SHARED_TITLE}`,
+      linkUrl: `/discipline-tasks/${rival.disciplineTaskId}`,
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    // Acme's own event still reaches Acme's channel.
+    await deliverToOrgWebhooks(acme.fixture.orgId, {
+      type: "ASSIGNED",
+      title: "New task assigned to you",
+      body: SHARED_TITLE,
+      linkUrl: `/discipline-tasks/${acme.disciplineTaskId}`,
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][0]).toBe(ACME_SLACK);
   });
 });

@@ -77,12 +77,37 @@ export default function PrivacyPage() {
       </section>
 
       <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
+        <h2 className="text-base font-semibold text-[var(--brand-ink)]">
+          Chat notifications, if your administrator switches them on
+        </h2>
+        <p>
+          Your workspace administrator can connect one Slack channel and one Microsoft Teams channel
+          to your company&apos;s workspace. When that is switched on, a copy of the notifications
+          they have chosen — the same short headline, sentence and link you would see in the app —
+          is posted to that channel. Those messages can include a task title and the name of the
+          person involved, and they are then held by Slack or Microsoft under that company&apos;s own
+          agreement with them, not ours.
+        </p>
+        <p>
+          A connected channel receives headlines for every project in the company, not only the
+          projects its members work on, so whoever can see that channel can see them — channel
+          membership decides the audience, not project membership.
+        </p>
+        <p>
+          It is off unless your administrator turns it on, they choose which kinds of notification go
+          out, and they can switch it off or remove it at any time in Admin → Integrations. Nothing
+          else is sent: no documents, no comments in full, no email addresses and no passwords.
+        </p>
+      </section>
+
+      <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
         <h2 className="text-base font-semibold text-[var(--brand-ink)]">Why this is stored</h2>
         <p>
           Solely to run multidisciplinary project coordination for the company whose workspace you
           are in: assigning and tracking work, gating task completion on required documents, keeping
           a dependable audit trail, and notifying people about work relevant to them. Nothing here is
-          used for advertising, and nothing is sold or shared with anyone outside your company.
+          used for advertising and nothing is ever sold. The only information that leaves this app is
+          the chat copy described above, and only while your administrator has that switched on.
         </p>
       </section>
 

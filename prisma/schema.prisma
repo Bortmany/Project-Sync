@@ -62,9 +62,37 @@ model Organization {
   industryTemplate String
   createdAt        DateTime @default(now())
 
-  users       User[]
-  disciplines Discipline[]
-  projects    Project[]
+  users        User[]
+  disciplines  Discipline[]
+  projects     Project[]
+  integrations OrgIntegration[]
+}
+
+/// One company's chat-notification hook: where Tielora posts a copy of its notifications.
+///
+/// `kind` is a STRING validated by zod (IntegrationKindSchema in src/lib/zod-schemas.ts), not a
+/// Prisma enum, so a third kind of chat tool needs no migration.
+/// `webhookUrl` is a bearer secret — anyone holding it can post into that channel. It is never
+/// returned by any read API and never written to an audit row or a log line; the admin screen only
+/// ever sees scheme + host.
+/// `eventToggles` is a small map of per-event booleans, again validated by zod on the way in.
+/// In-app Notifications remain the source of truth: delivery here is best-effort.
+model OrgIntegration {
+  id           String   @id @default(cuid())
+  orgId        String
+  /// "SLACK" or "TEAMS" today. One row per kind per organisation.
+  kind         String
+  webhookUrl   String
+  enabled      Boolean  @default(false)
+  eventToggles Json
+  createdById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation("OrgIntegrationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, kind])
 }
 
 model User {
@@ -105,6 +133,7 @@ model User {
   activityLogs          ActivityLog[]
   favorites             Favorite[]
   personalTasks         PersonalTask[]
+  createdIntegrations   OrgIntegration[]    @relation("OrgIntegrationCreatedBy")
 
   @@index([isActive])
   @@index([orgId, isActive])

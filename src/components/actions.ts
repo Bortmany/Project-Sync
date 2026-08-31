@@ -36,6 +36,15 @@ export {
   updateDiscipline,
 } from "@/server/actions/admin";
 
+// Admin → Integrations. No action here ever returns a saved webhook address.
+export {
+  saveIntegration,
+  setIntegrationEnabled,
+  setEventToggles,
+  sendTestMessage,
+  deleteIntegration,
+} from "@/server/actions/integrations";
+
 export { createComment, editComment, deleteComment } from "@/server/actions/comments";
 
 export {

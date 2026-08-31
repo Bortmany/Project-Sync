@@ -867,3 +867,159 @@ export const MyTasksDTO = z.object({
   truncated: z.boolean(),
 });
 export type MyTasksDTO = z.infer<typeof MyTasksDTO>;
+
+/* ------------------------------------------------------------------ */
+/* Chat integrations (Slack and Microsoft Teams)                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Which chat tool a webhook belongs to. A zod enum over a plain string column, NOT a database
+ * enum: adding a third tool later needs no migration.
+ */
+export const IntegrationKindSchema = z.enum(["SLACK", "TEAMS"]);
+export type IntegrationKindName = z.infer<typeof IntegrationKindSchema>;
+
+/** The events an organisation can switch on or off for a chat channel. */
+export const IntegrationEventSchema = z.enum([
+  "taskAssigned",
+  "mention",
+  "statusChange",
+  "overdueReminder",
+  "gateOverride",
+]);
+export type IntegrationEventName = z.infer<typeof IntegrationEventSchema>;
+
+/** Every event, on or off. All five are always present, so a saved map is never half-defined. */
+export const IntegrationEventToggles = z.object({
+  taskAssigned: z.boolean(),
+  mention: z.boolean(),
+  statusChange: z.boolean(),
+  overdueReminder: z.boolean(),
+  gateOverride: z.boolean(),
+});
+export type IntegrationEventToggles = z.infer<typeof IntegrationEventToggles>;
+
+/** What a brand-new integration starts with: everything on, but the channel itself still disabled. */
+export const DEFAULT_EVENT_TOGGLES: IntegrationEventToggles = {
+  taskAssigned: true,
+  mention: true,
+  statusChange: true,
+  overdueReminder: true,
+  gateOverride: true,
+};
+
+/**
+ * The host rules a webhook URL must satisfy, per kind. This is BOTH the form validation and the
+ * SSRF guard: `webhookUrlProblem` is called again at delivery time, on the stored value, so a URL
+ * that somehow got into the database another way is still never called.
+ */
+const WEBHOOK_RULES: Record<
+  IntegrationKindName,
+  { host: (host: string) => boolean; path: (path: string) => boolean; message: string }
+> = {
+  SLACK: {
+    host: (host) => host === "hooks.slack.com",
+    path: (path) => path.startsWith("/services/") && path.length > "/services/".length,
+    message:
+      "That does not look like a Slack webhook address. It should start with https://hooks.slack.com/services/",
+  },
+  TEAMS: {
+    host: (host) => host.endsWith(".logic.azure.com") || host.endsWith(".logic.azure.us"),
+    path: (path) => path.includes("/workflows/") && path.includes("/triggers/"),
+    message:
+      "That does not look like a Teams Workflows address. It should be the https link Teams gave you, containing logic.azure.com and /triggers/manual/paths/invoke",
+  },
+};
+
+/**
+ * Checks a pasted webhook address. Returns a plain-English problem, or null when it is fine.
+ * Only https is ever accepted, and only the hosts above — nothing else may be called.
+ */
+export function webhookUrlProblem(kind: IntegrationKindName, value: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return "Paste the whole web address, starting with https://";
+  }
+  if (url.protocol !== "https:") return "The address must start with https://";
+  if (url.username || url.password) return "Remove the username and password from the address.";
+  // `url.port` is empty for the default https port — Teams addresses are written with ":443" and
+  // the parser drops it. Anything else is a port nobody's chat webhook listens on, so it is refused
+  // rather than dialled.
+  if (url.port) return "Remove the port number from the address.";
+
+  const rule = WEBHOOK_RULES[kind];
+  if (!rule.host(url.hostname.toLowerCase())) return rule.message;
+  if (!rule.path(url.pathname)) return rule.message;
+  return null;
+}
+
+/**
+ * All the admin screen is ever told about a saved address: scheme and host, then an ellipsis.
+ * The secret part of the URL is never sent back to a browser once it has been saved.
+ */
+export function maskWebhookUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.host}/…`;
+  } catch {
+    return "…";
+  }
+}
+
+const webhookUrlField = z
+  .string()
+  .trim()
+  .min(1, "Paste the webhook address you copied.")
+  .max(500, "That address is too long to be a webhook address.");
+
+/** Pasting (or re-pasting) an address. Changing the address always means pasting it again. */
+export const SaveIntegrationInput = z
+  .object({
+    kind: IntegrationKindSchema,
+    webhookUrl: webhookUrlField,
+    eventToggles: IntegrationEventToggles.optional(),
+  })
+  .superRefine((value, ctx) => {
+    const problem = webhookUrlProblem(value.kind, value.webhookUrl);
+    if (problem) ctx.addIssue({ code: "custom", path: ["webhookUrl"], message: problem });
+  });
+export type SaveIntegrationInput = z.infer<typeof SaveIntegrationInput>;
+
+export const SetIntegrationEnabledInput = z.object({
+  kind: IntegrationKindSchema,
+  enabled: z.boolean(),
+});
+export type SetIntegrationEnabledInput = z.infer<typeof SetIntegrationEnabledInput>;
+
+export const SetEventTogglesInput = z.object({
+  kind: IntegrationKindSchema,
+  eventToggles: IntegrationEventToggles,
+});
+export type SetEventTogglesInput = z.infer<typeof SetEventTogglesInput>;
+
+export const IntegrationKindInput = z.object({ kind: IntegrationKindSchema });
+export type IntegrationKindInput = z.infer<typeof IntegrationKindInput>;
+
+/**
+ * One chat channel as the Admin screen sees it. `webhookUrlMasked` is scheme and host only —
+ * **the saved address is never returned by any read**, so changing it means pasting it again.
+ */
+export const OrgIntegrationDTO = z.object({
+  kind: IntegrationKindSchema,
+  configured: z.boolean(),
+  enabled: z.boolean(),
+  webhookUrlMasked: z.string().nullable(),
+  eventToggles: IntegrationEventToggles,
+  updatedAt: dateOut.nullable(),
+});
+export type OrgIntegrationDTO = z.infer<typeof OrgIntegrationDTO>;
+
+/** What "Send test message" comes back with. Never carries the address or a provider error body. */
+export const IntegrationTestResultDTO = z.object({
+  kind: IntegrationKindSchema,
+  delivered: z.boolean(),
+  message: z.string(),
+});
+export type IntegrationTestResultDTO = z.infer<typeof IntegrationTestResultDTO>;

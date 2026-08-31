@@ -5,6 +5,7 @@ import {
   BellIcon,
   DashboardIcon,
   DisciplinesIcon,
+  IntegrationsIcon,
   PeopleIcon,
   ProjectsIcon,
   TasksIcon,
@@ -42,10 +43,11 @@ const MAIN_NAV: NavItem[] = [
   { href: "/notifications", label: "Notifications", icon: BellIcon },
 ];
 
-// Administrators only — nobody else sees these two rows at all.
+// Administrators only — nobody else sees these three rows at all.
 const ADMIN_NAV: NavItem[] = [
   { href: "/admin/users", label: "Users", icon: PeopleIcon },
   { href: "/admin/disciplines", label: "Disciplines", icon: DisciplinesIcon },
+  { href: "/admin/integrations", label: "Integrations", icon: IntegrationsIcon },
 ];
 
 export function navItemsFor(role: RoleName): NavItem[] {

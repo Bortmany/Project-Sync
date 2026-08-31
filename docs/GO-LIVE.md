@@ -61,6 +61,7 @@ Set these in the Railway service's Variables tab — never in the repo, never in
 | `SENTRY_DSN` | Optional | Server-side error tracking. Leave unset and it stays completely inert (`/api/health` reports `"sentry": {"server": "dormant", ...}`). Set it and server errors go to Sentry (`"server": "configured"`). **Set it before the build**, because the Content-Security-Policy that lets the browser reach Sentry is baked into the build. |
 | `NEXT_PUBLIC_SENTRY_DSN` | Optional | Only if you also want errors from people's browsers. Inlined at build time, and reported separately as `"sentry": {..., "browser": "configured"}`. |
 | `SENTRY_TRACES_SAMPLE_RATE` | Optional | `0` by default — errors only, no tracing quota spent. |
+| `APP_BASE_URL` | Optional | The address this deployment answers on, e.g. `https://tielora.up.railway.app`, with no trailing slash. Used only to make the link inside a Slack or Teams message clickable. Unset is safe: chat messages name the page instead of linking to it, and nothing else in the app reads it. Not a secret. |
 | `SWEEP_DISABLED` | Optional | `1` switches off the hourly "due soon / overdue" notification sweep. Safe: nothing depends on the sweep having run, because overdue is always worked out fresh when a page is read. Useful as a kill switch, or on extra instances. |
 | `DATABASE_URL_TEST` | No | Local and CI only. Never set it in production — the tests empty that database. |
 
@@ -211,7 +212,15 @@ Named here so nobody assumes otherwise:
   channels separately, so neither can be mistaken for the other.
 - **Shared rate limiting** — limits are counted per process (`src/lib/rate-limit.ts`). Fine on one
   instance; if the app is ever scaled to several, add the Redis store behind `RateLimitStore`.
-- **Email or SMS notifications** — notifications live in the app only.
+- **Email or SMS notifications** — notifications live in the app, with an optional copy to a Slack or
+  Teams channel (Admin → Integrations). No email is ever sent.
+- **A queue behind chat delivery** — a Slack or Teams message is attempted once, retried once if the
+  chat tool says "too many requests", and otherwise dropped with a logged line. Delivery state lives
+  in the process, not in a table, exactly like rate limiting. In-app notifications are always written
+  either way, so a dropped card costs a nudge and never the record.
+- **A "Connect Slack" install button** — an administrator pastes the webhook address for both tools.
+  The OAuth install flow Slack now prefers needs a Slack app published from our side; that is a
+  separate piece of owner setup and is on the roadmap, not in this round.
 - **Hiding whether an email address already has an account** — public signup answers a duplicate
   address with "that email address already has a Tielora account", so a caller can learn that an
   address is registered somewhere on the product. That is an accepted round-one tradeoff of one
