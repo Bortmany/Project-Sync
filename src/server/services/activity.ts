@@ -88,6 +88,24 @@ export const ACTIVITY = {
   INVITE_ACCEPTED: "INVITE_ACCEPTED",
   /** Somebody proved an address is theirs. A nudge finished, never a permission granted. */
   EMAIL_VERIFIED: "EMAIL_VERIFIED",
+  // Data rights. None of these rows ever carries the download token or where the file was written.
+  /** An administrator asked for a full copy of their company's data. */
+  EXPORT_STARTED: "EXPORT_STARTED",
+  /** That copy finished building and a download link was handed to them. */
+  EXPORT_READY: "EXPORT_READY",
+  /** Somebody took a copy of their OWN data. One row per download. */
+  PERSONAL_EXPORT: "PERSONAL_EXPORT",
+  /**
+   * Somebody deleted their own account. The summary deliberately does NOT carry their old name —
+   * it is written in the same transaction that replaces it with "Former member", and a fresh row
+   * naming them would undo the whole point. The older rows keep the name they were written with,
+   * which is history rather than a profile, and the privacy page says so.
+   */
+  ACCOUNT_DELETED: "ACCOUNT_DELETED",
+  /** An administrator asked for the whole workspace to be deleted. Seven days start now. */
+  WORKSPACE_DELETION_REQUESTED: "WORKSPACE_DELETION_REQUESTED",
+  /** An administrator called that off, inside the grace period. */
+  WORKSPACE_DELETION_CANCELLED: "WORKSPACE_DELETION_CANCELLED",
 } as const;
 
 export type ActivityAction = (typeof ACTIVITY)[keyof typeof ACTIVITY];
@@ -126,12 +144,17 @@ export type AppendActivityInput = {
 /**
  * Appends one audit row. Always called with the transaction client of the change it records,
  * so a change and its audit row either both happen or neither does.
+ *
+ * Returns the new row's id. Almost every caller ignores it; the workspace export uses it as the
+ * name of the archive it then builds, which is how a file can be found again later without any
+ * path ever being written into an audit row.
  */
 export async function appendActivity(
   tx: Prisma.TransactionClient,
   input: AppendActivityInput,
-): Promise<void> {
-  await tx.activityLog.create({
+): Promise<string> {
+  const row = await tx.activityLog.create({
+    select: { id: true },
     data: {
       actorId: input.actorId,
       projectId: input.projectId,
@@ -142,6 +165,7 @@ export async function appendActivity(
       metadata: (input.metadata ?? undefined) as Prisma.InputJsonValue | undefined,
     },
   });
+  return row.id;
 }
 
 type ActivityRow = {

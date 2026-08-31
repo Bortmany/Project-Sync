@@ -16,21 +16,29 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
-import type { EmailPurposeName } from "@/lib/zod-schemas";
+import type { EmailedPurposeName, EmailPurposeName } from "@/lib/zod-schemas";
 
 /**
- * How long each kind of link lives. Short for a reset (it is a recovery moment, and the person is
+ * How long each kind of token lives. Short for a reset (it is a recovery moment, and the person is
  * at their keyboard), a day for a verification, a week for an invitation (a new colleague may be
  * away when it lands).
+ *
+ * EXPORT is the one that is never emailed: it is the download bearer for a finished workspace
+ * export, and a day is long enough to fetch a large file without leaving a way into a company's
+ * whole record lying around all week.
  */
 export const EMAIL_TOKEN_TTL_MS: Record<EmailPurposeName, number> = {
   RESET: 60 * 60 * 1000, // 1 hour
   VERIFY: 24 * 60 * 60 * 1000, // 24 hours
   INVITE: 7 * 24 * 60 * 60 * 1000, // 7 days
+  EXPORT: 24 * 60 * 60 * 1000, // 24 hours
 };
 
-/** Plain English for how long a link lasts, for the email copy. */
-export const EMAIL_TOKEN_TTL_WORDS: Record<EmailPurposeName, string> = {
+/**
+ * Plain English for how long a link lasts, for the email copy. Keyed by the purposes that are
+ * really emailed, so there is nothing here for EXPORT to be written into.
+ */
+export const EMAIL_TOKEN_TTL_WORDS: Record<EmailedPurposeName, string> = {
   RESET: "1 hour",
   VERIFY: "24 hours",
   INVITE: "7 days",

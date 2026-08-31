@@ -1,6 +1,10 @@
 // Public privacy notice — no session required. Content is drawn from what the app actually stores
 // (see docs/GO-LIVE.md, gate 1); keep the two in step whenever a change adds a new kind of personal
 // data (house rule 12 in docs/CONVENTIONS.md).
+//
+// "Your rights" describes both halves of self-service data rights: downloading a copy, and deleting
+// — your own account, or (for an administrator) the whole workspace. Every sentence there is meant
+// to be literally true of what the code does, so keep the two in step.
 
 import Link from "next/link";
 
@@ -191,11 +195,44 @@ export default function PrivacyPage() {
       <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
         <h2 className="text-base font-semibold text-[var(--brand-ink)]">Your rights</h2>
         <p>
-          Your information is held inside your own company&apos;s space, so requests to see, correct,
-          or remove your personal information are handled by{" "}
-          <strong>your workspace administrator</strong> rather than through a self-service page. Deactivating an account keeps the audit trail and
-          document history intact, as explained above — that record is part of the engineering work
-          itself, not personal data held about you alone.
+          You can get a copy of your own information yourself. From the account menu at the top of
+          the app, <strong>Your account</strong> lets you download everything Tielora holds about
+          you — your profile details, the projects you are on, the tasks assigned to you, the
+          comments you wrote, your notifications, your personal list, and the announcements you
+          acknowledged or dismissed. It arrives as one file, it contains nothing belonging to your
+          company as a whole, and you can download it up to three times a day.
+        </p>
+        <p>
+          Your workspace administrator has the equivalent for the company as a whole, in{" "}
+          <strong>Admin → Data &amp; privacy</strong>: a copy of everything the workspace holds, as
+          data files plus every uploaded document and revision. It never contains anybody&apos;s
+          password, any sign-in session, any one-time email link, or the address of a connected chat
+          channel. That copy is prepared on our server, can be downloaded for one day using a link
+          only an administrator of your own company can use, and is deleted from our server two days
+          after it was made.
+        </p>
+        <p>
+          You can also delete your own account, from the same <strong>Your account</strong> page.
+          Deleting signs you out immediately and removes your name, your email address, your job
+          title and your other profile details: your name is replaced with &ldquo;Former
+          member&rdquo; everywhere it appears. It does not erase your work. Your comments, the tasks
+          you completed and every document revision you uploaded stay where they are, and the audit
+          trail keeps the entries it already recorded, including the name they were written with at
+          the time — that record is part of your company&apos;s engineering history, not personal
+          data held about you alone, and it is the same permanence rule described above. If
+          you&apos;re your workspace&apos;s only administrator you&apos;ll need to make someone else
+          an administrator first, so your company keeps somebody able to manage it.
+        </p>
+        <p>
+          Your workspace administrator can delete the whole workspace, in{" "}
+          <strong>Admin → Data &amp; privacy</strong>. There is a <strong>7-day grace period</strong>{" "}
+          first, during which any administrator can cancel it and everything carries on working as
+          normal; every administrator is told the moment it is requested. After those 7 days
+          everything is removed for good — every account, project, task, comment, document and
+          revision, every uploaded file, and the workspace&apos;s whole activity log. It cannot be
+          recovered afterwards, so take a copy first if you want one. Requests to correct your
+          information, and anything else you would like removed, are handled by{" "}
+          <strong>your workspace administrator</strong>.
         </p>
         <p>
           This handling is intended to respect Oman&apos;s Personal Data Protection Law (Royal Decree

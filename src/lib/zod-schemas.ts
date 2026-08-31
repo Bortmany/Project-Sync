@@ -1725,12 +1725,21 @@ export type BroadcastSettingDTO = z.infer<typeof BroadcastSettingDTO>;
 /* ------------------------------------------------------------------ */
 
 /**
- * What an emailed link is for. A zod enum over a plain string column, NOT a database enum — the
- * same choice `IntegrationKindSchema` and `PostKindSchema` made, so a fourth kind of link needs no
+ * What a single-use token is for. A zod enum over a plain string column, NOT a database enum — the
+ * same choice `IntegrationKindSchema` and `PostKindSchema` made, so a fifth kind needs no
  * migration.
+ *
+ * **"EXPORT" is the odd one out and is never emailed.** It is the download bearer for a finished
+ * workspace export: the same hashed, expiring, per-person row an emailed link uses, handed to the
+ * administrator who asked through the screen they are already looking at. `EmailedPurposeName`
+ * below is what the email side takes, so the compiler refuses to let an EXPORT token reach an
+ * inbox.
  */
-export const EmailPurposeSchema = z.enum(["INVITE", "RESET", "VERIFY"]);
+export const EmailPurposeSchema = z.enum(["INVITE", "RESET", "VERIFY", "EXPORT"]);
 export type EmailPurposeName = z.infer<typeof EmailPurposeSchema>;
+
+/** The purposes that really are sent by email. EXPORT is deliberately not one of them. */
+export type EmailedPurposeName = Exclude<EmailPurposeName, "EXPORT">;
 
 /**
  * The raw token out of a link, exactly as it was minted: 32 random bytes as lower-case hex. Parsing
@@ -1779,3 +1788,174 @@ export type PasswordChangedDTO = z.infer<typeof PasswordChangedDTO>;
 /** What the resend actions hand back: that we tried, and nothing about the link itself. */
 export const EmailSentDTO = z.object({ sent: z.literal(true) });
 export type EmailSentDTO = z.infer<typeof EmailSentDTO>;
+
+/* ------------------------------------------------------------------ */
+/* Data rights: taking a copy of your data out                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Where a company's full export has got to. Everything here is derived at read time from the audit
+ * trail and the file on disk — nothing about an export is stored in a column of its own.
+ *
+ * `downloadUrl` carries the raw download token, so this DTO is only ever answered to an
+ * administrator of that company over an authenticated route, and it is never logged or audited.
+ */
+export const WorkspaceExportStatusSchema = z.enum(["NONE", "WORKING", "READY", "FAILED"]);
+export type WorkspaceExportStatusName = z.infer<typeof WorkspaceExportStatusSchema>;
+
+export const WorkspaceExportStatusDTO = z.object({
+  state: WorkspaceExportStatusSchema,
+  /** When the export now being described was asked for. */
+  requestedAt: dateOut.nullable(),
+  requestedByName: z.string().nullable(),
+  sizeBytes: z.number().int().nonnegative().nullable(),
+  /** How many uploaded files went into the archive, and how many documents they belong to. */
+  fileCount: z.number().int().nonnegative().nullable(),
+  documentCount: z.number().int().nonnegative().nullable(),
+  downloadUrl: z.string().nullable(),
+  linkExpiresAt: dateOut.nullable(),
+  /** True when a fresh export may be started right now. */
+  canStart: z.boolean(),
+  /** When the once-a-day window opens again, when it is closed. */
+  nextAllowedAt: dateOut.nullable(),
+  /** Plain English, only when the last attempt failed. */
+  error: z.string().nullable(),
+});
+export type WorkspaceExportStatusDTO = z.infer<typeof WorkspaceExportStatusDTO>;
+
+/**
+ * One person's own copy of their own data. Everything in it is reachable through their ordinary
+ * visibility — a contractor's copy is narrowed exactly as every other read of theirs is — and
+ * nothing here is ever a password, a token or a hash of either.
+ */
+export const PersonalExportDTO = z.object({
+  exportedAt: dateOut,
+  workspaceName: z.string(),
+  profile: z.object({
+    name: z.string(),
+    email: z.string(),
+    role: RoleSchema,
+    jobTitle: z.string().nullable(),
+    companyName: z.string().nullable(),
+    disciplineName: z.string().nullable(),
+    accessEndsOn: dateOut.nullable(),
+    emailConfirmedAt: dateOut.nullable(),
+    lastSignedInAt: dateOut.nullable(),
+    accountCreatedAt: dateOut,
+  }),
+  projects: z.array(
+    z.object({
+      projectName: z.string(),
+      projectCode: z.string(),
+      yourRole: RoleSchema,
+      yourDiscipline: z.string().nullable(),
+      joinedAt: dateOut,
+    }),
+  ),
+  assignedTasks: z.array(
+    z.object({
+      title: z.string(),
+      status: TaskStatusSchema,
+      priority: PrioritySchema,
+      deadline: dateOut,
+      completedAt: dateOut.nullable(),
+      mainTaskTitle: z.string(),
+      projectName: z.string(),
+      disciplineName: z.string(),
+    }),
+  ),
+  comments: z.array(
+    z.object({
+      body: z.string(),
+      onTask: z.string(),
+      projectName: z.string(),
+      createdAt: dateOut,
+      editedAt: dateOut.nullable(),
+      deletedAt: dateOut.nullable(),
+    }),
+  ),
+  notifications: z.array(
+    z.object({
+      type: NotificationTypeSchema,
+      title: z.string(),
+      body: z.string(),
+      createdAt: dateOut,
+      readAt: dateOut.nullable(),
+    }),
+  ),
+  favorites: z.array(z.object({ what: z.string(), title: z.string(), createdAt: dateOut })),
+  personalList: z.array(
+    z.object({
+      title: z.string(),
+      done: z.boolean(),
+      createdAt: dateOut,
+      completedAt: dateOut.nullable(),
+    }),
+  ),
+  acknowledgedAnnouncements: z.array(z.object({ title: z.string(), createdAt: dateOut })),
+  dismissedAnnouncements: z.array(z.object({ title: z.string(), createdAt: dateOut })),
+  /** The sections that hit the per-section cap, named so nobody thinks they have the lot. */
+  truncated: z.array(z.string()),
+});
+export type PersonalExportDTO = z.infer<typeof PersonalExportDTO>;
+
+/* ------------------------------------------------------------------ */
+/* Data rights: deleting an account, and deleting a workspace          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The word somebody types to confirm they mean to delete their own account.
+ *
+ * One fixed string everybody can type correctly, rather than their own email address under stress
+ * — and it is checked here as well as in the service, so a form that skipped the box is refused
+ * before a single row is read.
+ */
+export const ACCOUNT_DELETE_CONFIRMATION = "DELETE";
+
+export const DeleteMyAccountInput = z.object({
+  // The `: boolean` is load-bearing. Without it TypeScript infers a type predicate from the
+  // comparison and zod narrows the field's type to the literal "DELETE", which would then make
+  // every caller cast whatever the person actually typed. The field is a string; only the value
+  // that gets through is fixed.
+  confirm: z.string().refine((value): boolean => value === ACCOUNT_DELETE_CONFIRMATION, {
+    message: `Type ${ACCOUNT_DELETE_CONFIRMATION} to confirm.`,
+  }),
+});
+export type DeleteMyAccountInput = z.infer<typeof DeleteMyAccountInput>;
+
+/** What deleting your own account hands back. Never a name, never an address — both are gone. */
+export const AccountDeletedDTO = z.object({ deleted: z.literal(true) });
+export type AccountDeletedDTO = z.infer<typeof AccountDeletedDTO>;
+
+/**
+ * What the "delete my account" card needs before anybody presses anything: whether this person is
+ * the only administrator left, so the screen can say so before they type the word rather than
+ * after. The server refuses them either way — this is the hint, not the rule.
+ */
+export const AccountDeletionOptionsDTO = z.object({
+  soleAdmin: z.boolean(),
+});
+export type AccountDeletionOptionsDTO = z.infer<typeof AccountDeletionOptionsDTO>;
+
+/** Asking for the whole workspace to be deleted: the workspace's own name, typed out exactly. */
+export const RequestWorkspaceDeletionInput = z.object({
+  confirmName: z.string().trim().min(1, "Type your workspace's name to confirm."),
+});
+export type RequestWorkspaceDeletionInput = z.infer<typeof RequestWorkspaceDeletionInput>;
+
+/**
+ * Where a workspace's deletion has got to. Everything derived except the two stored columns:
+ * `deletesOn` is the moment it was asked for plus the grace period and `daysLeft` counts from
+ * today, both worked out at read time exactly as OVERDUE and a locked phase are.
+ */
+export const WorkspaceDeletionDTO = z.object({
+  workspaceName: z.string(),
+  pending: z.boolean(),
+  requestedAt: dateOut.nullable(),
+  requestedByName: z.string().nullable(),
+  /** The day it becomes permanent. Null while nobody has asked. */
+  deletesOn: dateOut.nullable(),
+  /** Whole days left before that, never below zero. Null while nobody has asked. */
+  daysLeft: z.number().int().nonnegative().nullable(),
+});
+export type WorkspaceDeletionDTO = z.infer<typeof WorkspaceDeletionDTO>;

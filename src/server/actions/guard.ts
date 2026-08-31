@@ -45,6 +45,7 @@ export function revalidateAdmin(): void {
   revalidatePath("/admin/users");
   revalidatePath("/admin/disciplines");
   revalidatePath("/admin/integrations");
+  revalidatePath("/admin/data-privacy");
 }
 
 /** Refreshes the pages a task change is visible on. */

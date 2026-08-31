@@ -11,7 +11,7 @@ export default function TermsPage() {
         Tielora
       </p>
       <h1 className="mt-2 text-2xl font-semibold text-[var(--brand-ink)]">Terms of use</h1>
-      <p className="mt-1 text-sm text-[var(--brand-gray)]">Last updated 25 Aug 2026</p>
+      <p className="mt-1 text-sm text-[var(--brand-gray)]">Last updated 31 Aug 2026</p>
 
       <div className="mt-6 rounded-[var(--radius)] border border-[var(--brand-stone)] bg-[var(--brand-stone)]/40 p-4 text-sm text-[var(--brand-text)]">
         This is a template written to describe the app honestly. It has not yet been reviewed by a
@@ -53,6 +53,30 @@ export default function TermsPage() {
           the right to share there, and do not attempt to access projects, tasks, or documents you
           have not been given permission to see. Your administrator can adjust or revoke access at
           any time.
+        </p>
+      </section>
+
+      <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
+        <h2 className="text-base font-semibold text-[var(--brand-ink)]">
+          Deleting an account or a workspace
+        </h2>
+        <p>
+          You can delete your own account at any time from <strong>Your account</strong>. It signs
+          you out and removes your personal details, replacing your name with &ldquo;Former
+          member&rdquo;; your comments, completed work and uploaded document revisions stay on your
+          company&apos;s record, because that record belongs to the project rather than to you
+          alone. If you are your workspace&apos;s only administrator, make someone else an
+          administrator first — Tielora will not let a company be left with nobody able to run it.
+        </p>
+        <p>
+          An administrator can delete the entire workspace from{" "}
+          <strong>Admin → Data &amp; privacy</strong>. There is a 7-day grace period, during which
+          any administrator can cancel and the workspace keeps working normally. After that,
+          everything the workspace holds is permanently deleted — every account, project, task,
+          comment, document, uploaded file and the whole activity log — and{" "}
+          <strong>it cannot be recovered</strong>. Download a copy of anything you need to keep
+          before the grace period ends; the same screen has a &ldquo;Download everything&rdquo;
+          button for exactly that.
         </p>
       </section>
 

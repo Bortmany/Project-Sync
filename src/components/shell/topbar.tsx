@@ -2,6 +2,7 @@
 
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Avatar } from "@/components/ui";
@@ -48,6 +49,16 @@ export function Topbar({ name, email, role }: { name: string; email: string; rol
             className="absolute right-0 z-40 mt-2 w-56 rounded-[var(--radius)] border border-[var(--border)] bg-white p-2 shadow-lg"
           >
             <p className="px-2 py-1 text-xs text-[var(--brand-gray)]">{email}</p>
+            {/* Everybody has one, contractors included: it is about their own data, not the
+                company's. The workspace-wide equivalent lives in Admin → Data & privacy. */}
+            <Link
+              href="/account"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="block rounded-[var(--radius)] px-2 py-2 text-left text-sm text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
+            >
+              Your account
+            </Link>
             <button
               type="button"
               role="menuitem"

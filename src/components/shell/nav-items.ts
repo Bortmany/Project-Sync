@@ -8,6 +8,7 @@ import {
   IntegrationsIcon,
   PeopleIcon,
   ProjectsIcon,
+  ShieldIcon,
   TasksIcon,
 } from "@/components/shell/icons";
 import { SIDEBAR_FAVORITES_LIMIT } from "@/components/hooks/use-favorites";
@@ -48,11 +49,12 @@ const MAIN_NAV: NavItem[] = [
   { href: "/messages", label: "Messages", icon: PeopleIcon },
 ];
 
-// Administrators only — nobody else sees these three rows at all.
+// Administrators only — nobody else sees these four rows at all.
 const ADMIN_NAV: NavItem[] = [
   { href: "/admin/users", label: "Users", icon: PeopleIcon },
   { href: "/admin/disciplines", label: "Disciplines", icon: DisciplinesIcon },
   { href: "/admin/integrations", label: "Integrations", icon: IntegrationsIcon },
+  { href: "/admin/data-privacy", label: "Data & privacy", icon: ShieldIcon },
 ];
 
 /**

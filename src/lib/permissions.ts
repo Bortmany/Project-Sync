@@ -42,6 +42,10 @@ export type Action =
   | "MANAGE_USERS"
   | "MANAGE_DISCIPLINES"
   | "MANAGE_INTEGRATIONS"
+  /** Taking a full copy of the company's own data out of Tielora (Admin → Data & privacy). */
+  | "EXPORT_ORG"
+  /** Asking for the whole workspace to be deleted, and calling that request off again. */
+  | "DELETE_ORG"
   | "POST_ANNOUNCEMENT"
   | "POST_BOARD"
   | "VIEW_PROJECT";
@@ -83,7 +87,13 @@ export class ForbiddenError extends Error {
 }
 
 /** Actions only an administrator ever performs. */
-const ADMIN_ONLY: Action[] = ["MANAGE_USERS", "MANAGE_DISCIPLINES", "MANAGE_INTEGRATIONS"];
+const ADMIN_ONLY: Action[] = [
+  "MANAGE_USERS",
+  "MANAGE_DISCIPLINES",
+  "MANAGE_INTEGRATIONS",
+  "EXPORT_ORG",
+  "DELETE_ORG",
+];
 
 /** Actions a discipline lead may perform inside their own discipline on a project they belong to. */
 const LEAD_DISCIPLINE_ACTIONS: Action[] = [
@@ -282,6 +292,8 @@ export const PERMISSION_MATRIX: Record<RoleValue, { always: Action[]; conditiona
       "MANAGE_USERS",
       "MANAGE_DISCIPLINES",
       "MANAGE_INTEGRATIONS",
+      "EXPORT_ORG",
+      "DELETE_ORG",
       "POST_ANNOUNCEMENT",
       "POST_BOARD",
       "VIEW_PROJECT",

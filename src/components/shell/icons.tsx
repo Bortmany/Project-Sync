@@ -104,6 +104,16 @@ export function IntegrationsIcon({ size = 18, className }: IconProps) {
   );
 }
 
+/** A shield with a tick — Admin → Data & privacy: the workspace's own data, looked after. */
+export function ShieldIcon({ size = 18, className }: IconProps) {
+  return (
+    <svg {...base(size, className)}>
+      <path d="M10 2.5l6 2.2v4.6c0 3.4-2.4 6.4-6 8.2-3.6-1.8-6-4.8-6-8.2V4.7z" />
+      <path d="M7.4 9.9l1.9 1.9 3.4-3.6" />
+    </svg>
+  );
+}
+
 export function SearchIcon({ size = 16, className }: IconProps) {
   return (
     <svg {...base(size, className)}>
