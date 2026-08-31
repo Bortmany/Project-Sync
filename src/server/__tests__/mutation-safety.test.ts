@@ -1,12 +1,17 @@
 // A sweep over the source itself, not over one scenario.
 //
-// Two whole-app promises are easy to keep today and easy to break with the next file somebody adds:
+// Four whole-app promises are easy to keep today and easy to break with the next file somebody adds:
 //
 //  1. Every mutation is rate limited (house rule 10). A server action does it through
 //     beginMutation(); a route handler that changes something does it with limit(byUser…) or,
 //     for anonymous traffic, limit(byIp…). A new mutation that forgets fails this test.
 //  2. DocumentVersion and ActivityLog rows are append-only (the golden rule). No shipped code path
 //     may update or delete one — this reads every source file and says so.
+//  3. Every READ route is limited too, through guardRead() — one unthrottled listing is all it takes
+//     to make the ceiling on everything else pointless. The only exceptions are named below.
+//  4. Every server action starts its chain the way house rule 1 says: the input is parsed with a zod
+//     schema before anything else looks at it, and every failure leaves through toFailure(), so no
+//     internal message or stack trace can reach a screen.
 //
 // Reading the source is deliberate: a scenario test can only prove the mutations it happens to call,
 // and the thing worth proving here is that there is no exception anywhere.
@@ -60,24 +65,29 @@ function mutatingRouteHandlers(): { file: string; method: string; source: string
   return handlers;
 }
 
-/** The exported server actions, each with the body between its signature and the next export. */
-function serverActions(): { file: string; name: string; body: string }[] {
+/**
+ * The exported server actions, each with the body between its signature and the next export, plus
+ * the text between its brackets — empty for the two actions that take nothing at all
+ * (markAllNotificationsRead, disconnectMicrosoft), which is how the "parse your input" check below
+ * knows which actions have an input to parse.
+ */
+function serverActions(): { file: string; name: string; args: string; body: string }[] {
   const files = sourceFiles(path.join(SRC, "server", "actions")).filter(
     (file) => !file.endsWith("guard.ts"),
   );
 
-  const actions: { file: string; name: string; body: string }[] = [];
+  const actions: { file: string; name: string; args: string; body: string }[] = [];
   for (const file of files) {
     const source = read(file);
-    const signature = /export\s+async\s+function\s+([A-Za-z0-9_]+)\s*\(/g;
-    const starts: { name: string; at: number }[] = [];
+    const signature = /export\s+async\s+function\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)/g;
+    const starts: { name: string; args: string; at: number }[] = [];
     let match: RegExpExecArray | null;
     while ((match = signature.exec(source)) !== null) {
-      starts.push({ name: match[1], at: match.index });
+      starts.push({ name: match[1], args: match[2].trim(), at: match.index });
     }
     starts.forEach((start, index) => {
       const end = index + 1 < starts.length ? starts[index + 1].at : source.length;
-      actions.push({ file, name: start.name, body: source.slice(start.at, end) });
+      actions.push({ file, name: start.name, args: start.args, body: source.slice(start.at, end) });
     });
   }
   return actions;
@@ -133,6 +143,75 @@ describe("every mutation is rate limited", () => {
       .map((action) => `${relative(action.file)} → ${action.name}`);
 
     expect(missingScope).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* 1b. Every read route is limited too                                 */
+/* ------------------------------------------------------------------ */
+
+/** The read handlers that answer without a limit, and the reason each one is allowed to. */
+const UNLIMITED_READS: Record<string, string> = {
+  [path.join("src", "app", "api", "health", "route.ts")]:
+    "the monitor's endpoint — a 429 here would make the hosting platform restart a healthy app",
+};
+
+/** The GET handlers, as `path → source`. */
+function readRouteHandlers(): { file: string; source: string }[] {
+  return sourceFiles(path.join(SRC, "app", "api"))
+    .filter((file) => file.endsWith(`${path.sep}route.ts`))
+    .map((file) => ({ file, source: read(file) }))
+    .filter(({ source }) => /export\s+(async\s+)?(function|const)\s+GET\b/.test(source));
+}
+
+describe("every read route is rate limited", () => {
+  it("finds the read routes, so the sweep is not vacuous", () => {
+    expect(readRouteHandlers().length).toBeGreaterThan(20);
+  });
+
+  it("puts every listing behind guardRead() or its own limiter", () => {
+    const unguarded = readRouteHandlers()
+      .filter(({ source }) => !/\bguardRead\s*\(/.test(source) && !isRateLimited(source))
+      .map(({ file }) => relative(file))
+      .filter((name) => !(name in UNLIMITED_READS));
+
+    expect(unguarded).toEqual([]);
+  });
+
+  it("keeps the list of deliberately unlimited reads short and real", () => {
+    const stale = Object.keys(UNLIMITED_READS).filter(
+      (name) => !readRouteHandlers().some((handler) => relative(handler.file) === name),
+    );
+
+    expect(stale).toEqual([]);
+    expect(Object.keys(UNLIMITED_READS).length).toBeLessThanOrEqual(2);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* 1c. Every action starts the chain the same way                      */
+/* ------------------------------------------------------------------ */
+
+describe("every server action starts the chain the same way", () => {
+  it("finds actions that take an input, so the check below is not vacuous", () => {
+    expect(serverActions().filter((action) => action.args.length > 0).length).toBeGreaterThan(10);
+  });
+
+  it("parses its input with a zod schema before anything else reads it", () => {
+    const unparsed = serverActions()
+      .filter((action) => action.args.length > 0)
+      .filter((action) => !/\.safeParse\s*\(/.test(action.body))
+      .map((action) => `${relative(action.file)} → ${action.name}`);
+
+    expect(unparsed).toEqual([]);
+  });
+
+  it("hands every failure back through toFailure(), so no internal message reaches a screen", () => {
+    const leaky = serverActions()
+      .filter((action) => !/\btoFailure\s*\(/.test(action.body))
+      .map((action) => `${relative(action.file)} → ${action.name}`);
+
+    expect(leaky).toEqual([]);
   });
 });
 

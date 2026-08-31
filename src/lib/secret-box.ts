@@ -13,6 +13,7 @@
 // Microsoft 365, which is exactly what should happen when a signing secret has leaked.
 
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes, timingSafeEqual } from "node:crypto";
+import { MIN_SECRET_LENGTH } from "@/lib/boot-guards";
 
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
@@ -22,16 +23,16 @@ const VERSION = "v1";
 /** Fixed, non-secret salt. HKDF needs one; it does not have to be secret, only stable. */
 const SALT = "tielora.secret-box.2026";
 
-/**
- * The same floor house rule 11 sets for SESSION_SECRET itself (and the same number
- * `MIN_SECRET_LENGTH` in src/lib/boot-guards.ts uses). Below it there is no point pretending:
- * refuse to seal rather than seal weakly.
- */
-const MIN_SECRET_LENGTH = 32;
+// The floor is the one house rule 11 sets for SESSION_SECRET itself, imported from
+// src/lib/boot-guards.ts rather than copied: a key derived here is exactly as strong as the secret
+// the boot guard lets production start with, and the two can never drift apart by half an edit.
+// Below it there is no point pretending — refuse to seal rather than seal weakly.
 
 export class SecretBoxUnavailableError extends Error {
   constructor() {
-    super("SESSION_SECRET must be set (32+ characters) before secrets can be stored.");
+    super(
+      `SESSION_SECRET must be set (${MIN_SECRET_LENGTH}+ characters) before secrets can be stored.`,
+    );
     this.name = "SecretBoxUnavailableError";
   }
 }

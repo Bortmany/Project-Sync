@@ -21,6 +21,7 @@ change that moved the code.
 | 7 | Health check pointed at `/api/health` | ✅ Checked into `railway.json`; confirm it in the dashboard on first setup (section 3) |
 | 8 | Demo/seed accounts removed from the production database | ❌ Never run `npm run seed` against production |
 | 9 | The golden-rule tests green on the deployed commit (`npm run verify`) | ✅ Part of every change |
+| 10 | **Signup is open on purpose — an owner decision, not an oversight** | ⚠️ Anybody who reaches `/signup` can create their own company. That is what this product is; it is not a private tool with signups left open by mistake. It is limited to five signups an hour per address, each company is sealed off from every other (the tenant rule), and no company can be reached without signing in. If you would rather launch by invitation only, say so before launch — the change is to `/signup`, not to anything else. |
 
 ### Gate 1 — privacy and terms (written)
 
@@ -69,6 +70,7 @@ Set these in the Railway service's Variables tab — never in the repo, never in
 | `MS_GRAPH_CLIENT_ID` | Optional | The Application (client) ID of the Azure app registration (section 6). Not a secret, but the feature stays completely dormant until it and the secret below are both set: no card, no tab, and every Microsoft route answers "not set up". `/api/health` reports `"microsoft": {"status": "dormant", "connectedOrgs": 0}` until then. |
 | `MS_GRAPH_CLIENT_SECRET` | Optional | **A real secret.** The client secret Value from the same Azure app registration, shown once when it is created. Client secrets expire — set a calendar reminder before the date you chose, because when it expires every company's attachments stop working until it is replaced. |
 | `MS_GRAPH_REDIRECT_PATH` | Optional | Defaults to `/api/integrations/microsoft/callback`, which is the path to register in Azure. Only change it if something in front of the app rewrites that path. |
+| `DB_POOL_MAX` | Optional | How many database connections **each copy of the app** keeps open. Defaults to `10`, which is right for one instance on Railway's Postgres. If the app is ever run on several instances, set this so `instances × DB_POOL_MAX` stays comfortably under the database's own `max_connections` (Railway's default is 100) — or point `DATABASE_URL` at the pooled connection string instead. |
 | `SWEEP_DISABLED` | Optional | `1` switches off the hourly "due soon / overdue" notification sweep. Safe: nothing depends on the sweep having run, because overdue is always worked out fresh when a page is read. Useful as a kill switch, or on extra instances. |
 | `DATABASE_URL_TEST` | No | Local and CI only. Never set it in production — the tests empty that database. |
 
@@ -113,15 +115,24 @@ lets a clean Nixpacks checkout build at all — the generated Prisma client live
      so a skipped or failed sweep never makes the app unhealthy. `lastRunAt` stays `null` for the
      first minute after a deploy, and `"skipped — another instance"` is the normal, correct answer
      on every copy but one when the app runs on several.
+   - The same answer's `integrations` line reads `{"slack":0,"teams":0}` on a fresh install — those
+     are counts of how many companies have switched a chat channel on, and nothing else. The
+     `microsoft` line reads `{"status":"dormant","connectedOrgs":0}` until the Azure app in section 6
+     is registered, and `"configured"` afterwards.
    - The deploy logs contain no "Tielora cannot start in production" line. If they do, the
      message names exactly which variable is wrong.
    - `curl -sD - -o /dev/null https://<domain>/login` shows `Content-Security-Policy`,
      `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`,
      `Permissions-Policy` and `Strict-Transport-Security`.
-   - Sign in as the first administrator, then create the real people from Admin → Users.
-10. **Do not run `npm run seed` against production.** It is development data. Create the first
-    administrator by running the seed's user creation against an empty production database only if
-    you intend to delete that account immediately afterwards.
+   - Open `https://<domain>/signup` and create the first company. Signing up creates the
+     organisation and the disciplines that come with the industry template you pick, and makes the
+     person who signed up that company's administrator. (Phases arrive later, per project, from the
+     same template.) Then add the real people from
+     Admin → Users. Every company that joins later does exactly the same thing — there is no
+     "create a workspace" button anywhere in the dashboard, and no account creates itself.
+10. **Do not run `npm run seed` against production.** It is development data — demo people, a demo
+    company and a demo project. Production gets its first company from `/signup` (step 9), which
+    never needs the seed.
 
 ### Security headers, and what to do if a page breaks
 
@@ -191,9 +202,12 @@ the document count makes the copy-out awkward.
    psql "<scratch DATABASE_URL>" -c 'select count(*) from "ActivityLog";'
    psql "<scratch DATABASE_URL>" -c 'select count(*) from "DocumentVersion";'
    psql "<scratch DATABASE_URL>" -c 'select count(*) from "MainTask";'
+   psql "<scratch DATABASE_URL>" -c 'select count(*) from "Organization";'
    ```
    The audit trail and document revisions matter most — they are the two things this app promises are
-   never lost. Numbers should be close to production's.
+   never lost. Numbers should be close to production's. `Organization` is there because every other
+   row in the database belongs to one of those companies: if that count is wrong, the restore is
+   wrong no matter how healthy the rest looks.
 4. Delete the scratch database. Write the date of the test somewhere you will find it again; a
    restore test older than 90 days counts as untested.
 
