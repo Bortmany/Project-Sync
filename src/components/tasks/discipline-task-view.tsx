@@ -283,7 +283,7 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
         </div>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
         <div className="min-w-0 max-w-3xl space-y-5">
           <Card
             title="What's required"
