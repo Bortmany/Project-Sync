@@ -23,7 +23,13 @@ import { storeFile, validateUpload } from "@/lib/upload";
 import { actorForUser, type ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
 import { personBrief, projectBrief } from "@/server/services/briefs";
-import { listActivity, createComment, listComments } from "@/server/services/comments";
+import {
+  listActivity,
+  createComment,
+  deleteComment,
+  editComment,
+  listComments,
+} from "@/server/services/comments";
 import { getDashboardForActor } from "@/server/services/dashboard";
 import { listUsers } from "@/server/services/directory";
 import {
@@ -380,6 +386,24 @@ describe("a contractor's documents, search, directory and briefs are all narrowe
     const mine = await searchEverything(contractor, "inspection");
     expect(mine.disciplineTasks.map((task) => task.title)).toEqual([MINE]);
 
+    // The project card in a search result is the SAME narrowed card the projects page gives them:
+    // their own task counts, their own progress and their own disciplines — never the whole
+    // project's. Search is a second door onto the project list and must not open any wider.
+    const [card] = byProject.projects;
+    const [listed] = await listProjectsForActor(contractor);
+    expect(card.mainTaskCount).toBe(listed.mainTaskCount);
+    expect(card.overdueCount).toBe(listed.overdueCount);
+    expect(card.progressPct).toBe(listed.progressPct);
+    expect(card.disciplines.map((row) => row.code)).toEqual(listed.disciplines.map((row) => row.code));
+
+    // Only the main task their own work sits under is counted — the internal one is not.
+    expect(card.mainTaskCount).toBe(1);
+    const managerCard = (await searchEverything(fixture.pmActor, "Test")).projects.find(
+      (project) => project.id === fixture.projectId,
+    );
+    expect(managerCard?.mainTaskCount).toBeGreaterThan(card.mainTaskCount);
+    expect(managerCard!.disciplines.length).toBeGreaterThan(card.disciplines.length);
+
     const files = await searchEverything(contractor, "Internal");
     expect(files.documents.map((document) => document.id)).not.toContain(internalDocumentId);
     // The project manager finds exactly what the contractor could not.
@@ -430,6 +454,105 @@ describe("a contractor's documents, search, directory and briefs are all narrowe
 
     const thread = await listComments(contractor, { disciplineTaskId: myTaskId });
     expect(thread.map((row) => row.body)).toContain("Welds complete, report attached.");
+  });
+
+  it("can edit and remove their own comment, and nobody else's", async () => {
+    const mine = await createComment(contractor, {
+      disciplineTaskId: myTaskId,
+      body: "First pass done.",
+      mentions: [],
+    });
+
+    const edited = await editComment(contractor, { id: mine.id, body: "Second pass done." });
+    expect(edited.body).toBe("Second pass done.");
+
+    // A colleague's comment on the contractor's OWN task is one they may read and never change.
+    const colleagues = await createComment(fixture.pmActor, {
+      disciplineTaskId: myTaskId,
+      body: "Noted, thank you.",
+      mentions: [],
+    });
+    await expect(
+      editComment(contractor, { id: colleagues.id, body: "Not mine to change" }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(deleteComment(contractor, { id: colleagues.id })).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+
+    // A comment on work that is not theirs does not exist for them at all.
+    const elsewhere = await createComment(fixture.pmActor, {
+      disciplineTaskId: theirTaskId,
+      body: "Internal chatter.",
+      mentions: [],
+    });
+    await expect(
+      editComment(contractor, { id: elsewhere.id, body: "Not mine to change" }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(deleteComment(contractor, { id: elsewhere.id })).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+
+    const removed = await deleteComment(contractor, { id: mine.id });
+    expect(removed.removed).toBe(true);
+    const thread = await listComments(contractor, { disciplineTaskId: myTaskId });
+    expect(thread.find((row) => row.id === mine.id)?.isDeleted).toBe(true);
+  });
+
+  it("is never notified about a comment on a thread they cannot open", async () => {
+    // A colleague @-mentions the contractor on the PARENT thread, which a contractor cannot read.
+    // The notification would name a task whose link answers "not found".
+    await createComment(fixture.pmActor, {
+      mainTaskId: sharedMainTaskId,
+      body: "Any update here?",
+      mentions: [contractor.userId, fixture.engineerActor.userId],
+    });
+
+    // Nor on a colleague's discipline task, where the contractor is a project member but holds
+    // none of the work.
+    await createComment(fixture.pmActor, {
+      disciplineTaskId: theirTaskId,
+      body: "And here?",
+      mentions: [contractor.userId],
+    });
+
+    expect(
+      await prisma.notification.count({ where: { userId: contractor.userId, type: "MENTIONED" } }),
+    ).toBe(0);
+    expect(
+      await prisma.notification.count({
+        where: { userId: contractor.userId, type: "COMMENT_ADDED" },
+      }),
+    ).toBe(0);
+
+    // The colleague mentioned in the same breath did hear about it, which is what makes the
+    // omission deliberate rather than a broken fan-out.
+    expect(
+      await prisma.notification.count({
+        where: { userId: fixture.engineerActor.userId, type: "MENTIONED" },
+      }),
+    ).toBe(1);
+
+    // And on their own task a mention still reaches them.
+    await createComment(fixture.pmActor, {
+      disciplineTaskId: myTaskId,
+      body: "Please confirm the weld report.",
+      mentions: [contractor.userId],
+    });
+    expect(
+      await prisma.notification.count({ where: { userId: contractor.userId, type: "MENTIONED" } }),
+    ).toBe(1);
+
+    // As does a plain comment on it, because they are its assignee.
+    await createComment(fixture.pmActor, {
+      disciplineTaskId: myTaskId,
+      body: "One more thing.",
+      mentions: [],
+    });
+    expect(
+      await prisma.notification.count({
+        where: { userId: contractor.userId, type: "COMMENT_ADDED" },
+      }),
+    ).toBe(1);
   });
 
   it("can only star something they can see", async () => {

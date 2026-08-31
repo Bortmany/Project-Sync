@@ -69,7 +69,9 @@ other model reaches its organisation through one of them. In practice:
   filters `role: { not: "EXTERNAL" }`: an override notification names work a contractor may not see,
   and a notification body is the one door read scoping cannot close. Their own notifications —
   assigned, status changed, sent back for more work — are unaffected. **An announcement's fan-out
-  carries the same filter** (`announcementRecipients()` in posts.ts).
+  carries the same filter** (`announcementRecipients()` in posts.ts), **and so do comment and
+  mention fan-outs** (`notifiableRecipients()` in comments.ts — a contractor hears about a comment
+  only on a discipline task assigned to them).
 - **They have no noticeboard.** No Messages row in the sidebar, `/messages` answers "not found", and
   every announcement and board read or write in `posts.ts` refuses them not-found-style. Their daily
   brief keeps working with an empty announcements section.

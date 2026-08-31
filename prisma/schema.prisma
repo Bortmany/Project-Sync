@@ -66,9 +66,11 @@ model Organization {
   slug   String @unique
   /// Which discipline template the company started from: OIL_AND_GAS, CONSTRUCTION or GENERIC.
   industryTemplate String
-  /// Who may post a company-wide announcement: "ADMIN_PM" (administrators and project managers) or
-  /// "ADMIN". A plain string validated by zod, not a database enum, so a third policy needs no
-  /// migration — the same shape OrgIntegration.kind uses.
+  /// Who may post a company-wide announcement: "ADMIN_ONLY" (administrators only), "ADMIN_PM"
+  /// (administrators and project managers — the default) or "ADMIN_PM_LEAD" (those plus discipline
+  /// leads). A plain string validated by zod, not a database enum, so a third policy needs no
+  /// migration — the same shape OrgIntegration.kind uses. broadcastPolicyOf() maps the legacy
+  /// spelling "ADMIN" to "ADMIN_ONLY" and reads any other unrecognised value as the default.
   broadcastPolicy  String   @default("ADMIN_PM")
   createdAt        DateTime @default(now())
 

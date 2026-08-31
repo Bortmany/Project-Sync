@@ -125,7 +125,9 @@ export async function searchEverything(
   ]);
 
   const [projects, mainTasks, documents] = await Promise.all([
-    buildProjectListItems(projectRows),
+    // The viewer rides along so a contractor's project card is the same narrowed card the projects
+    // page gives them — their own task counts and their own disciplines, never the project-wide ones.
+    buildProjectListItems(projectRows, actor),
     listMainTaskItems(mainTaskRows.map((row) => row.id), actor),
     toDocumentDTOs(documentRows),
   ]);

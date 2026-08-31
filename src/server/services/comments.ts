@@ -177,7 +177,8 @@ export async function createComment(
     return comment.id;
   });
 
-  const mentioned = mentions.filter((userId) => userId !== actor.userId);
+  const named = mentions.filter((userId) => userId !== actor.userId);
+  const mentioned = await notifiableRecipients(target, named);
   if (mentioned.length > 0) {
     await notify(actor, mentioned, "MENTIONED", {
       title: "You were mentioned in a comment",
@@ -186,8 +187,10 @@ export async function createComment(
     });
   }
 
-  const followers = target.followerIds.filter(
-    (userId) => userId !== actor.userId && !mentioned.includes(userId),
+  // Anybody already named is left out here whether or not they were told, so nobody is told twice.
+  const followers = await notifiableRecipients(
+    target,
+    target.followerIds.filter((userId) => userId !== actor.userId && !named.includes(userId)),
   );
   if (followers.length > 0) {
     await notify(actor, followers, "COMMENT_ADDED", {
@@ -207,7 +210,13 @@ export async function editComment(
 ): Promise<CommentDTO> {
   const existing = await loadComment(actor, input.id);
   const target = await resolveTarget(actor, existing.mainTaskId, existing.disciplineTaskId);
-  assertCan(actor, "COMMENT", { projectId: target.projectId, orgId: target.orgId });
+  // The assignee rides along exactly as it does in createComment: without it a contractor is
+  // refused even on their own comment, on their own task.
+  assertCan(actor, "COMMENT", {
+    projectId: target.projectId,
+    orgId: target.orgId,
+    assigneeId: target.assigneeId,
+  });
 
   if (existing.deletedAt) throw new ServiceError("That comment was removed, so it cannot be edited.");
   if (existing.authorId !== actor.userId && actor.role !== "ADMIN") {
@@ -245,7 +254,12 @@ export async function deleteComment(
 ): Promise<{ removed: true; projectId: string; mainTaskId: string; disciplineTaskId: string | null }> {
   const existing = await loadComment(actor, input.id);
   const target = await resolveTarget(actor, existing.mainTaskId, existing.disciplineTaskId);
-  assertCan(actor, "COMMENT", { projectId: target.projectId, orgId: target.orgId });
+  // Same as editComment: the assignee is what lets a contractor remove their own comment.
+  assertCan(actor, "COMMENT", {
+    projectId: target.projectId,
+    orgId: target.orgId,
+    assigneeId: target.assigneeId,
+  });
 
   const scope = {
     removed: true as const,
@@ -406,6 +420,33 @@ async function resolveTarget(
     linkUrl: `/discipline-tasks/${task.id}`,
     followerIds: [...new Set(followers)],
   };
+}
+
+/**
+ * Who may actually be TOLD about a comment.
+ *
+ * Read scoping already keeps a contractor out of every thread but their own, and a notification body
+ * is the one door it cannot close — so the fan-out carries the same filter `projectAudience()` does
+ * in tasks.ts and phases.ts. A contractor only hears about a comment on a discipline task assigned
+ * to them; a colleague @-mentioning one on a main task's thread would otherwise send a message
+ * naming work whose link answers "not found". Colleagues are unaffected.
+ */
+async function notifiableRecipients(
+  target: CommentTarget,
+  userIds: string[],
+): Promise<string[]> {
+  if (userIds.length === 0) return [];
+
+  const internal = await prisma.user.findMany({
+    where: { id: { in: userIds }, role: { not: "EXTERNAL" } },
+    select: { id: true },
+  });
+  const allowed = new Set(internal.map((person) => person.id));
+
+  // The one contractor a comment may reach: the person this discipline task belongs to.
+  if (target.disciplineTaskId && target.assigneeId) allowed.add(target.assigneeId);
+
+  return userIds.filter((userId) => allowed.has(userId));
 }
 
 /** Nobody can be mentioned into a project they are not on — that would leak the task to them. */
