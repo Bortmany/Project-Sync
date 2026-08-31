@@ -26,6 +26,7 @@ import { externalTaskScope, isExternal, type ActorContext } from "@/server/actor
 import { NotFoundError, ServiceError } from "@/server/errors";
 import { checkDto, checkDtoList } from "@/server/serialize";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
+import { assertStorageRoom } from "@/server/services/billing";
 import { notify } from "@/server/services/notify";
 import { assertCanViewProject, projectsVisibleTo } from "@/server/services/projects";
 import { lockMainTask } from "@/server/services/tasks";
@@ -59,6 +60,12 @@ export async function uploadDocumentVersion(
   file: StoredUpload,
 ): Promise<DocumentVersionDTO> {
   const target = await assertCanUploadTo(actor, meta);
+
+  // The plan's storage ceiling, before the revision is recorded. Every upload in the app arrives
+  // here — the browser's dropzone and a Microsoft 365 attachment alike — so this is the only place
+  // it has to be checked. Files already stored are never touched: a company over its cap keeps
+  // every document it has and downloads them as usual, and only another upload is refused.
+  await assertStorageRoom(actor, file.sizeBytes);
 
   const requiredDocument = await resolveRequiredDocument(meta, target);
   const filename = safeOriginalName(file.originalName);

@@ -41,6 +41,7 @@ const ALL_ACTIONS: Action[] = [
   "MANAGE_INTEGRATIONS",
   "EXPORT_ORG",
   "DELETE_ORG",
+  "MANAGE_BILLING",
   "POST_ANNOUNCEMENT",
   "POST_BOARD",
   "VIEW_PROJECT",
@@ -117,6 +118,7 @@ describe("project manager", () => {
       action !== "MANAGE_INTEGRATIONS" &&
       action !== "EXPORT_ORG" &&
       action !== "DELETE_ORG" &&
+      action !== "MANAGE_BILLING" &&
       !POST_ACTIONS.includes(action),
   );
 
@@ -135,6 +137,7 @@ describe("project manager", () => {
     expect(can(pm, "MANAGE_INTEGRATIONS", ownCtx)).toBe(false);
     expect(can(pm, "EXPORT_ORG", ownCtx)).toBe(false);
     expect(can(pm, "DELETE_ORG", ownCtx)).toBe(false);
+    expect(can(pm, "MANAGE_BILLING", ownCtx)).toBe(false);
   });
 
   it("may not touch a project they do not belong to", () => {
@@ -333,6 +336,7 @@ const EVERYTHING_BUT_ADMIN_ONLY: Action[] = ALL_ACTIONS.filter(
     action !== "MANAGE_INTEGRATIONS" &&
     action !== "EXPORT_ORG" &&
     action !== "DELETE_ORG" &&
+    action !== "MANAGE_BILLING" &&
     !POST_ACTIONS.includes(action),
 );
 const MEMBER_ONLY: Action[] = ["VIEW_PROJECT", "COMMENT"];

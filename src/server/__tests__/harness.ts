@@ -10,6 +10,7 @@ import type { RoleName } from "@/lib/zod-schemas";
 import { actorForUser, type ActorContext } from "@/server/actor";
 
 const TABLES = [
+  "BillingEvent",
   "ActivityLog",
   "Notification",
   "PostDismissal",
@@ -43,16 +44,31 @@ export async function resetDatabase(): Promise<void> {
   defaultOrgId = null;
 }
 
-/** A company of its own. Two of these side by side are how the isolation suite proves separation. */
-export async function makeOrg(name = "Tielora Test Company"): Promise<{ id: string; name: string }> {
+/**
+ * A company of its own. Two of these side by side are how the isolation suite proves separation.
+ *
+ * Test companies are on PRO by default, deliberately: a plan limit should never quietly decide the
+ * result of a test about phases, comments or documents. The billing tests set the plan they mean
+ * (`setPlan()` below) and are the only place a limit is ever in play.
+ */
+export async function makeOrg(
+  name = "Tielora Test Company",
+  plan: "FREE" | "PRO" = "PRO",
+): Promise<{ id: string; name: string }> {
   const org = await prisma.organization.create({
     data: {
       name,
       slug: `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Math.floor(Math.random() * 1_000_000_000)}`,
       industryTemplate: "OIL_AND_GAS",
+      plan,
     },
   });
   return { id: org.id, name: org.name };
+}
+
+/** Puts a test company on a plan — including a value no build recognises, which must read as FREE. */
+export async function setPlan(orgId: string, plan: string): Promise<void> {
+  await prisma.organization.update({ where: { id: orgId }, data: { plan } });
 }
 
 /** The company a test gets when it does not say. One per reset, made the first time it is needed. */

@@ -82,6 +82,18 @@ model Organization {
   /// Who asked, so the other administrators are never left guessing. SetNull, the same shape
   /// OrgIntegration.createdById uses: the request outlives the account that made it.
   deleteRequestedById String?
+  /// Which plan this company is on: "FREE" (the default, and what every existing company means) or
+  /// "PRO". A plain string validated by zod, not a database enum, the same shape
+  /// Organization.broadcastPolicy, OrgIntegration.kind and Post.kind use — a third plan later needs
+  /// no migration. planOf() in src/lib/plan-limits.ts reads any unrecognised value as FREE, the
+  /// safe direction, exactly as broadcastPolicyOf() reads an unrecognised policy as the default.
+  /// The LIMITS themselves are never stored: they live in one file and are applied at write time.
+  plan             String   @default("FREE")
+  /// This company's customer and subscription ids at the payment provider. Null means "nobody has
+  /// ever paid", which is what every existing company means. They are identifiers, not secrets —
+  /// no key, token or card detail is ever stored anywhere in this app.
+  billingCustomerId     String?
+  billingSubscriptionId String?
   createdAt        DateTime @default(now())
 
   deleteRequestedBy User? @relation("OrganizationDeleteRequestedBy", fields: [deleteRequestedById], references: [id], onDelete: SetNull)
@@ -92,6 +104,43 @@ model Organization {
   integrations OrgIntegration[]
   microsoft    MicrosoftConnection?
   posts        Post[]
+  billingEvents BillingEvent[]
+}
+
+/// One webhook the payment provider has sent us, kept so the same event is never acted on twice.
+///
+/// `@@unique([provider, eventId])` IS the idempotency rule: a provider retries a webhook until it is
+/// acknowledged, so a replay of an event already recorded is recognised and ignored rather than
+/// charging, upgrading or downgrading a company a second time.
+///
+/// `orgId` is nullable with onDelete: SetNull — the same shape OrgIntegration.createdById and
+/// Organization.deleteRequestedById use — so the delivery history outlives the company it was
+/// about, and an event that arrives before we know which company it belongs to still has a home.
+/// Nothing sensitive is stored here: which provider, which event, what kind of event and when it
+/// was dealt with, and nothing else.
+model BillingEvent {
+  id          String   @id @default(cuid())
+  provider    String
+  eventId     String
+  eventType   String
+  orgId       String?
+  /// WHEN THE PROVIDER SAYS IT HAPPENED, taken from the payload's own `occurred_at`. Nullable: an
+  /// event whose payload carries no timestamp reads as "we cannot tell", and so does every row
+  /// written before this column existed.
+  ///
+  /// It is stored beside `processedAt` and is NOT the same fact. `processedAt` is OUR clock — when
+  /// the delivery reached us — and comparing the two would misfire the moment a company changed
+  /// something twice in quick succession: the second event's `occurred_at` is genuinely older than
+  /// the first event's arrival time. Provider clock is only ever compared with provider clock, and
+  /// that is what makes "this delivery overtook a newer one" a safe thing to say.
+  occurredAt  DateTime?
+  processedAt DateTime @default(now())
+
+  organization Organization? @relation(fields: [orgId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, eventId])
+  /// "What is the newest thing this company has been told?" — asked on every webhook.
+  @@index([orgId, occurredAt])
 }
 
 /// One company's link to its own Microsoft 365 (OneDrive / SharePoint), so members can attach a file

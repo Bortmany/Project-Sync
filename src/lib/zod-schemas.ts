@@ -43,6 +43,16 @@ export function broadcastPolicyOf(value: unknown): BroadcastPolicyName {
   return parsed.success ? parsed.data : DEFAULT_BROADCAST_POLICY;
 }
 
+/**
+ * Which plan a company is on. A string column in the database, validated here — the same choice
+ * `broadcastPolicy`, `OrgIntegration.kind` and `Post.kind` made, so a third plan needs no migration.
+ *
+ * The NUMBERS behind each plan are deliberately not here: they live in one file,
+ * `src/lib/plan-limits.ts`, with the helper that reads an unrecognised stored value as FREE.
+ */
+export const PlanSchema = z.enum(["FREE", "PRO"]);
+export type PlanName = z.infer<typeof PlanSchema>;
+
 export const TaskStatusSchema = z.enum([
   "NOT_STARTED",
   "IN_PROGRESS",
@@ -1959,3 +1969,71 @@ export const WorkspaceDeletionDTO = z.object({
   daysLeft: z.number().int().nonnegative().nullable(),
 });
 export type WorkspaceDeletionDTO = z.infer<typeof WorkspaceDeletionDTO>;
+
+/* ------------------------------------------------------------------ */
+/* Plans and limits                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The three things a plan puts a ceiling on, counted right now. Every number here is COUNTED at
+ * read time from the rows themselves — there is no usage column anywhere and there must not be one,
+ * exactly as OVERDUE and a locked phase are derived.
+ */
+export const PlanUsageDTO = z.object({
+  /** Live projects (a soft-deleted project frees its place). */
+  projects: z.number().int().nonnegative(),
+  /** People who can still sign in. A deactivated account does not count. */
+  users: z.number().int().nonnegative(),
+  /** Every stored revision's bytes, including the revisions of soft-deleted documents. */
+  documentBytes: z.number().int().nonnegative(),
+});
+export type PlanUsageDTO = z.infer<typeof PlanUsageDTO>;
+
+/** What this plan allows. `null` in any slot means unlimited. */
+export const PlanLimitsDTO = z.object({
+  projects: z.number().int().positive().nullable(),
+  users: z.number().int().positive().nullable(),
+  documentBytes: z.number().int().positive().nullable(),
+});
+export type PlanLimitsDTO = z.infer<typeof PlanLimitsDTO>;
+
+/**
+ * What the Billing page is told about the payment provider — CONFIGURATION, never money. There is
+ * no price, no balance, no card and no invoice here, and there never will be: those live at the
+ * provider, and "Manage billing" is how somebody goes and looks at them.
+ *
+ * Everything here is either an environment fact or derived at read time from rows this app already
+ * has. Nothing new is stored to produce it.
+ */
+export const BillingProviderDTO = z.object({
+  /** All four provider variables are set on this deployment, so upgrading is switched on. */
+  configured: z.boolean(),
+  /** We hold a subscription id for this company, so "Manage billing" has somewhere to go. */
+  hasSubscription: z.boolean(),
+  /**
+   * The most recent payment signal we were sent about this company was a failure. Derived from the
+   * recorded webhooks and only ever as good as the last one that arrived — the screen says so in
+   * plain English rather than pretending to know more.
+   */
+  paymentIssue: z.boolean(),
+});
+export type BillingProviderDTO = z.infer<typeof BillingProviderDTO>;
+
+/**
+ * Where an administrator is being sent — a checkout or a customer-portal address, minted for one
+ * press and handed straight to them. It is never stored, never logged and never audited.
+ */
+export const BillingRedirectDTO = z.object({ url: z.string().url() });
+export type BillingRedirectDTO = z.infer<typeof BillingRedirectDTO>;
+
+/**
+ * What the Billing page shows. Plan, what this company is actually using, what its plan allows, and
+ * whether a payment provider is switched on at all.
+ */
+export const BillingStatusDTO = z.object({
+  plan: PlanSchema,
+  usage: PlanUsageDTO,
+  limits: PlanLimitsDTO,
+  provider: BillingProviderDTO,
+});
+export type BillingStatusDTO = z.infer<typeof BillingStatusDTO>;

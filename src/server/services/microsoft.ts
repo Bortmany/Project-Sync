@@ -51,6 +51,7 @@ import type { ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
 import { checkDto, checkDtoList } from "@/server/serialize";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
+import { assertStorageRoom } from "@/server/services/billing";
 import { assertCanUploadTo, uploadDocumentVersion } from "@/server/services/documents";
 import {
   GraphUnauthorizedError,
@@ -591,6 +592,12 @@ export async function attachMicrosoftFile(
   const declaredSize = typeof item.size === "number" ? item.size : 0;
   const sizeCheck = assertUploadSize(declaredSize);
   if (!sizeCheck.ok) throw new ServiceError(sizeCheck.error);
+
+  // The plan's storage cap, judged on Microsoft's own declared size and before a byte is fetched or
+  // written — the same place the upload route checks it. uploadDocumentVersion() checks it again on
+  // what actually arrived; this one is what stops a refused attachment leaving a file on disk that
+  // no revision points at.
+  await assertStorageRoom(actor, declaredSize);
 
   const buffer = await withGraph(actor.orgId, (token) =>
     downloadItemContent(token, driveId, itemId, MAX_UPLOAD_BYTES),

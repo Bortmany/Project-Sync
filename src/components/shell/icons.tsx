@@ -114,6 +114,17 @@ export function ShieldIcon({ size = 18, className }: IconProps) {
   );
 }
 
+/** A payment card — the Billing row in the admin menu. */
+export function BillingIcon({ size = 18, className }: IconProps) {
+  return (
+    <svg {...base(size, className)}>
+      <rect x="2.5" y="4.5" width="15" height="11" rx="2" />
+      <path d="M2.5 8.5h15" />
+      <path d="M5.5 12.5h3" />
+    </svg>
+  );
+}
+
 export function SearchIcon({ size = 16, className }: IconProps) {
   return (
     <svg {...base(size, className)}>

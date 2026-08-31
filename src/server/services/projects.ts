@@ -34,6 +34,7 @@ import { NotFoundError, ServiceError } from "@/server/errors";
 import { phasesForTemplate, templateNameOf } from "@/server/industry-templates";
 import { checkDto, checkDtoList } from "@/server/serialize";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
+import { assertProjectRoom, assertProjectRoomInTransaction } from "@/server/services/billing";
 
 /* ------------------------------------------------------------------ */
 /* Reads                                                               */
@@ -220,6 +221,10 @@ export async function getProjectForActor(actor: ActorContext, projectId: string)
 export async function createProject(actor: ActorContext, input: CreateProjectInput): Promise<ProjectDTO> {
   assertCan(actor, "CREATE_PROJECT");
 
+  // The plan's ceiling, before anything is written. Projects already there are never touched — a
+  // company over its limit keeps every one of them and is only refused another.
+  await assertProjectRoom(actor);
+
   // Project codes are unique inside a company, not across the product: another customer's "PH-1"
   // is none of this company's business.
   const clash = await prisma.project.findUnique({
@@ -249,6 +254,10 @@ export async function createProject(actor: ActorContext, input: CreateProjectInp
   }
 
   const projectId = await prisma.$transaction(async (tx) => {
+    // Asked again behind a lock on this company's row: the check above is a read followed by a
+    // write, and two people creating a project in the same second must not both get through.
+    await assertProjectRoomInTransaction(tx, actor);
+
     const project = await tx.project.create({
       data: {
         orgId: actor.orgId,
