@@ -173,6 +173,7 @@ describe("what the admin screen is told", () => {
       statusChange: true,
       overdueReminder: false,
       gateOverride: true,
+      dailyBrief: false,
     };
     await setEventToggles(fixture.adminActor, { kind: "SLACK", eventToggles: chosen });
 
@@ -185,7 +186,7 @@ describe("what the admin screen is told", () => {
     expect(replaced.eventToggles).toEqual(chosen);
   });
 
-  it("starts switched off with every event on, so nothing is sent until it is turned on", async () => {
+  it("starts switched off with the notification copies on and the digest off", async () => {
     const saved = await saveIntegration(fixture.adminActor, { kind: "TEAMS", webhookUrl: TEAMS_URL });
     expect(saved.enabled).toBe(false);
     expect(saved.eventToggles).toEqual({
@@ -194,7 +195,39 @@ describe("what the admin screen is told", () => {
       statusChange: true,
       overdueReminder: true,
       gateOverride: true,
+      // The daily digest is a scheduled post into somebody's channel, so it only ever happens
+      // because an administrator asked for it.
+      dailyBrief: false,
     });
+  });
+
+  it("keeps parsing a toggle map saved before the digest existed, and reads it as digest off", async () => {
+    await saveIntegration(fixture.adminActor, { kind: "SLACK", webhookUrl: SLACK_URL });
+    // Exactly what rows written before this change hold: the five original keys and nothing else.
+    await prisma.orgIntegration.updateMany({
+      where: { orgId: fixture.orgId, kind: "SLACK" },
+      data: {
+        eventToggles: {
+          taskAssigned: true,
+          mention: true,
+          statusChange: true,
+          overdueReminder: true,
+          gateOverride: true,
+        },
+      },
+    });
+
+    const cards = await listIntegrationsForAdmin(fixture.adminActor);
+    const slack = cards.find((card) => card.kind === "SLACK");
+
+    expect(slack?.eventToggles.taskAssigned).toBe(true);
+    expect(slack?.eventToggles.dailyBrief).toBe(false);
+
+    // And delivery still works — the missing key must never switch a company's chat off.
+    const fetchSpy = mockFetchOk();
+    await setIntegrationEnabled(fixture.adminActor, { kind: "SLACK", enabled: true });
+    await deliverToOrgWebhooks(fixture.orgId, ASSIGNED_EVENT);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -209,6 +242,7 @@ describe("the audit trail", () => {
         statusChange: true,
         overdueReminder: true,
         gateOverride: true,
+        dailyBrief: false,
       },
     });
 
@@ -293,6 +327,7 @@ describe("which events actually go out", () => {
         statusChange: true,
         overdueReminder: true,
         gateOverride: true,
+        dailyBrief: false,
       },
     });
 

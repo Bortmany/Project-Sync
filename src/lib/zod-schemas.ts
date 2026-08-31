@@ -869,6 +869,135 @@ export const MyTasksDTO = z.object({
 export type MyTasksDTO = z.infer<typeof MyTasksDTO>;
 
 /* ------------------------------------------------------------------ */
+/* Daily briefs (computed from what the app already records)           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One line in a brief. Everything is computed from data already in the database — there is no new
+ * personal data here and nothing is written by a brief.
+ */
+export const BriefItemDTO = z.object({
+  id: id,
+  title: z.string(),
+  /** Where the line goes: "/tasks/…" for a main task, "/discipline-tasks/…" for a discipline one. */
+  linkUrl: z.string(),
+  projectCode: z.string(),
+  disciplineCode: z.string().nullable(),
+  deadline: dateOut.nullable(),
+  /** Whole days past the deadline day. Only the overdue section fills this in. */
+  daysOverdue: z.number().int().nullable(),
+  /** Why the line is here, in plain English — the unblocked and mention sections use it. */
+  note: z.string().nullable(),
+  /** When the thing that put this line here happened. Null where there is no such moment. */
+  at: dateOut.nullable(),
+});
+export type BriefItemDTO = z.infer<typeof BriefItemDTO>;
+
+/**
+ * One section of a brief: the rows the screen shows, and the true count behind them. `total` is
+ * counted over everything that qualifies, so a capped list never makes the number a lie.
+ */
+export const BriefSectionDTO = z.object({
+  items: z.array(BriefItemDTO),
+  total: z.number().int(),
+});
+export type BriefSectionDTO = z.infer<typeof BriefSectionDTO>;
+
+/**
+ * "Your day": one person's own work, computed on the server. `since` is the start of the 24-hour
+ * window the newly-unblocked and mentions sections cover, so every section can state its own window
+ * on screen.
+ */
+export const BriefDTO = z.object({
+  generatedAt: dateOut,
+  since: dateOut,
+  dueToday: BriefSectionDTO,
+  overdue: BriefSectionDTO,
+  newlyUnblocked: BriefSectionDTO,
+  mentions: BriefSectionDTO,
+  awaitingReview: BriefSectionDTO,
+});
+export type BriefDTO = z.infer<typeof BriefDTO>;
+
+/**
+ * Progress now against progress seven days ago. The earlier number is DERIVED from the completion
+ * timestamps the app already keeps (a main task's completion moment is the last of its discipline
+ * tasks to finish, or the moment an authorised override was recorded) — there is no snapshot table
+ * and no stored history.
+ *
+ * The comparison is made between the tasks that existed then: `totalThen` leaves out anything
+ * created inside the week, so adding work to a project can never make its progress appear to fall,
+ * and work reopened inside the week is counted as it stood before it was reopened.
+ */
+export const ProjectBriefProgressDTO = z.object({
+  completed: z.number().int(),
+  total: z.number().int(),
+  pct: z.number().int(),
+  completedThen: z.number().int(),
+  /** How many main tasks existed seven days ago — the basis `pctThen` is a percentage of. */
+  totalThen: z.number().int(),
+  pctThen: z.number().int(),
+  /** The moment "seven days ago" means, so the screen can name the day. */
+  since: dateOut,
+});
+export type ProjectBriefProgressDTO = z.infer<typeof ProjectBriefProgressDTO>;
+
+/** A blocked discipline task, with the work it is still waiting on named. */
+export const BriefBlockedTaskDTO = z.object({
+  id: id,
+  title: z.string(),
+  linkUrl: z.string(),
+  disciplineCode: z.string(),
+  mainTaskTitle: z.string(),
+  unmetDependencies: z.array(z.string()),
+});
+export type BriefBlockedTaskDTO = z.infer<typeof BriefBlockedTaskDTO>;
+
+/** A shut gate and the phase that is holding it shut. Locked is derived, never stored. */
+export const BriefLockedPhaseDTO = z.object({
+  id: id,
+  name: z.string(),
+  lockedByPhaseName: z.string().nullable(),
+  openTaskCount: z.number().int(),
+});
+export type BriefLockedPhaseDTO = z.infer<typeof BriefLockedPhaseDTO>;
+
+/** How much late work each discipline is carrying. Overdue is derived at read time, as always. */
+export const BriefOverdueByDisciplineDTO = z.object({
+  disciplineCode: z.string(),
+  disciplineColorHex: z.string(),
+  count: z.number().int(),
+});
+export type BriefOverdueByDisciplineDTO = z.infer<typeof BriefOverdueByDisciplineDTO>;
+
+/** What keeps the next gate shut: the unfinished main tasks of the earliest phase with open work. */
+export const BriefNextGateDTO = z.object({
+  phaseId: id,
+  phaseName: z.string(),
+  items: z.array(BriefItemDTO),
+  total: z.number().int(),
+});
+export type BriefNextGateDTO = z.infer<typeof BriefNextGateDTO>;
+
+/** "Where we stand": one project, computed. Every member of the project may read it. */
+export const ProjectBriefDTO = z.object({
+  projectId: id,
+  projectCode: z.string(),
+  projectName: z.string(),
+  generatedAt: dateOut,
+  progress: ProjectBriefProgressDTO,
+  blockedTasks: z.array(BriefBlockedTaskDTO),
+  blockedTotal: z.number().int(),
+  lockedPhases: z.array(BriefLockedPhaseDTO),
+  overdueByDiscipline: z.array(BriefOverdueByDisciplineDTO),
+  overdueTotal: z.number().int(),
+  nextGate: BriefNextGateDTO.nullable(),
+  /** Unphased work, nearest deadlines first — the part of "what next" no gate speaks for. */
+  nearestDeadlines: z.array(BriefItemDTO),
+});
+export type ProjectBriefDTO = z.infer<typeof ProjectBriefDTO>;
+
+/* ------------------------------------------------------------------ */
 /* Chat integrations (Slack and Microsoft Teams)                       */
 /* ------------------------------------------------------------------ */
 
@@ -879,33 +1008,55 @@ export type MyTasksDTO = z.infer<typeof MyTasksDTO>;
 export const IntegrationKindSchema = z.enum(["SLACK", "TEAMS"]);
 export type IntegrationKindName = z.infer<typeof IntegrationKindSchema>;
 
-/** The events an organisation can switch on or off for a chat channel. */
+/**
+ * The events an organisation can switch on or off for a chat channel.
+ *
+ * The first five are notification copies — each one is what a `NotificationType` maps to. The sixth,
+ * `dailyBrief`, is NOT a notification fan-out at all: it is the once-a-day digest of work the app
+ * has already recorded, and nothing in the app ever writes a notification of that kind. See
+ * `TOGGLE_FOR_TYPE` in src/server/services/webhooks.ts, which the compiler stops from mapping
+ * anything to it.
+ */
 export const IntegrationEventSchema = z.enum([
   "taskAssigned",
   "mention",
   "statusChange",
   "overdueReminder",
   "gateOverride",
+  "dailyBrief",
 ]);
 export type IntegrationEventName = z.infer<typeof IntegrationEventSchema>;
 
-/** Every event, on or off. All five are always present, so a saved map is never half-defined. */
+/**
+ * Every event, on or off, so a saved map is never half-defined.
+ *
+ * `dailyBrief` carries a default of `false` on purpose: rows saved before the digest existed have
+ * five keys, and without the default they would stop parsing — which would silently switch a
+ * company's whole chat delivery off. An old row therefore reads as "digest off", which is also what
+ * a brand-new one gets.
+ */
 export const IntegrationEventToggles = z.object({
   taskAssigned: z.boolean(),
   mention: z.boolean(),
   statusChange: z.boolean(),
   overdueReminder: z.boolean(),
   gateOverride: z.boolean(),
+  dailyBrief: z.boolean().default(false),
 });
 export type IntegrationEventToggles = z.infer<typeof IntegrationEventToggles>;
 
-/** What a brand-new integration starts with: everything on, but the channel itself still disabled. */
+/**
+ * What a brand-new integration starts with: the five notification copies on, the daily digest off,
+ * and the channel itself still disabled. The digest is a scheduled post into somebody's channel, so
+ * it is only ever there because an administrator asked for it.
+ */
 export const DEFAULT_EVENT_TOGGLES: IntegrationEventToggles = {
   taskAssigned: true,
   mention: true,
   statusChange: true,
   overdueReminder: true,
   gateOverride: true,
+  dailyBrief: false,
 };
 
 /**

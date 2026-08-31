@@ -56,6 +56,7 @@ import {
   listMicrosoftFolder,
   microsoftConnectionFor,
 } from "@/server/services/microsoft";
+import { orgDigest, personBrief, projectBrief } from "@/server/services/briefs";
 import { getProjectForActor, listProjectsForActor } from "@/server/services/projects";
 import {
   completeDisciplineTask,
@@ -66,7 +67,7 @@ import {
   setMainTaskPhase,
   updateDisciplineTaskStatus,
 } from "@/server/services/tasks";
-import { runSweepOnce } from "@/server/sweep";
+import { DIGEST_HOUR_UTC, postDailyDigests, runSweepOnce } from "@/server/sweep";
 import { deliverToOrgWebhooks } from "@/server/services/webhooks";
 import {
   inThirtyDays,
@@ -504,6 +505,7 @@ describe("one company's chat channel is not another company's", () => {
           statusChange: false,
           overdueReminder: false,
           gateOverride: false,
+          dailyBrief: false,
         },
       }),
     ).rejects.toBeInstanceOf(NotFoundError);
@@ -618,5 +620,95 @@ describe("a company's Microsoft 365 connection", () => {
     // Nothing ever left the building, and Acme's connection is untouched.
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(await prisma.microsoftConnection.count()).toBe(1);
+  });
+});
+
+describe("a brief never reaches across companies", () => {
+  const ACME_SLACK = "https://hooks.slack.com/services/TACME/BACME/AcmeSecretTokenValue";
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("shows one person only their own company's work, though both companies name it the same", async () => {
+    // Both companies carry a task with SHARED_TITLE due on the same day. Make it late in both.
+    for (const company of [acme, rival]) {
+      await prisma.disciplineTask.update({
+        where: { id: company.disciplineTaskId },
+        data: { deadline: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000) },
+      });
+    }
+
+    const mine = await personBrief(acme.engineer);
+    const theirs = await personBrief(rival.engineer);
+
+    expect(mine.overdue.total).toBe(1);
+    expect(theirs.overdue.total).toBe(1);
+    // Same title on both sides, so the proof is the id: each person sees only their own row.
+    expect(mine.overdue.items[0].id).toBe(acme.disciplineTaskId);
+    expect(theirs.overdue.items[0].id).toBe(rival.disciplineTaskId);
+  });
+
+  it("refuses the other company's project brief as NOT FOUND, never merely forbidden", async () => {
+    await expect(projectBrief(acme.admin, rival.projectId)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(projectBrief(rival.admin, acme.projectId)).rejects.toBeInstanceOf(NotFoundError);
+
+    // Their own still works, which is what makes the refusal meaningful.
+    const mine = await projectBrief(acme.admin, acme.projectId);
+    expect(mine.projectId).toBe(acme.projectId);
+    expect(mine.progress.total).toBe(1);
+  });
+
+  it("builds each company's digest from that company's projects only", async () => {
+    const mine = await orgDigest(acme.fixture.orgId);
+    const theirs = await orgDigest(rival.fixture.orgId);
+
+    expect(mine?.lines).toHaveLength(1);
+    expect(theirs?.lines).toHaveLength(1);
+    expect(mine?.lines[0].code).not.toBe(theirs?.lines[0].code);
+  });
+
+  it("posts a digest only to the company it belongs to", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("ok", { status: 200 }));
+
+    // Only Acme asks for a digest. The rival has a channel too, with the digest switched off.
+    await saveIntegration(acme.admin, { kind: "SLACK", webhookUrl: ACME_SLACK });
+    await setIntegrationEnabled(acme.admin, { kind: "SLACK", enabled: true });
+    await setEventToggles(acme.admin, {
+      kind: "SLACK",
+      eventToggles: {
+        taskAssigned: true,
+        mention: true,
+        statusChange: true,
+        overdueReminder: true,
+        gateOverride: true,
+        dailyBrief: true,
+      },
+    });
+    await saveIntegration(rival.admin, {
+      kind: "SLACK",
+      webhookUrl: "https://hooks.slack.com/services/TRIVAL/BRIVAL/RivalSecretTokenValue",
+    });
+    await setIntegrationEnabled(rival.admin, { kind: "SLACK", enabled: true });
+
+    const now = new Date();
+    const run = await postDailyDigests(
+      new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), DIGEST_HOUR_UTC + 1),
+      ),
+    );
+
+    expect(run.channels).toBe(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0];
+    expect(String(url)).toBe(ACME_SLACK);
+    // Acme's card carries Acme's project code and nothing of the rival's.
+    const acmeProject = await prisma.project.findUniqueOrThrow({ where: { id: acme.projectId } });
+    const rivalProject = await prisma.project.findUniqueOrThrow({ where: { id: rival.projectId } });
+    const body = String((init as RequestInit).body);
+    expect(body).toContain(acmeProject.code);
+    expect(body).not.toContain(rivalProject.code);
   });
 });

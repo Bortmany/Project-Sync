@@ -214,6 +214,16 @@ In practice:
     integration at all — dormant by default, and the seed deliberately does not create one. The
     generated migration's five trigram `DropIndex` lines were deleted by hand.)
 
+  - `20260831032424_org_integration_daily_brief` (the daily brief digest. ONE nullable column,
+    `OrgIntegration.dailyBriefSentAt` — when the digest last ran for that channel. It is a fact
+    about delivery, not a derived state, and it is the only thing that keeps the digest to once a
+    day while the sweep itself runs every hour; without it the hourly sweep would have no way of
+    knowing it had already sent today's. Additive only: no existing model, field, enum value or
+    index was changed, and null (which is what every existing row means) simply reads as "never
+    sent". Nothing else about the digest is stored — every number in it is computed at send time.
+    The generated migration's five trigram `DropIndex` lines were deleted by hand, and `pg_indexes`
+    was checked on both databases afterwards.)
+
   - `20260831012133_microsoft_connection` (Microsoft 365 file attachments. One new model,
     `MicrosoftConnection` — a company's link to its own OneDrive / SharePoint: `orgId` **unique**
     (one Microsoft tenant per company, cascading), `tenantId`, a nullable `tenantDomain` shown on the
@@ -245,6 +255,7 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/projects/[id]` | GET | — | `ProjectDTO` |
 | `/api/projects/[id]/main-tasks` | GET | query: `status`, `disciplineId`, `assigneeId`, `priority`, `q` | `MainTaskListItemDTO[]` |
 | `/api/projects/[id]/phases` | GET | — | `PhaseDTO[]` (gate order; `locked` and `lockedByPhaseName` derived at read time, never stored) |
+| `/api/projects/[id]/brief` | GET | — | `ProjectBriefDTO` ("Where we stand" — progress now against seven days ago, current blockers, and the open work of the earliest phase with any; every member of the project may read it) |
 | `/api/projects/[id]/gantt` | GET | — | `GanttDTO` (each main task carries its `phaseId`, so the project timeline can band the rows) |
 | `/api/tasks/[id]` | GET | — | `MainTaskDTO` |
 | `/api/tasks/[id]/gantt` | GET | — | `GanttDTO` |
@@ -279,6 +290,7 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/integrations/microsoft/search` | GET | query: upload target + `driveId`, `q` | `MicrosoftListingDTO` |
 | `/api/integrations/microsoft/attach` | POST | `AttachMicrosoftFileInput` (the upload meta plus `driveId`, `itemId`) | `DocumentVersionDTO` — a normal revision |
 | `/api/my-tasks` | GET | — | `MyTasksDTO` (everything assigned to the signed-in person: up to 200 open tasks by deadline **plus** the 50 most recently completed, read in two windows so history never crowds out live work, with `truncated`; `totals` counted in the database over all of it) |
+| `/api/my-tasks/brief` | GET | — | `BriefDTO` ("Your day" — due today, overdue with days over, newly unblocked in the last 24 hours, mentions in the last 24 hours, awaiting your review; every section capped at 10 with its true `total` beside it) |
 | `/api/my-tasks/gantt` | GET | — | `GanttDTO` (only the signed-in person's discipline tasks, grouped under their main tasks; bounded — open work plus work whose deadline fell inside the last 90 days, 300 bars max) |
 | `/api/favorites` | GET | — | `FavoriteDTO[]` (the signed-in person's own shortcuts, newest first, 50 max; deleted targets and anything in a project they may no longer see are skipped) |
 | `/api/personal-tasks` | GET | — | `PersonalTaskDTO[]` (the signed-in person's own list, open items first, then by `sortOrder` so newly added lines lead, 200 max) |
@@ -329,7 +341,7 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `deletePersonalTask` (own list only; a private jotting has no audit trail to keep) | `DeletePersonalTaskInput` | `ActionResult<{ removed: true }>` |
 | `saveIntegration` (ADMIN in their own company; the address is validated per kind and never returned) | `SaveIntegrationInput` | `ActionResult<OrgIntegrationDTO>` |
 | `setIntegrationEnabled` (ADMIN; needs an address saved first) | `SetIntegrationEnabledInput` | `ActionResult<OrgIntegrationDTO>` |
-| `setEventToggles` (ADMIN; all five events are saved together) | `SetEventTogglesInput` | `ActionResult<OrgIntegrationDTO>` |
+| `setEventToggles` (ADMIN; all six events are saved together — the five notification copies plus the daily brief) | `SetEventTogglesInput` | `ActionResult<OrgIntegrationDTO>` |
 | `sendTestMessage` (ADMIN; rate limited hard — five a minute per person, because each press posts into a real channel) | `IntegrationKindInput` | `ActionResult<IntegrationTestResultDTO>` |
 | `deleteIntegration` (ADMIN; removes the address with the connection, audit rows stay) | `IntegrationKindInput` | `ActionResult<{ removed: true }>` |
 | `disconnectMicrosoft` (ADMIN; deletes the stored tokens, audit row stays. Connecting is a browser journey to Microsoft, so only this half can be an action) | — | `ActionResult<{ removed: true }>` |
@@ -343,6 +355,8 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 - **Marking a notification read writes no `ActivityLog` row.** Read state is a personal preference,
   not project work; the audit trail records project work only. This is the one documented exception
   to house rule 1.
+- **A daily brief writes nothing at all.** Both briefs are reads: no notification, no audit row, no
+  stored snapshot. See "Chat delivery" below for the digest's own deviation.
 - **Favorites and personal to-do items write no `ActivityLog` row either**, for exactly the same
   reason: starring a project and jotting a private reminder are personal preferences, not project
   work. Same documented exception, same rule — everything else in `src/server/services` still
@@ -385,6 +399,38 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 - **The fan-out cannot leave the company**, for the same reason `notify()` cannot: the lookup is
   `where: { orgId, enabled: true }`, and the `orgId` is the actor's (or, in the sweep, the
   recipient's, who is always a member of that task's project).
+- **The daily brief digest is chat-only, and off unless asked for.** A sixth toggle, `dailyBrief`,
+  sits beside the five notification copies; it defaults to **off**, and it is deliberately NOT part
+  of `TOGGLE_FOR_TYPE` — the digest is a summary of data the app already holds, not a fan-out of any
+  `NotificationType`, and the compiler refuses to let a notification type map to it
+  (`FanOutToggle` in `webhooks.ts`). Because a saved `eventToggles` written before the digest existed
+  has only five keys, `dailyBrief` carries a zod `.default(false)`: an old row keeps parsing, and
+  reads as "digest off", instead of silently switching a company's whole chat delivery off.
+- **The digest writes no in-app notification.** This is the third documented exception to house
+  rule 1, alongside marking a notification read and the favorites / personal to-do items: there is
+  nothing new to record — every line of the digest is data the app already holds, and a notification
+  would only be a second copy of a summary nobody asked to be notified about.
+- **It goes out once a day, from the hourly sweep** (`postDailyDigests` in `src/server/sweep.ts`):
+  the first run after **05:00 UTC** sends one compact card per connected, enabled, digest-toggled
+  channel — one line per active project, with its progress, overdue count, blocked count and next
+  gate. The admin card calls that "early morning UTC" in so many words rather than promising anybody
+  a local time.
+  - **Once a day, per channel.** `OrgIntegration.dailyBriefSentAt` is stamped after each company is
+    dealt with, whether or not there was anything to say, so the other twenty-three runs do nothing;
+    a company with no active project is sent nothing at all.
+  - **Only the channels that were due are posted to.** The sweep chooses them and hands the ids to
+    `deliverDailyBrief`, which posts to those and nothing else. If delivery looked them up for
+    itself, a Teams channel switched on at nine in the morning would make the ten o'clock sweep post
+    to Slack a second time — Slack was not due, but it was enabled.
+  - **A late server sends late, not never.** The condition is "after 05:00 UTC and not yet sent
+    today", not "at 05:00": a server that only comes up at 23:00 UTC sends that day's digest at
+    23:00, and the next one the following morning. Missing a day entirely costs a summary, never
+    anything the app depends on.
+  - **Its own 30-second budget**, the same size as the reminders' and separate from it — the two
+    steps run one after the other, so a slow chat tool cannot make the pair take longer than a
+    minute. It is checked after each company, so one always goes, and the queue is ordered
+    longest-waiting first (`dailyBriefSentAt` ascending, never-sent first) so a cut-short run serves
+    the companies that missed out first next time.
 - Payloads are Slack Block Kit and the Teams Adaptive Card envelope (version 1.4 pinned), both
   bounded by the 28 KB Teams cap — an oversized message is dropped rather than sent to be rejected.
   Links use `APP_BASE_URL`; unset, the message names the page instead.
@@ -481,6 +527,29 @@ About the two seed steps:
 
 ## Notes
 
+- **The briefs are computed, never stored** (`src/server/services/briefs.ts`). Two derivations are
+  worth naming, because both replace a column somebody might otherwise be tempted to add:
+  - **When a main task finished.** `MainTask` has no `completedAt` and must not gain one — the
+    golden rule already says its status is the truth of its discipline tasks, so the moment it
+    finished is the moment the LAST of them finished (`DisciplineTask.completedAt`), or the moment
+    an authorised override was recorded (`MainTask.overriddenAt`). That is what "seven days ago"
+    on the project brief is worked out from; a completion whose moment cannot be recovered counts
+    as old, so progress is never overstated. Two things keep that comparison honest: only main
+    tasks that **existed** seven days ago are in either number (`totalThen`), so adding work cannot
+    make progress appear to fall; and work **reopened inside the week** counts as complete then,
+    because it was — finishing it again is not fresh progress. The one case this understates is work
+    finished for the first time inside the week and then reopened and finished again, which is the
+    conservative direction.
+  - **When a task became newly unblocked.** Derived from state that is already there: every live
+    predecessor is complete and the most recent of those completions is inside the last 24 hours,
+    or the task's phase is open now and its gate opened inside that window (the last main task
+    before it finishing, or the phase override's own timestamp) **and nothing else is holding the
+    task** — a gate opening frees nothing while a live predecessor is still open, and the app would
+    refuse the work anyway. Nothing records "unblocked" and nothing needs to.
+  - **Every digest number is counted in the database**, never off a capped scan: a cap with no
+    ordering lets Postgres return whichever rows it likes, and a project with plenty of late work
+    could have posted "0 overdue". Only the number of project LINES is capped, and the card says how
+    many were left out.
 - `disciplineSummary[].requiredDocsTotal` / `requiredDocsSatisfied` count **mandatory** required
   documents only, so the "1/2 documents" hint on a discipline row always says the same thing as the
   completion gate. They are filled by two grouped queries per read (`requiredDocCountsFor()` in

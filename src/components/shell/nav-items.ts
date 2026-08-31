@@ -36,6 +36,7 @@ const MAIN_NAV: NavItem[] = [
       { href: "/my-tasks?due=today", label: "Due today" },
       { href: "/my-tasks?due=week", label: "This week" },
       { href: "/my-tasks?due=overdue", label: "Overdue" },
+      { href: "/my-tasks/brief", label: "Your day" },
       { href: "/my-tasks?view=timeline", label: "Timeline" },
       { href: "/my-tasks/personal", label: "Personal list" },
     ],

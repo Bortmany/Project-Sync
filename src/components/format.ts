@@ -10,6 +10,8 @@ const FULL_DATE = new Intl.DateTimeFormat("en-GB", {
 
 const SHORT_DATE = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
 
+const CLOCK_TIME = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" });
+
 /** "30 Sep 2026" */
 export function formatDate(value: Date | null | undefined): string {
   if (!value) return "—";
@@ -19,6 +21,27 @@ export function formatDate(value: Date | null | undefined): string {
 /** "22 Aug" — used where the year is obvious from context. */
 export function formatShortDate(value: Date): string {
   return SHORT_DATE.format(value);
+}
+
+/** "30 Sep 2026, 07:15" — used where a brief has to state exactly where its window starts. */
+export function formatDateTime(value: Date): string {
+  return `${FULL_DATE.format(value)}, ${CLOCK_TIME.format(value)}`;
+}
+
+const FULL_DATE_UTC = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+/**
+ * "30 Sep 2026" read in UTC. Deadlines are stored at UTC midnight and the briefs work their day
+ * windows out in UTC, so anywhere a brief NAMES that window it says the same day the server used —
+ * west of Greenwich, the ordinary local formatting would print the day before.
+ */
+export function formatDateUtc(value: Date): string {
+  return FULL_DATE_UTC.format(value);
 }
 
 /** "2 h ago" / "3 d ago" — only inside activity and notification feeds. */

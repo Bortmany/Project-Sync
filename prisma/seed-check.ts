@@ -5,6 +5,8 @@ import "dotenv/config";
 import { prisma } from "@/lib/db";
 import { phaseLockedFor } from "@/lib/phase-lock";
 import { effectiveStatus, isOverdue } from "@/lib/progress";
+import { actorForUser } from "@/server/actor";
+import { projectBrief } from "@/server/services/briefs";
 
 const PROJECT_CODE = "SUR-EXP";
 const out = (line: string) => process.stdout.write(`${line}\n`);
@@ -101,6 +103,29 @@ async function main() {
   check(
     inspection.phaseId === null,
     "The inspection close-out sits outside every phase, so it is never gated",
+  );
+
+  // The daily brief is entirely computed, so the demo data has to make it say something real: a
+  // brief that comes back empty on the demo project would look like a broken feature.
+  const admin = await prisma.user.findFirstOrThrow({
+    where: { orgId: project.orgId, role: "ADMIN" },
+    select: { id: true },
+  });
+  const brief = await projectBrief(await actorForUser(admin.id), project.id);
+  check(
+    brief.blockedTotal + brief.lockedPhases.length + brief.overdueTotal >= 1,
+    "The demo project brief names at least one blocker",
+    `saw ${brief.blockedTotal} blocked, ${brief.lockedPhases.length} shut gates, ${brief.overdueTotal} overdue`,
+  );
+  check(
+    (brief.nextGate?.items.length ?? 0) + brief.nearestDeadlines.length >= 1,
+    "The demo project brief says what must happen next",
+    `saw ${brief.nextGate?.items.length ?? 0} gate items and ${brief.nearestDeadlines.length} unphased deadlines`,
+  );
+  check(
+    brief.progress.total > 0 && brief.progress.pct === Math.min(99, Math.floor((100 * brief.progress.completed) / brief.progress.total)),
+    "The brief's progress is derived from the main tasks themselves",
+    `saw ${brief.progress.completed}/${brief.progress.total} at ${brief.progress.pct}%`,
   );
 
   const activity = await prisma.activityLog.count({ where: { projectId: project.id } });

@@ -7,6 +7,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { z } from "zod";
 import {
   ActivityItemDTO,
+  BriefDTO,
   CommentDTO,
   DashboardDTO,
   DisciplineDTO,
@@ -20,6 +21,7 @@ import {
   MyTasksDTO,
   PersonalTaskDTO,
   PhaseDTO,
+  ProjectBriefDTO,
   ProjectDTO,
   ProjectListItemDTO,
   SearchResultsDTO,
@@ -204,6 +206,17 @@ export function useMyTasksGantt(enabled = true): UseQueryResult<GanttDTO> {
   });
 }
 
+/**
+ * "Your day": the signed-in person's brief, computed on the server. Everything in it is worked out
+ * from work the app already records, so it is only ever as fresh as the page.
+ */
+export function useMyBrief(): UseQueryResult<BriefDTO> {
+  return useQuery({
+    queryKey: ["my-tasks", "brief"],
+    queryFn: () => readRoute("/api/my-tasks/brief", BriefDTO),
+  });
+}
+
 /** The private scratchpad list: open items first, then the ones already ticked off. */
 export function usePersonalTasks(): UseQueryResult<PersonalTaskDTO[]> {
   return useQuery({
@@ -226,6 +239,15 @@ export function useProject(projectId: string): UseQueryResult<ProjectDTO> {
   return useQuery({
     queryKey: ["project", projectId],
     queryFn: () => readRoute(`/api/projects/${projectId}`, ProjectDTO),
+    enabled: projectId.length > 0,
+  });
+}
+
+/** "Where we stand": one project's brief, computed on the server. Every member may read it. */
+export function useProjectBrief(projectId: string): UseQueryResult<ProjectBriefDTO> {
+  return useQuery({
+    queryKey: ["project", projectId, "brief"],
+    queryFn: () => readRoute(`/api/projects/${projectId}/brief`, ProjectBriefDTO),
     enabled: projectId.length > 0,
   });
 }

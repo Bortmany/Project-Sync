@@ -8,6 +8,7 @@ import { updateProject } from "@/components/actions";
 import { ProjectActivity } from "@/components/activity/activity-feeds";
 import { ProjectDocumentsTab } from "@/components/documents/project-documents";
 import { ProjectTimelineTab } from "@/components/gantt/timeline-tab";
+import { ProjectBriefTab } from "@/components/projects/project-brief-tab";
 import { ProjectStatusBadge } from "@/components/projects/projects-view";
 import { ProjectTasksTab } from "@/components/projects/project-tasks-tab";
 import { ProjectTeamTab } from "@/components/projects/project-team-tab";
@@ -225,6 +226,11 @@ export function ProjectView({ projectId }: { projectId: string }) {
             id: "gantt",
             label: "Timeline",
             content: <ProjectTimelineTab project={data} />,
+          },
+          {
+            id: "brief",
+            label: "Brief",
+            content: <ProjectBriefTab project={data} />,
           },
           {
             id: "documents",

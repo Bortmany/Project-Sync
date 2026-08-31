@@ -78,6 +78,11 @@ const EVENT_LABELS: { key: IntegrationEventName; label: string; hint: string }[]
     label: "Gate opened or override applied",
     hint: "Somebody records an authorised way past a completion rule.",
   },
+  {
+    key: "dailyBrief",
+    label: "Daily brief",
+    hint: "One message early each morning UTC: every active project with its progress, overdue and blocked counts, and the next gate. Off unless you switch it on.",
+  },
 ];
 
 function StatusBadge({ integration }: { integration: OrgIntegrationDTO }) {

@@ -120,6 +120,10 @@ model OrgIntegration {
   webhookUrl   String
   enabled      Boolean  @default(false)
   eventToggles Json
+  /// When the daily brief digest last ran for this channel. Null means never. It is a FACT about
+  /// delivery, not a derived state, which is why it is stored: it is the only thing that keeps the
+  /// digest to once a day while the sweep itself runs every hour.
+  dailyBriefSentAt DateTime?
   createdById  String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

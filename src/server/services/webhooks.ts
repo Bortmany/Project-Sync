@@ -24,14 +24,16 @@ import type {
 } from "@/lib/zod-schemas";
 import { IntegrationEventToggles as TogglesSchema, webhookUrlProblem } from "@/lib/zod-schemas";
 
-/** One thing that happened, in the same words the in-app notification uses. */
-export type WebhookEvent = {
-  type: NotificationTypeName;
+/** Everything a chat card is built from. The digest is this and nothing else. */
+export type ChatMessage = {
   title: string;
   body: string;
   /** The in-app path, e.g. "/discipline-tasks/abc123". Turned into a full link when APP_BASE_URL is set. */
   linkUrl: string;
 };
+
+/** One thing that happened, in the same words the in-app notification uses. */
+export type WebhookEvent = ChatMessage & { type: NotificationTypeName };
 
 /** How long a single POST may take before it is abandoned. */
 const REQUEST_TIMEOUT_MS = 5_000;
@@ -46,10 +48,17 @@ const MAX_PAYLOAD_BYTES = 28 * 1024;
 const MAX_BODY_CHARS = 1_200;
 
 /**
+ * The toggles that stand for a notification being copied to chat. `dailyBrief` is deliberately NOT
+ * one of them: the digest is a summary of data the app already holds, not a fan-out of any
+ * notification type, so the compiler refuses to let anything below map to it.
+ */
+type FanOutToggle = Exclude<IntegrationEventName, "dailyBrief">;
+
+/**
  * Which toggle decides each kind of notification. Anything mapped to null is never delivered to
  * chat in this round — document uploads and ordinary comments stay in the app, where they belong.
  */
-const TOGGLE_FOR_TYPE: Record<NotificationTypeName, IntegrationEventName | null> = {
+const TOGGLE_FOR_TYPE: Record<NotificationTypeName, FanOutToggle | null> = {
   ASSIGNED: "taskAssigned",
   MENTIONED: "mention",
   STATUS_CHANGED: "statusChange",
@@ -122,7 +131,7 @@ function teamsEscape(text: string): string {
  * Slack Block Kit: a header, a section with the sentence, and a context line saying where it came
  * from. A top-level `text` is always included as the fallback Slack shows in its notifications.
  */
-export function slackPayload(event: WebhookEvent, link: string | null, source: string): unknown {
+export function slackPayload(event: ChatMessage, link: string | null, source: string): unknown {
   const body = shorten(event.body);
   const linkLine = link
     ? `<${link}|Open in Tielora>`
@@ -149,7 +158,7 @@ export function slackPayload(event: WebhookEvent, link: string | null, source: s
  * pinned deliberately — it is the widely supported one. The "Open in Tielora" button only appears
  * when there is a real link to open; a card action with no address is rejected.
  */
-export function teamsPayload(event: WebhookEvent, link: string | null, source: string): unknown {
+export function teamsPayload(event: ChatMessage, link: string | null, source: string): unknown {
   const body = shorten(event.body);
   return {
     type: "message",
@@ -190,7 +199,7 @@ export function teamsPayload(event: WebhookEvent, link: string | null, source: s
 
 export function buildPayload(
   kind: IntegrationKindName,
-  event: WebhookEvent,
+  event: ChatMessage,
   source: string,
 ): unknown {
   const link = fullLink(event.linkUrl);
@@ -325,6 +334,68 @@ export async function deliverToOrgWebhooks(orgId: string, event: WebhookEvent): 
   } catch (error) {
     logger.error("Chat delivery failed", { orgId, event: event.type, error });
   }
+}
+
+/**
+ * Posts one daily digest to EXACTLY the channels it was handed — never "every enabled channel".
+ *
+ * That distinction is the whole point of the argument. The sweep chooses which channels are due
+ * (`dailyBriefSentAt` behind today's line) and stamps those same rows afterwards. If this function
+ * looked the channels up for itself, a Teams channel enabled at nine in the morning would make the
+ * ten o'clock sweep post to Slack a second time — Slack was not due, but it was enabled, and only
+ * the rows that were due would have been stamped.
+ *
+ * The digest is NOT a notification fan-out: no notification row exists behind it, and none is
+ * written (documented in docs/CONVENTIONS.md as a deviation, exactly like marking a notification
+ * read writing no audit row). It is a chat-only summary of data the app already holds, sent once a
+ * day, and it is off unless an administrator asked for it.
+ *
+ * Returns how many channels it reached, so the sweep can log the run. Never throws.
+ */
+export async function deliverDailyBrief(
+  orgId: string,
+  integrationIds: string[],
+  message: ChatMessage,
+): Promise<number> {
+  if (integrationIds.length === 0) return 0;
+
+  let sent = 0;
+  try {
+    // The `orgId` is part of the lookup even though the ids came from the caller: a fan-out cannot
+    // leave its company, and an id is never trusted on its own. `enabled` is re-checked here for
+    // the same reason the webhook address is re-checked at delivery time — the state that matters
+    // is the state at the moment of sending.
+    const integrations = await prisma.orgIntegration.findMany({
+      where: { id: { in: integrationIds }, orgId, enabled: true },
+      select: { kind: true, webhookUrl: true, eventToggles: true },
+    });
+
+    for (const integration of integrations) {
+      const kind = integration.kind as IntegrationKindName;
+      const toggles = togglesFrom(integration.eventToggles);
+      if (!toggles || !toggles.dailyBrief) continue;
+
+      const outcome = await postToWebhook(
+        kind,
+        integration.webhookUrl,
+        buildPayload(kind, message, "Daily brief"),
+      );
+      if (outcome.ok) {
+        sent += 1;
+      } else {
+        // Kind and organisation only. The address is a secret and never appears in a log line.
+        logger.warn("Could not deliver a daily brief", {
+          kind,
+          orgId,
+          status: outcome.status,
+          reason: outcome.reason,
+        });
+      }
+    }
+  } catch (error) {
+    logger.error("Daily brief delivery failed", { orgId, error });
+  }
+  return sent;
 }
 
 /** The small grey line at the bottom of a card — what kind of event this was, in plain English. */
