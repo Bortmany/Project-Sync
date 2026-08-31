@@ -73,8 +73,12 @@ other model reaches its organisation through one of them. In practice:
   mention fan-outs** (`notifiableRecipients()` in comments.ts — a contractor hears about a comment
   only on a discipline task assigned to them).
 - **They have no noticeboard.** No Messages row in the sidebar, `/messages` answers "not found", and
-  every announcement and board read or write in `posts.ts` refuses them not-found-style. Their daily
-  brief keeps working with an empty announcements section.
+  every announcement and board read or write in `posts.ts` refuses them not-found-style. **The one
+  door is opt-in, one notice at a time**: an announcement whose author ticked `includeExternals`
+  appears on their own daily brief as a read-only "Notices" line — title, body, who posted it, when
+  — and nothing else about the noticeboard opens up. No board, no reply, no dismissal, no
+  Acknowledge button, and they are never counted in anybody's acknowledgement total. See "Contractor
+  notices" under the noticeboard below.
 - **Access can be given an end date.** `User.accessExpiresAt` is a contractor's last day; blank
   means no expiry, and no other role may carry one. Once it has passed, `getSessionUser()` and the
   login route refuse them **exactly as they refuse a deactivated account** — the same wording, the
@@ -349,6 +353,24 @@ In practice:
     five trigram `DropIndex` lines were deleted by hand, and `pg_indexes` was checked on both
     databases afterwards.)
 
+  - `20260831164409_posts_ack_attachments_externals` (the noticeboard's second round — **one
+    migration for the whole phase**, the same way `external_access_and_posts` carried two builds at
+    once). **Additive only**: nothing is dropped, renamed or made stricter, every new column has a
+    default that means exactly what an existing post already was, and the new table starts empty, so
+    it is safe on a populated database and no existing announcement changes in any way. Three
+    nullable-or-defaulted columns on `Post` — `requiresAck` (default false: this announcement asks
+    its audience to confirm they have read it), `includeExternals` (default false: this announcement
+    also reaches contractors) and `documentId` (a board post pointing at one document that already
+    exists, `onDelete: Restrict`). **Restrict, and it never bites**: documents in this app are
+    soft-deleted (`deletedAt`) and never hard-deleted, so the row a post points at is always still
+    there, and the chip is resolved through the reader's own visibility rather than the foreign key.
+    One new model, `PostAck` — `postId` (Cascade), `userId` (Cascade), `createdAt`,
+    `@@unique([postId, userId])` and `@@index([userId])`: **the exact shape `PostDismissal` has**,
+    deliberately, because it is the same kind of row about the opposite kind of act (see "The
+    noticeboard" below for why one is audited and the other is not). The generated migration's five
+    trigram `DropIndex` lines were deleted by hand, and `pg_indexes` was checked on both databases
+    afterwards.)
+
 - **Careful with `prisma migrate dev`:** the trigram search indexes are hand-written raw SQL that the
   Prisma schema does not know about, so the generated migration will try to DROP them. Delete those
   `DropIndex` lines from the generated `migration.sql` before it goes anywhere near a real database.
@@ -402,13 +424,13 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/integrations/microsoft/search` | GET | query: upload target + `driveId`, `q` | `MicrosoftListingDTO` |
 | `/api/integrations/microsoft/attach` | POST | `AttachMicrosoftFileInput` (the upload meta plus `driveId`, `itemId`) | `DocumentVersionDTO` — a normal revision |
 | `/api/my-tasks` | GET | — | `MyTasksDTO` (everything assigned to the signed-in person: up to 200 open tasks by deadline **plus** the 50 most recently completed, read in two windows so history never crowds out live work, with `truncated`; `totals` counted in the database over all of it) |
-| `/api/my-tasks/brief` | GET | — | `BriefDTO` ("Your day" — due today, overdue with days over, newly unblocked in the last 24 hours, mentions in the last 24 hours, awaiting your review; every section capped at 10 with its true `total` beside it) |
+| `/api/my-tasks/brief` | GET | — | `BriefDTO` ("Your day" — due today, overdue with days over, newly unblocked in the last 24 hours, mentions in the last 24 hours, awaiting your review, the announcements running for you, and **waiting for your acknowledgement** (the running announcements that asked this person to confirm and that they have not — always empty for a contractor); every section capped at 10 with its true `total` beside it. **For a contractor the announcements section is their "Notices"**: the running announcements somebody explicitly included them in, each line carrying the notice itself in `body` and an empty `linkUrl`, because there is no page they may open) |
 | `/api/my-tasks/gantt` | GET | — | `GanttDTO` (only the signed-in person's discipline tasks, grouped under their main tasks; bounded — open work plus work whose deadline fell inside the last 90 days, 300 bars max) |
 | `/api/favorites` | GET | — | `FavoriteDTO[]` (the signed-in person's own shortcuts, newest first, 50 max; deleted targets and anything in a project they may no longer see are skipped) |
 | `/api/personal-tasks` | GET | — | `PersonalTaskDTO[]` (the signed-in person's own list, open items first, then by `sortOrder` so newly added lines lead, 200 max) |
-| `/api/posts/announcements` | GET | — | `PostDTO[]` (the announcements still running for this person's audiences — company-wide, their projects, their department(s) — newest first, 50 max, each flagged `dismissed`. Not found for a contractor) |
+| `/api/posts/announcements` | GET | — | `PostDTO[]` (the announcements still running for this person's audiences — company-wide, their projects, their department(s) — newest first, 50 max, each flagged `dismissed`, plus `requiresAck`, this person's own `acked` / `ackedAt`, and `ackProgress` — the "N of M" and the outstanding names, **sent only to the post's author and to an administrator**, `null` for everybody else. Not found for a contractor) |
 | `/api/posts/audiences` | GET | — | `PostAudienceDTO[]` (the noticeboard tabs this person may read, each with `canPost` / `canModerate`. An ADMIN gets every project and discipline of their OWN company) |
-| `/api/posts/board` | GET | query: `tab` (`everyone` \| `project:<id>` \| `discipline:<id>`, default `everyone`) | `BoardPostDTO[]` (roots newest first, 50 max, each with its replies oldest first, 100 max; removed posts stay as tombstones. An audience this person does not belong to is **not found**) |
+| `/api/posts/board` | GET | query: `tab` (`everyone` \| `project:<id>` \| `discipline:<id>`, default `everyone`) | `BoardPostDTO[]` (roots newest first, 50 max, each with its replies oldest first, 100 max; removed posts stay as tombstones. Each root carries `attachment` — the one document it points at, resolved through **this** reader's own visibility and `null` when there is none or when they may not see it. An audience this person does not belong to is **not found**) |
 
 Server actions live in `src/server/actions`. Each takes its `*Input` type and returns
 `ActionResult<*DTO>`:
@@ -465,11 +487,12 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `sendTestMessage` (ADMIN; rate limited hard — five a minute per person, because each press posts into a real channel) | `IntegrationKindInput` | `ActionResult<IntegrationTestResultDTO>` |
 | `deleteIntegration` (ADMIN; removes the address with the connection, audit rows stay) | `IntegrationKindInput` | `ActionResult<{ removed: true }>` |
 | `disconnectMicrosoft` (ADMIN; deletes the stored tokens, audit row stays. Connecting is a browser journey to Microsoft, so only this half can be an action) | — | `ActionResult<{ removed: true }>` |
-| `createPost` (`POST_ANNOUNCEMENT` / `POST_BOARD` by kind; exactly one audience; an announcement may carry an expiry and notifies its audience) | `CreatePostInput` | `ActionResult<PostDTO>` |
+| `createPost` (`POST_ANNOUNCEMENT` / `POST_BOARD` by kind; exactly one audience; an announcement may carry an expiry and notifies its audience. `CreatePostInput` also carries three optional flags, each meaning "no" when left out: `requiresAck` — announcements only, and only from an ADMIN or PROJECT_MANAGER; `includeExternals` — announcements only, company-wide or one project, never a department and never a board; and `documentId` — BOARD root posts on a PROJECT board only, checked through the documents service's own loader so a miss is not-found) | `CreatePostInput` | `ActionResult<PostDTO>` |
 | `replyToPost` (BOARD only, one level deep — a reply's parent is always a root post; anybody who may READ that board may reply) | `ReplyToPostInput` | `ActionResult<PostDTO>` |
 | `editPost` (author, or an ADMIN correcting one) | `EditPostInput` | `ActionResult<PostDTO>` |
 | `deletePost` (author, or whoever moderates that board; soft delete — the feed keeps a tombstone) | `DeletePostInput` | `ActionResult<{ removed: true }>` |
-| `dismissAnnouncement` (own dashboard only; **no audit row** — personal read state, like marking a notification read) | `DismissAnnouncementInput` | `ActionResult<{ dismissed: true }>` |
+| `dismissAnnouncement` (own dashboard only; **no audit row** — personal read state, like marking a notification read. Refused, in plain English, while an announcement that requires acknowledgement has not been acknowledged by that person) | `DismissAnnouncementInput` | `ActionResult<{ dismissed: true }>` |
+| `acknowledgePost` (any INTERNAL member of the announcement's audience who may read it; one row per person per post, pressing it twice is the same acknowledgement; **writes one `POST_ACKNOWLEDGED` audit row** — the deliberate opposite of a dismissal. Not found for a contractor, for a non-member, and for an announcement that never asked) | `AcknowledgePostInput` | `ActionResult<PostDTO>` |
 | `setBroadcastPolicy` (ADMIN in their own company; audited with `BROADCAST_POLICY_CHANGED`) | `SetBroadcastPolicyInput` | `ActionResult<BroadcastSettingDTO>` |
 
 ## Notifications and the deadline sweep
@@ -478,6 +501,10 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
   person's action.** Every service already calls it *after* its transaction has committed, so a
   problem saving notifications can never undo the change that caused them — failures are logged and
   swallowed. It skips the actor, skips duplicates inside one call, and skips deactivated people.
+  - **It takes exactly one option, `{ chatCopy: false }`**, which writes the in-app rows and posts
+    nothing to Slack or Teams. One caller uses it: the contractors' half of an announcement that
+    included them, which is the same news with a different link (see "Contractor notices"). The chat
+    channel is the company's own and has already had that announcement once.
 - **Marking a notification read writes no `ActivityLog` row.** Read state is a personal preference,
   not project work; the audit trail records project work only. This is the one documented exception
   to house rule 1.
@@ -486,6 +513,9 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 - **Dismissing an announcement writes no `ActivityLog` row either** — hiding a notice from your own
   dashboard is personal read state, exactly like marking a notification read. Posting, replying,
   editing, removing and changing the broadcast setting all append one, inside the same transaction.
+  **Acknowledging one DOES append a row** (`POST_ACKNOWLEDGED`), and the contrast is the point:
+  a dismissal is your own view of a notice, an acknowledgement is an attestation the person who
+  posted it relies on. Same table shape (`PostDismissal` / `PostAck`), opposite kind of act.
 - **Favorites and personal to-do items write no `ActivityLog` row either**, for exactly the same
   reason: starring a project and jotting a private reminder are personal preferences, not project
   work. Same documented exception, same rule — everything else in `src/server/services` still
@@ -605,12 +635,144 @@ department mentions.
   only**, borrowing `COMMENT_ADDED` — which maps to no chat toggle and therefore stays in the app,
   where a reply belongs. Only `ANNOUNCEMENT` reaches chat, through its own `announcements` toggle,
   **off by default**.
-- **A contractor has no noticeboard at all.** Every read and every write answers "not found", the
-  sidebar has no Messages row, `/messages` is a 404 for them, and their daily brief simply carries an
-  empty announcements section.
+- **A contractor has no noticeboard.** Every read and every write answers "not found", the sidebar
+  has no Messages row, and `/messages` is a 404 for them. Their daily brief is no longer always
+  empty, though: it carries the announcements an author **explicitly included them in** and nothing
+  else — see "Contractor notices" below. That is one read, added deliberately and opt-in; every
+  other door stays exactly as shut as it was.
 - **"Running" is derived, never stored**: not removed, and either no expiry or an expiry still ahead.
   A dismissal hides an announcement from that one person's **dashboard strip** only — the Messages
   page still shows what is running, and nobody can see what anybody else has hidden.
+
+### Acknowledgements ("please confirm you have read this")
+
+> An announcement can ask its audience to confirm they have read it. **Asking is an ADMIN's or a
+> PROJECT_MANAGER's call; confirming is for anybody internal who may read it.** A dismissal is
+> private read state and writes nothing; an acknowledgement is an attestation and IS audited.
+
+- **Who may ASK.** `CreatePostInput.requiresAck` is valid on an `ANNOUNCEMENT` only, and only when
+  the author's own role is ADMIN or PROJECT_MANAGER — a DISCIPLINE_LEAD whom the company's
+  `broadcastPolicy` allows to announce may still only tell people, never demand a signature.
+  **Enforced in the service, not in `can()`**, deliberately: `can()` answers "may you post to this
+  audience", which is a question about the audience, and there is no honest way to fold "and may you
+  also require a signature" into that shape. It is the same reasoning that keeps replying out of
+  `POST_BOARD`. The composer's checkbox is simply **absent** for anybody else — never greyed out.
+- **Who may CONFIRM.** Any INTERNAL member of the post's audience who may read it, exactly as
+  replying on a board works. A miss — somebody else's project or department, another company's post,
+  an announcement that never asked for one, or a removed one — is **not found**. An EXTERNAL
+  contractor is refused here with everything else on the noticeboard: they have no announcements
+  surface, no Acknowledge button, and they are never counted in anybody's total.
+- **The audit row is deliberately UNPROJECTED and name-free.** `acknowledgePost` writes its
+  `POST_ACKNOWLEDGED` row with `projectId: null` and the summary "An announcement was acknowledged".
+  That is not an oversight, it is the promise above being kept: both project activity feeds read
+  `ActivityLog` **by `projectId`** (`listActivity` in comments.ts and `recentActivityForProjects` on
+  the dashboard) and both render `summary` and `actorName`, so a projected row naming the person
+  would show "so-and-so acknowledged an announcement" to every member of the project — exactly the
+  thing `ackProgress`, this section and the privacy page all say only the author and an
+  administrator see. Nothing is lost from the trail: `actorId` holds who, `entityId` holds which
+  announcement, `createdAt` holds when. It is the same nullable `projectId` that lets the
+  organisation-level `ORG_CREATED` row exist.
+- **One row, ever, and one audit row with it.** `PostAck` is unique on `[postId, userId]`; pressing
+  the button twice, or in two tabs at once, is the same acknowledgement. `acknowledgePost` appends
+  exactly one `POST_ACKNOWLEDGED` `ActivityLog` row inside the same transaction as the row itself.
+  **This is the deliberate contrast with the dismissal exception above**: hiding a notice from your
+  own dashboard is personal read state and writes nothing, while confirming you have read it is
+  something the person who posted it relies on and may be asked to show. Same table shape, opposite
+  kind of act.
+- **Acknowledging is not dismissing, and cannot be confused with it.** An announcement that requires
+  acknowledgement **cannot be dismissed until it has been acknowledged** — the service refuses it in
+  plain English, and the card does not draw the ✕ at all until then, so nothing is ever offered that
+  would be refused. Afterwards, dismissing behaves exactly as it does for any other announcement.
+  Dismissing can therefore never make a requirement quietly disappear, and the daily brief's
+  "Waiting for your acknowledgement" section names it either way.
+- **"N of M", and who sees it.** `M` is the **INTERNAL audience of the post at read time** and comes
+  from the same derivation the fan-out uses (`audienceMembers()`, which `announcementRecipients()`
+  is now a thin wrapper around, so who was told and who is counted can never drift): company-wide is
+  the active internal people of that company, a project is its internal members, a department is the
+  active internal people who work in it. **Contractors are never in M**, even on an announcement
+  that included them, and neither is a deactivated account — `notify()` skips both, and counting
+  somebody who can never confirm would make a total nobody could ever finish. `ackProgress` is sent
+  **only to the post's author and to an administrator of that company** and is `null` for everybody
+  else, the same server-computed shape `canEdit` and `canDelete` take: a colleague sees their own
+  state and never anybody else's. The outstanding names are capped at 20 (`OUTSTANDING_ACK_LIMIT`)
+  with the true total beside them, the same capping convention every brief section follows.
+- **Nothing about it is stored twice.** "Has this person acknowledged", "how many have" and "who has
+  not" are all counted from `PostAck` at read time — there is no counter column and there must not
+  be one, exactly as `OVERDUE` and a locked phase are derived. The daily brief's new section is the
+  same data filtered to this person, computed and never stored.
+
+### Board attachments ("point at a document instead of describing it")
+
+> A board post can point at **one** document that already exists. It is a pointer, never a copy —
+> and whether the chip appears at all is decided **when the card is read**, by the reader's own
+> visibility, not when it was attached.
+
+- **Where it is offered: a PROJECT board, on the post that starts a conversation, and nowhere else.**
+  `CreatePostInput.documentId` is valid only for `kind: "BOARD"`, only with a project audience, and
+  never on a reply (`ReplyToPostInput` carries no such field at all, so there is nothing to smuggle
+  in). An announcement is told rather than browsed, so it carries none either.
+- **Company-wide and department boards deliberately offer NO attachment this round.** The UI spec
+  drew a search picker for them; picking a document with no project to scope from means searching
+  across every project a person can see, which is a **new tenant-sensitive read surface** — a
+  "documents I can see anywhere" route that does not exist today and that the roadmap does not need.
+  It was left unbuilt rather than half-built, and the composer simply does not offer the affordance
+  there, the same way nothing else in this app is ever offered greyed out.
+- **The write is checked through the documents service's own loader**, not a second query:
+  `documentForBoardPost()` in `documents.ts` runs `loadDocument` (live, and in the actor's company),
+  proves the document is on **that** project, then `assertCanViewProject()` and
+  `assertExternalMaySeeDocument()`. Another company's id, another project's id, a removed document
+  and one on a project the author is not a member of all answer the same `NotFoundError` — so
+  attaching can never reach further than opening already does, and no miss ever confirms an id.
+- **The read is per-reader and all-or-nothing.** `visibleDocumentChips()` resolves a batch of ids
+  against the reader's own visible projects (and, for a contractor, their own tasks). A document that
+  has been soft-deleted since, or that sits on a project this reader is not on, simply has **no
+  entry**, and `BoardPostDTO.attachment` is `null`: no placeholder, no "restricted" state, no title.
+  "Nothing was attached" and "you may not see what was" are deliberately indistinguishable. A removed
+  post loses its attachment with its text, exactly as it loses its title.
+- **Nothing about the chip is stored.** `Post.documentId` is the whole record; the title, the
+  revision number and the link are all worked out at read time, so a document renamed or revised
+  after the post was written shows its truth, not a stale copy. The audit row records the id only.
+- `Post.documentId` is `onDelete: Restrict` and it never bites: documents here are soft-deleted and
+  never hard-deleted.
+
+### Contractor notices (`includeExternals`)
+
+> A contractor still has no noticeboard. What they have is a **read-only list of the announcements
+> somebody chose to include them in**, on the brief page they already open every morning.
+
+- **Who it is valid on.** `CreatePostInput.includeExternals` is an `ANNOUNCEMENT` flag, valid only on
+  the **company-wide** or a **PROJECT** audience. Never a department — a contractor works on a
+  project and for the company, never inside one of its departments, so there is no honest meaning
+  for it there — and never a board, which reaches nobody by design. Refused in the service, in plain
+  English, the same place `requiresAck` is refused and for the same reason: `can()` answers "may you
+  post to this audience", not "and may you also widen who reads it". Left out means **no**, and off
+  is byte-for-byte today's behaviour.
+- **Who it reaches.** `externalAudienceMembers()` in `posts.ts`, kept **deliberately separate** from
+  `audienceMembers()`: that one is the single derivation behind who is told AND the "M" in "N of M",
+  and a contractor must never appear in the second. Company-wide reaches the company's active
+  contractors; a project reaches only the contractors holding **live assigned work on that project**
+  — exactly what `assertCanViewProject()` demands of them before it shows them the project at all.
+  Being a `ProjectMember` is not enough, here as everywhere else.
+- **The link never sends them somewhere they may not go.** Colleagues get the ordinary
+  `ANNOUNCEMENT` notification pointing at `/messages?tab=…`; contractors get the **same type, the
+  same words, and `/my-tasks/brief`** instead, because `/messages` is a 404 for them and a
+  notification body is the one door read scoping cannot close. That is two `notify()` calls, and the
+  second passes `{ chatCopy: false }` — the company's own Slack or Teams channel has already had the
+  announcement once, and a second copy differing only in its link would be noise. `chatCopy` is the
+  only option `notify()` takes and this is the only caller that uses it.
+- **Acknowledgement never involves them.** A notice may carry both flags; a contractor still sees a
+  plain read-only card, is never offered the button, is refused not-found if they ask for one anyway,
+  and is never in `M`. `toPostDTO()` computes `requiresAck`, `canEdit` and `canDelete` **false for an
+  EXTERNAL on the server**, rather than trusting a screen to hide them.
+- **Their read surface is one function and one section.** `listNoticesForExternal()` is the only post
+  read an EXTERNAL is ever answered, and `briefs.ts` puts it in the brief's existing announcements
+  section. The screen relabels that section **"Notices"** for them — "announcement" implies the
+  reply / dismiss / acknowledge apparatus they never get. The line carries the whole notice (title,
+  body, who posted it, when) and `linkUrl` is **empty**, so the title draws as plain text rather than
+  a link into a wall; `BriefItemDTO.body` exists for exactly that case and is null on every task line.
+- **Nothing new is stored and nothing personal is collected.** "Included" is one boolean on the post;
+  who sees it is computed at read time from work that is already recorded. The privacy page needed no
+  change.
 
 **Any change touching this area adds or extends a test in
 `src/server/__tests__/posts.service.test.ts` in the same change** — and the tenant and contractor

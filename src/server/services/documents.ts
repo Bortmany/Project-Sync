@@ -11,17 +11,23 @@ import type { Prisma } from "@/generated/prisma/client";
 import { activeDocuments, notDeleted, prisma } from "@/lib/db";
 import { assertCan } from "@/lib/permissions";
 import { safeOriginalName, storedFilePath } from "@/lib/upload";
-import type { DocumentDTO, DocumentVersionDTO, UploadMeta } from "@/lib/zod-schemas";
+import type {
+  DocumentDTO,
+  DocumentVersionDTO,
+  PostAttachmentDTO,
+  UploadMeta,
+} from "@/lib/zod-schemas";
 import {
   DocumentDTO as DocumentSchema,
   DocumentVersionDTO as DocumentVersionSchema,
+  PostAttachmentDTO as PostAttachmentSchema,
 } from "@/lib/zod-schemas";
 import { externalTaskScope, isExternal, type ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
 import { checkDto, checkDtoList } from "@/server/serialize";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
 import { notify } from "@/server/services/notify";
-import { assertCanViewProject } from "@/server/services/projects";
+import { assertCanViewProject, projectsVisibleTo } from "@/server/services/projects";
 import { lockMainTask } from "@/server/services/tasks";
 
 /** The most documents one project listing ever returns in one go. */
@@ -321,6 +327,143 @@ export async function getVersionForDownload(
     mimeType: version.mimeType,
     sizeBytes: version.sizeBytes,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Pointing at a document from somewhere else (the noticeboard)        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The one document a board post is allowed to point at.
+ *
+ * Everything a document read already asks is asked here, in the same order and through the same
+ * helpers, so "attach a document to a post" can never reach further than "open that document"
+ * already does: it must be **live**, in the actor's own **company**, on **that project**, on a
+ * project the actor may **view**, and — for a contractor, who cannot post at all but is refused
+ * here too rather than relying on that — on a task assigned to them.
+ *
+ * Every miss is the same `NotFoundError`. Another company's id, another project's id, a
+ * soft-deleted document and one on a project the author is not a member of all answer identically,
+ * so nobody learns an id is real by trying to attach it.
+ */
+export async function documentForBoardPost(
+  actor: ActorContext,
+  documentId: string,
+  projectId: string,
+): Promise<{ id: string }> {
+  const document = await loadDocument(actor, documentId);
+  if (document.projectId !== projectId) {
+    throw new NotFoundError("We could not find that document.");
+  }
+  await assertCanViewProject(actor, document.projectId);
+  await assertExternalMaySeeDocument(actor, document);
+  return { id: document.id };
+}
+
+/**
+ * The documents from a set of ids that THIS reader may actually see, as chips, keyed by id.
+ *
+ * The whole point is what is NOT in the map: a document that has been removed since it was
+ * attached, one on a project this reader is not on, or one belonging to another company simply has
+ * no entry, and the card that pointed at it draws nothing. There is no "restricted" state and no
+ * teaser — the title never leaves the server for somebody who may not read it.
+ *
+ * Bounded and batched: one read for the documents, one for the projects this person may see, and
+ * one for the revision numbers — the marked current rows fetched by id, never a document's whole
+ * append-only history to read a single number off it. Never one query per post.
+ */
+export async function visibleDocumentChips(
+  actor: ActorContext,
+  documentIds: string[],
+): Promise<Map<string, PostAttachmentDTO>> {
+  const chips = new Map<string, PostAttachmentDTO>();
+  const wanted = [...new Set(documentIds)];
+  if (wanted.length === 0) return chips;
+
+  const rows = await prisma.document.findMany({
+    where: { id: { in: wanted }, ...notDeleted, project: { orgId: actor.orgId, ...notDeleted } },
+    select: {
+      id: true,
+      title: true,
+      projectId: true,
+      mainTaskId: true,
+      disciplineTaskId: true,
+      currentVersionId: true,
+    },
+  });
+  if (rows.length === 0) return chips;
+
+  // The same set `assertCanViewProject` would accept one at a time: the projects this person is a
+  // member of, every project of the company for an administrator, and — for a contractor — only the
+  // ones they hold live work on.
+  const visibleProjectIds = new Set((await projectsVisibleTo(actor)).map((project) => project.id));
+  const onVisibleProjects = rows.filter((row) => visibleProjectIds.has(row.projectId));
+  const kept = isExternal(actor)
+    ? await keepOwnTaskDocuments(actor, onVisibleProjects)
+    : onVisibleProjects;
+  if (kept.length === 0) return chips;
+
+  // ONE number per document, and never the whole history to get it. `DocumentVersion` is
+  // append-only and a document on a long-running project can carry dozens of revisions, so the
+  // chips ask for the marked current rows by id and nothing else. Only a document with no current
+  // version marked — which the upload path does not produce, but old or hand-written rows can —
+  // falls back, and even then to a grouped `_max` rather than a list of revisions.
+  const markedIds = kept
+    .map((row) => row.currentVersionId)
+    .filter((id): id is string => id !== null);
+  const unmarked = kept.filter((row) => row.currentVersionId === null).map((row) => row.id);
+
+  const [marked, highest] = await Promise.all([
+    markedIds.length === 0
+      ? Promise.resolve([] as { documentId: string; revisionNumber: number }[])
+      : prisma.documentVersion.findMany({
+          where: { id: { in: markedIds } },
+          select: { documentId: true, revisionNumber: true },
+        }),
+    unmarked.length === 0
+      ? Promise.resolve([] as { documentId: string; _max: { revisionNumber: number | null } }[])
+      : prisma.documentVersion.groupBy({
+          by: ["documentId"],
+          where: { documentId: { in: unmarked } },
+          _max: { revisionNumber: true },
+        }),
+  ]);
+
+  const revisionOf = new Map<string, number>();
+  for (const version of marked) revisionOf.set(version.documentId, version.revisionNumber);
+  for (const group of highest) {
+    if (group._max.revisionNumber !== null) {
+      revisionOf.set(group.documentId, group._max.revisionNumber);
+    }
+  }
+
+  for (const row of kept) {
+    // A document with no revision at all has nothing to say — no chip rather than a half one.
+    const revision = revisionOf.get(row.id);
+    if (revision === undefined) continue;
+
+    chips.set(
+      row.id,
+      checkDto(
+        PostAttachmentSchema,
+        {
+          id: row.id,
+          title: row.title,
+          revision,
+          // There is no standalone document page in this app, so the chip lands where the document
+          // actually lives — exactly where the Documents tab's own "Location" link goes.
+          linkUrl: row.disciplineTaskId
+            ? `/discipline-tasks/${row.disciplineTaskId}`
+            : row.mainTaskId
+              ? `/tasks/${row.mainTaskId}`
+              : `/projects/${row.projectId}`,
+        },
+        "PostAttachmentDTO",
+      ),
+    );
+  }
+
+  return chips;
 }
 
 /* ------------------------------------------------------------------ */

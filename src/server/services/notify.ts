@@ -19,6 +19,18 @@ export type NotifyPayload = {
 export type NotifyActor = { userId: string; orgId: string };
 
 /**
+ * The one dial on a fan-out.
+ *
+ * `chatCopy: false` writes the in-app rows and posts nothing to Slack or Teams. It exists for the
+ * one case where the SAME piece of news has to go out twice with two different links — an
+ * announcement that includes contractors, whose colleagues are sent to the noticeboard and whose
+ * contractors are sent to their own brief page, because /messages is a page they may not read. The
+ * chat channel is the company's own and has already had the notice once; a second copy differing
+ * only in its link would be noise, not news.
+ */
+export type NotifyOptions = { chatCopy?: boolean };
+
+/**
  * Tells people something happened: one Notification row per recipient.
  *
  * The actor never hears about their own action, a person listed twice gets one row, and people who
@@ -33,6 +45,7 @@ export async function notify(
   userIds: string[],
   type: NotificationTypeName,
   payload: NotifyPayload,
+  options: NotifyOptions = {},
 ): Promise<void> {
   try {
     const wanted = [...new Set(userIds.filter((id) => Boolean(id) && id !== actor.userId))];
@@ -58,6 +71,8 @@ export async function notify(
     // The chat copy, once per organisation rather than once per person, and only when the company
     // has switched that kind of event on. Deliberately NOT awaited: the in-app rows above are the
     // truth, and nobody waits on Slack to see their own change go through. It never throws.
+    if (options.chatCopy === false) return;
+
     void deliverToOrgWebhooks(actor.orgId, {
       type,
       title: payload.title,

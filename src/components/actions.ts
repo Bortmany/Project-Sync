@@ -77,6 +77,7 @@ export {
   editPost,
   deletePost,
   dismissAnnouncement,
+  acknowledgePost,
   setBroadcastPolicy,
 } from "@/server/actions/posts";
 

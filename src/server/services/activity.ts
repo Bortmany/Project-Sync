@@ -66,6 +66,12 @@ export const ACTIVITY = {
   // The noticeboard. A dismissal is deliberately absent: hiding a notice from your own dashboard is
   // personal read state, not company work, so it writes no row here.
   ANNOUNCEMENT_POSTED: "ANNOUNCEMENT_POSTED",
+  /**
+   * Somebody confirmed they had read an announcement that asked them to. This one IS recorded, and
+   * that is the whole difference from a dismissal beside it: hiding a notice is your own business,
+   * confirming you read it is an attestation the person who posted it relies on.
+   */
+  POST_ACKNOWLEDGED: "POST_ACKNOWLEDGED",
   POST_CREATED: "POST_CREATED",
   POST_REPLIED: "POST_REPLIED",
   POST_EDITED: "POST_EDITED",

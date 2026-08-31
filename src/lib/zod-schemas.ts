@@ -1082,13 +1082,23 @@ export type MyTasksDTO = z.infer<typeof MyTasksDTO>;
 export const BriefItemDTO = z.object({
   id: id,
   title: z.string(),
-  /** Where the line goes: "/tasks/…" for a main task, "/discipline-tasks/…" for a discipline one. */
+  /**
+   * Where the line goes: "/tasks/…" for a main task, "/discipline-tasks/…" for a discipline one.
+   * **Empty means there is nowhere to go** and the screen draws the title as plain text — a
+   * contractor's notice is the whole thing, and every page it could point at is one they may not
+   * read.
+   */
   linkUrl: z.string(),
   projectCode: z.string(),
   disciplineCode: z.string().nullable(),
   deadline: dateOut.nullable(),
   /** Whole days past the deadline day. Only the overdue section fills this in. */
   daysOverdue: z.number().int().nullable(),
+  /**
+   * The full text of the thing, where the line IS the thing rather than a pointer to it — a
+   * contractor's notice, which has no page of its own to open. Null on every task line.
+   */
+  body: z.string().nullable(),
   /** Why the line is here, in plain English — the unblocked and mention sections use it. */
   note: z.string().nullable(),
   /** When the thing that put this line here happened. Null where there is no such moment. */
@@ -1126,6 +1136,13 @@ export const BriefDTO = z.object({
    * Dismissing one on the dashboard does not hide it here: this is a summary of what is running.
    */
   announcements: BriefSectionDTO,
+  /**
+   * The running announcements that asked THIS person to confirm they have read them and that they
+   * have not confirmed yet. A subset of `announcements`, kept separate because it is the only part
+   * of a brief that is still waiting on the reader. Always empty for a contractor, who has no
+   * noticeboard and cannot acknowledge anything.
+   */
+  awaitingAcknowledgement: BriefSectionDTO,
 });
 export type BriefDTO = z.infer<typeof BriefDTO>;
 
@@ -1526,6 +1543,31 @@ export const PostAudienceDTO = z.object({
 });
 export type PostAudienceDTO = z.infer<typeof PostAudienceDTO>;
 
+/**
+ * The most names the outstanding list on an announcement ever shows before it says "+N more".
+ * The same shape a brief section takes: a capped list beside a true total.
+ */
+export const OUTSTANDING_ACK_LIMIT = 20;
+
+/**
+ * How an announcement that asked for acknowledgement is going — **for its author and for an
+ * administrator only**. Nobody else is ever sent this block, so a colleague can never see who has
+ * and has not confirmed.
+ *
+ * `audienceCount` is the INTERNAL audience of the post: everybody the announcement was sent to.
+ * Contractors are never in it, even on a notice that included them — they have no Acknowledge
+ * button, so counting them would make a total nobody could ever finish.
+ */
+export const PostAckProgressDTO = z.object({
+  ackCount: z.number().int(),
+  audienceCount: z.number().int(),
+  /** Who has not acknowledged yet, by name, alphabetically, capped at `OUTSTANDING_ACK_LIMIT`. */
+  outstandingNames: z.array(z.string()),
+  /** How many are outstanding in total, so the list can say "+N more" honestly. */
+  outstandingTotal: z.number().int(),
+});
+export type PostAckProgressDTO = z.infer<typeof PostAckProgressDTO>;
+
 /** One post or one reply. A removed post keeps its place and loses its text, exactly like a comment. */
 export const PostDTO = z.object({
   id: id,
@@ -1549,6 +1591,21 @@ export const PostDTO = z.object({
   isDeleted: z.boolean(),
   /** This person has hidden this announcement from their own dashboard. Their state, nobody else's. */
   dismissed: z.boolean(),
+  /**
+   * This announcement asks its audience to confirm they have read it. Announcements only; a board
+   * post is always false.
+   */
+  requiresAck: z.boolean(),
+  /** This person has acknowledged it. Their own state — never anybody else's. */
+  acked: z.boolean(),
+  /** When they did, so the card can say "You acknowledged this · 2 hours ago". Null until they do. */
+  ackedAt: dateOut.nullable(),
+  /**
+   * How the acknowledgements are going. **Null for everybody but the author and an administrator**,
+   * which is what stops the audience seeing each other's status — the same server-computed shape
+   * `canEdit` and `canDelete` take.
+   */
+  ackProgress: PostAckProgressDTO.nullable(),
   /** What this person may do with this post, worked out on the server. */
   canEdit: z.boolean(),
   canDelete: z.boolean(),
@@ -1556,8 +1613,37 @@ export const PostDTO = z.object({
 });
 export type PostDTO = z.infer<typeof PostDTO>;
 
+/**
+ * The one document a board post points at, as the chip on the card shows it.
+ *
+ * **Resolved through the READER'S own visibility, every time the card is read.** It is `null` on the
+ * post whenever this person may not see the document — soft-deleted since it was attached, a project
+ * they are not on, or any other reason — and the card then draws nothing at all: no placeholder, no
+ * greyed chip, no title. A thing you may not see does not exist on your screen, which is the same
+ * discretion "not found, never forbidden" carries everywhere else.
+ *
+ * `revision` is the document's latest revision number, so the chip can say "Rev 3" the way the
+ * documents table does. `linkUrl` is worked out on the server for the same reason `canEdit` is:
+ * there is no standalone document page in this app, so a chip has to point at the task the document
+ * is filed under, and only the server knows which.
+ */
+export const PostAttachmentDTO = z.object({
+  id: id,
+  title: z.string(),
+  revision: z.number().int(),
+  linkUrl: z.string(),
+});
+export type PostAttachmentDTO = z.infer<typeof PostAttachmentDTO>;
+
 /** A board post with its replies. Replies are one level deep, always, and never carry their own. */
-export const BoardPostDTO = PostDTO.extend({ replies: z.array(PostDTO) });
+export const BoardPostDTO = PostDTO.extend({
+  replies: z.array(PostDTO),
+  /**
+   * The document this conversation points at, or `null` — which means either nothing was attached
+   * or this reader may not see what was. The two are deliberately indistinguishable.
+   */
+  attachment: PostAttachmentDTO.nullable(),
+});
 export type BoardPostDTO = z.infer<typeof BoardPostDTO>;
 
 /**
@@ -1572,6 +1658,30 @@ export const CreatePostInput = z.object({
   body: z.string().trim().min(1, "Write something first.").max(5000),
   /** Announcements only: the day it stops being shown. */
   expiresAt: dateIn.nullish(),
+  /**
+   * Announcements only, and only from an ADMIN or a PROJECT_MANAGER: ask the audience to confirm
+   * they have read it. Optional in exactly the way `expiresAt` above is — left out (or null) means
+   * "no", which is what every post written before this existed means, and the service reads it that
+   * way rather than trusting the browser to send a false.
+   */
+  requiresAck: z.boolean().nullish(),
+  /**
+   * Announcements only, and only to the whole company or to one project: this notice also reaches
+   * the contractors working there. Never a department (a contractor belongs to no department the
+   * way a colleague does) and never a board (a contractor has no boards at all). Optional in
+   * exactly the way `requiresAck` above is — left out, or null, means "no", which is what every
+   * announcement written before this existed means.
+   *
+   * It changes who is TOLD and nothing else: contractors are still never counted in an
+   * acknowledgement total, never given an Acknowledge button, and never let onto the noticeboard.
+   */
+  includeExternals: z.boolean().nullish(),
+  /**
+   * BOARD root posts on a PROJECT board only: one document that already exists on that project.
+   * The service proves it is live, belongs to THAT project and is one this author may see — a
+   * document that is any of those things is **not found**, never "you may not".
+   */
+  documentId: id.nullish(),
 });
 export type CreatePostInput = z.infer<typeof CreatePostInput>;
 
@@ -1595,6 +1705,13 @@ export type DeletePostInput = z.infer<typeof DeletePostInput>;
 /** Hiding one announcement from your own dashboard. Personal state, never an audit row. */
 export const DismissAnnouncementInput = z.object({ id: id });
 export type DismissAnnouncementInput = z.infer<typeof DismissAnnouncementInput>;
+
+/**
+ * Confirming you have read an announcement that asked for it. The opposite of a dismissal in every
+ * way that matters: it is an attestation somebody relies on, so it IS audited.
+ */
+export const AcknowledgePostInput = z.object({ id: id });
+export type AcknowledgePostInput = z.infer<typeof AcknowledgePostInput>;
 
 export const SetBroadcastPolicyInput = z.object({ policy: BroadcastPolicySchema });
 export type SetBroadcastPolicyInput = z.infer<typeof SetBroadcastPolicyInput>;

@@ -9,6 +9,7 @@
 
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -20,13 +21,19 @@ import {
 } from "@/components/actions";
 import { useAction } from "@/components/hooks/use-action";
 import {
+  isManager,
   useAnnouncements,
   useBoard,
   useMe,
   usePostAudiences,
 } from "@/components/hooks/use-api";
 import { formatRelative } from "@/components/format";
+import { FileTypeIcon } from "@/components/documents/file-icon";
 import { AnnouncementCard } from "@/components/posts/announcement-card";
+import {
+  DocumentPicker,
+  type PickedDocument,
+} from "@/components/posts/document-picker";
 import {
   Avatar,
   Button,
@@ -57,11 +64,30 @@ function Composer({
   audience: PostAudienceDTO;
   onPosted: () => void;
 }) {
+  const me = useMe();
   const { run, pending, error } = useAction();
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [isAnnouncement, setIsAnnouncement] = useState(false);
+  const [requiresAck, setRequiresAck] = useState(false);
+  const [includeExternals, setIncludeExternals] = useState(false);
   const [until, setUntil] = useState("");
+  const [attachment, setAttachment] = useState<PickedDocument | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  // Asking a whole audience to confirm they have read something is an administrator's or a project
+  // manager's call. A department lead the company's broadcast setting lets announce simply never
+  // sees this choice — never greyed out, which is this screen's standing rule. The server refuses
+  // it either way.
+  const mayRequireAck = isManager(me.data);
+
+  // Contractors work on projects and for the company, never inside one of its departments — so the
+  // choice to include them only exists on those two audiences. Same rule on the server.
+  const mayIncludeExternals = audience.kind !== "DISCIPLINE";
+
+  // One document, on a project board, on the post that starts a conversation. Announcements are
+  // told rather than browsed, and a reply never carries one.
+  const mayAttach = !isAnnouncement && audience.kind === "PROJECT" && audience.projectId !== null;
 
   function post() {
     run(
@@ -73,6 +99,9 @@ function Composer({
           title: title.trim() || null,
           body: body.trim(),
           expiresAt: isAnnouncement && until ? new Date(`${until}T23:59:59`) : null,
+          requiresAck: isAnnouncement && mayRequireAck && requiresAck,
+          includeExternals: isAnnouncement && mayIncludeExternals && includeExternals,
+          documentId: mayAttach ? (attachment?.id ?? null) : null,
         }),
       {
         success: isAnnouncement ? "Announcement posted." : "Posted.",
@@ -82,6 +111,9 @@ function Composer({
           setBody("");
           setUntil("");
           setIsAnnouncement(false);
+          setRequiresAck(false);
+          setIncludeExternals(false);
+          setAttachment(null);
           onPosted();
         },
       },
@@ -110,6 +142,49 @@ function Composer({
         />
 
         {/*
+          Pointing at a document that already exists, instead of describing it. Nothing is uploaded
+          and nothing is copied — and a reader who may not see the document simply sees no link.
+        */}
+        {mayAttach ? (
+          attachment ? (
+            <p className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] px-3 py-1 text-[var(--brand-ink)]">
+                <FileTypeIcon filename={attachment.title} />
+                <span className="font-medium">
+                  {attachment.title}
+                  {attachment.revision === null ? "" : ` · Rev ${attachment.revision}`}
+                </span>
+              </span>
+              <button
+                type="button"
+                aria-label={`Remove ${attachment.title}`}
+                className="text-sm text-[var(--brand-gray)] hover:text-[var(--brand-ink)]"
+                onClick={() => setAttachment(null)}
+              >
+                ✕
+              </button>
+            </p>
+          ) : (
+            <button
+              type="button"
+              className="font-semibold text-[var(--brand-primary)] hover:underline"
+              onClick={() => setPickerOpen(true)}
+            >
+              Attach a document
+            </button>
+          )
+        ) : null}
+
+        {mayAttach && audience.projectId ? (
+          <DocumentPicker
+            open={pickerOpen}
+            projectId={audience.projectId}
+            onClose={() => setPickerOpen(false)}
+            onAttach={setAttachment}
+          />
+        ) : null}
+
+        {/*
           An announcement is the same post with a louder delivery: everybody in the audience is
           notified, and it shows on their dashboard until they dismiss it or it expires. The choice
           only appears to people who may make it — the server refuses it either way.
@@ -129,6 +204,50 @@ function Composer({
             </span>
           </span>
         </label>
+
+        {isAnnouncement && mayRequireAck ? (
+          <label className="flex items-start gap-2 text-sm text-[var(--brand-text)]">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={requiresAck}
+              onChange={(event) => setRequiresAck(event.target.checked)}
+            />
+            <span>
+              <span className="font-medium text-[var(--brand-ink)]">Require acknowledgement</span>
+              <span className="block text-xs text-[var(--brand-gray)]">
+                Everyone in {audience.label} gets an Acknowledge button and stays counted until they
+                use it. You&apos;ll see who still hasn&apos;t.
+              </span>
+            </span>
+          </label>
+        ) : null}
+
+        {/*
+          Contractors have no noticeboard at all, so this is the one door onto it — and it is opened
+          one announcement at a time, deliberately. Off by default, and what they get is the notice
+          itself on their own daily brief: no reply, no dismissal, no Acknowledge button.
+        */}
+        {isAnnouncement && mayIncludeExternals ? (
+          <label className="flex items-start gap-2 text-sm text-[var(--brand-text)]">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={includeExternals}
+              onChange={(event) => setIncludeExternals(event.target.checked)}
+            />
+            <span>
+              <span className="font-medium text-[var(--brand-ink)]">
+                Include external contractors
+              </span>
+              <span className="block text-xs text-[var(--brand-gray)]">
+                {audience.kind === "PROJECT"
+                  ? `Off by default. Turn this on and any contractor working on ${audience.label} also sees this notice — title, body, who posted it, and when. They can't reply, dismiss it, or see who else has read it.`
+                  : "Off by default. Turn this on and every contractor working on any of this company's projects also sees this notice — title, body, who posted it, and when. They can't reply, dismiss it, or see who else has read it."}
+              </span>
+            </span>
+          </label>
+        ) : null}
 
         {isAnnouncement ? (
           <Field
@@ -401,6 +520,23 @@ function BoardPost({ post, onChanged }: { post: BoardPostDTO; onChanged: () => v
           >
             {post.body}
           </p>
+
+          {/*
+            The document this conversation points at. The server decides, per reader, whether there
+            is one to show at all — a document somebody may not see arrives as null and nothing is
+            drawn here: no placeholder, no greyed chip, no title.
+          */}
+          {post.attachment ? (
+            <p>
+              <Link
+                href={post.attachment.linkUrl}
+                className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] px-3 py-1 text-sm font-semibold text-[var(--brand-primary)] hover:underline"
+              >
+                <FileTypeIcon filename={post.attachment.title} />
+                {post.attachment.title} · Rev {post.attachment.revision}
+              </Link>
+            </p>
+          ) : null}
         </div>
       </div>
 

@@ -80,8 +80,11 @@ export default function PrivacyPage() {
             <strong>Announcements and the team board:</strong> the posts and replies you write, who
             wrote them and when, which audience they were for, and which announcements you have
             dismissed from your own dashboard. A dismissal is yours alone — nobody can see what you
-            have hidden. A removed post stays as &quot;Post removed&quot; so the replies under it
-            still make sense. External contractors have no team board and are never sent
+            have hidden. When an announcement asks you to acknowledge it, we record that you did and
+            when: the person who posted it, and your administrator, can see who has acknowledged it
+            and who has not yet — nobody else can, and it is kept in the audit trail like any other
+            piece of work you do. A removed post stays as &quot;Post removed&quot; so the replies
+            under it still make sense. External contractors have no team board and are never sent
             announcements.
           </li>
           <li>

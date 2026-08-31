@@ -44,6 +44,7 @@ import {
 import { toggleFavorite, listFavorites } from "@/server/services/favorites";
 import { listNotifications } from "@/server/services/notifications";
 import {
+  acknowledgePost,
   createPost,
   deletePost,
   dismissAnnouncement,
@@ -954,6 +955,9 @@ describe("a contractor has no noticeboard at all", () => {
       dismissAnnouncement(contractor, { id: announcement.id }),
     ).rejects.toBeInstanceOf(NotFoundError);
     await expect(
+      acknowledgePost(contractor, { id: announcement.id }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
       editPost(contractor, { id: projectPost.id, body: "Not mine." }),
     ).rejects.toBeInstanceOf(NotFoundError);
     await expect(deletePost(contractor, { id: projectPost.id })).rejects.toBeInstanceOf(
@@ -993,6 +997,141 @@ describe("a contractor has no noticeboard at all", () => {
 
     const brief = await personBrief(contractor);
     expect(brief.announcements).toEqual({ items: [], total: 0 });
+  });
+
+  it("is never asked to acknowledge anything, and is never counted in a total", async () => {
+    const asking = await createPost(fixture.adminActor, {
+      kind: "ANNOUNCEMENT",
+      body: "Everybody here, please confirm.",
+      requiresAck: true,
+    });
+
+    // No announcements surface, so no Acknowledge button and no acknowledgement: a miss, as always.
+    await expect(acknowledgePost(contractor, { id: asking.id })).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+    // And the section that would nag them about it never appears on their brief.
+    const brief = await personBrief(contractor);
+    expect(brief.awaitingAcknowledgement).toEqual({ items: [], total: 0 });
+
+    // The author's total counts the company's own people only — a contractor who can never confirm
+    // would otherwise make it a number nobody could ever finish.
+    const internals = await prisma.user.count({
+      where: { orgId: fixture.orgId, isActive: true, role: { not: "EXTERNAL" } },
+    });
+    const forAuthor = (await listAnnouncementsForUser(fixture.adminActor)).find(
+      (post) => post.id === asking.id,
+    );
+    expect(forAuthor?.ackProgress?.audienceCount).toBe(internals);
+  });
+});
+
+describe("the one door onto the noticeboard: an announcement that included them", () => {
+  it("puts an included company-wide notice on their brief, read-only, and nothing else", async () => {
+    await createPost(fixture.adminActor, {
+      kind: "ANNOUNCEMENT",
+      title: "Site access closures this weekend",
+      body: "Gate 3 will be shut Sat–Sun for repaving.",
+      includeExternals: true,
+    });
+    await createPost(fixture.adminActor, {
+      kind: "ANNOUNCEMENT",
+      title: "Ordinary notice",
+      body: "Not for contractors.",
+    });
+
+    const brief = await personBrief(contractor);
+    expect(brief.announcements.total).toBe(1);
+    const notice = brief.announcements.items[0];
+    expect(notice?.title).toBe("Site access closures this weekend");
+    expect(notice?.body).toBe("Gate 3 will be shut Sat–Sun for repaving.");
+    expect(notice?.note).toBe(`Posted by ${fixture.adminActor.name}`);
+    // Nowhere to click: /messages is a page they may not open, so the line carries the whole notice.
+    expect(notice?.linkUrl).toBe("");
+
+    // Nothing else about the noticeboard has opened up. It is one read and no more.
+    await expect(listAudiences(contractor)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(listAnnouncementsForUser(contractor)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      listBoard(contractor, { kind: "EVERYONE", projectId: null, disciplineId: null }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      listBoard(contractor, { kind: "PROJECT", projectId: fixture.projectId, disciplineId: null }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("only reaches them on a project they hold live work on", async () => {
+    // The project they work on: included, so it reaches them.
+    await createPost(fixture.pmActor, {
+      kind: "ANNOUNCEMENT",
+      projectId: fixture.projectId,
+      title: "Scaffold coming down",
+      body: "Thursday morning.",
+      includeExternals: true,
+    });
+    // A project they hold nothing on: included, and it still does not.
+    await createPost(fixture.adminActor, {
+      kind: "ANNOUNCEMENT",
+      projectId: otherProjectId,
+      title: "Somewhere else entirely",
+      body: "Never their business.",
+      includeExternals: true,
+    });
+
+    const brief = await personBrief(contractor);
+    expect(brief.announcements.items.map((item) => item.title)).toEqual(["Scaffold coming down"]);
+
+    const told = await prisma.notification.findMany({
+      where: { userId: contractor.userId, type: "ANNOUNCEMENT" },
+    });
+    expect(told).toHaveLength(1);
+    // The link never sends them anywhere they may not go.
+    expect(told[0]?.linkUrl).toBe("/my-tasks/brief");
+  });
+
+  it("still asks them for nothing, even when the notice also required acknowledgement", async () => {
+    const asking = await createPost(fixture.adminActor, {
+      kind: "ANNOUNCEMENT",
+      title: "Please confirm",
+      body: "Everybody here, please confirm.",
+      requiresAck: true,
+      includeExternals: true,
+    });
+
+    const brief = await personBrief(contractor);
+    expect(brief.announcements.items.map((item) => item.title)).toEqual(["Please confirm"]);
+    // Included means they read it. It never means they are asked to sign for it.
+    expect(brief.awaitingAcknowledgement).toEqual({ items: [], total: 0 });
+    await expect(acknowledgePost(contractor, { id: asking.id })).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+    expect(await prisma.postAck.count()).toBe(0);
+
+    const internals = await prisma.user.count({
+      where: { orgId: fixture.orgId, isActive: true, role: { not: "EXTERNAL" } },
+    });
+    const forAuthor = (await listAnnouncementsForUser(fixture.adminActor)).find(
+      (post) => post.id === asking.id,
+    );
+    expect(forAuthor?.ackProgress?.audienceCount).toBe(internals);
+  });
+
+  it("hides an included notice again the moment their work on that project ends", async () => {
+    await createPost(fixture.pmActor, {
+      kind: "ANNOUNCEMENT",
+      projectId: fixture.projectId,
+      title: "Scaffold coming down",
+      body: "Thursday morning.",
+      includeExternals: true,
+    });
+    expect((await personBrief(contractor)).announcements.total).toBe(1);
+
+    // Their only live work here goes away — the same narrowing that takes the project itself away.
+    await prisma.disciplineTask.update({
+      where: { id: myTaskId },
+      data: { deletedAt: new Date() },
+    });
+    expect((await personBrief(contractor)).announcements.total).toBe(0);
   });
 });
 
