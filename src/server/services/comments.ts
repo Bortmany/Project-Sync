@@ -2,7 +2,8 @@
 //
 // A comment always hangs off exactly one task (a main task or a discipline task), it is always
 // written by someone who may comment on that project, and every mentioned person must already be an
-// active member of that project. Comments are soft-deleted: the row stays for the audit trail and the
+// active member of that project — as must every mentioned department, which reaches that
+// department's people on this project. Comments are soft-deleted: the row stays for the audit trail and the
 // listing shows it as a tombstone instead of dropping it. Every create, edit and delete appends
 // exactly one activity row inside the same transaction as the change itself.
 
@@ -12,6 +13,7 @@ import type { ActivityItemDTO, CommentDTO, CreateCommentInput } from "@/lib/zod-
 import {
   ActivityItemDTO as ActivityItemSchema,
   CommentDTO as CommentSchema,
+  disciplineMentionToken,
 } from "@/lib/zod-schemas";
 import { externalTaskScope, isExternal, type ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
@@ -151,7 +153,13 @@ export async function createComment(
   if (body.length === 0) throw new ServiceError("Write something first.");
 
   const mentions = [...new Set(input.mentions ?? [])];
+  const disciplineIds = [...new Set(input.disciplineMentions ?? [])];
   await assertMentionsAreMembers(actor, target.projectId, mentions);
+  await assertDisciplinesAreOnProject(actor, target.projectId, disciplineIds);
+
+  // One column, two shapes: a bare id is a person, "d:<disciplineId>" is a whole department. The
+  // prefix is written here and nowhere else, after both checks above have passed.
+  const stored = [...mentions, ...disciplineIds.map(disciplineMentionToken)];
 
   const commentId = await prisma.$transaction(async (tx) => {
     const comment = await tx.comment.create({
@@ -160,7 +168,7 @@ export async function createComment(
         authorId: actor.userId,
         mainTaskId: target.mainTaskId,
         disciplineTaskId: target.disciplineTaskId,
-        mentions,
+        mentions: stored,
       },
     });
 
@@ -171,7 +179,11 @@ export async function createComment(
       entityId: target.entityId,
       action: ACTIVITY.COMMENT_ADDED,
       summary: `${actor.name} commented on "${target.title}"`,
-      metadata: { commentId: comment.id, mentions: mentions.length },
+      metadata: {
+        commentId: comment.id,
+        mentions: mentions.length,
+        disciplineMentions: disciplineIds.length,
+      },
     });
 
     return comment.id;
@@ -187,10 +199,30 @@ export async function createComment(
     });
   }
 
-  // Anybody already named is left out here whether or not they were told, so nobody is told twice.
+  // A department mention reaches that department's people on this project. Anybody named by their
+  // own name is left out here, so somebody who is both gets exactly one notification — the personal
+  // one, which says more.
+  const viaDepartment = (await disciplineMembers(target.projectId, disciplineIds)).filter(
+    (userId) => userId !== actor.userId && !named.includes(userId),
+  );
+  const departmentPeople = await notifiableRecipients(target, viaDepartment);
+  if (departmentPeople.length > 0) {
+    // The body deliberately does not name the departments. One comment may mention several, this is
+    // one message to everybody it reached, and a notification body is the one door read scoping
+    // cannot close — a contractor on their own task would otherwise read the names of departments
+    // the project screen hides from them. The comment itself says which department it was.
+    await notify(actor, departmentPeople, "MENTIONED", {
+      title: "Your department was mentioned in a comment",
+      body: `${actor.name} mentioned your department on "${target.title}".`,
+      linkUrl: target.linkUrl,
+    });
+  }
+
+  // Anybody already told about the mention is left out here, so nobody is told twice.
+  const alreadyTold = new Set([...named, ...viaDepartment]);
   const followers = await notifiableRecipients(
     target,
-    target.followerIds.filter((userId) => userId !== actor.userId && !named.includes(userId)),
+    target.followerIds.filter((userId) => userId !== actor.userId && !alreadyTold.has(userId)),
   );
   if (followers.length > 0) {
     await notify(actor, followers, "COMMENT_ADDED", {
@@ -479,6 +511,58 @@ async function assertMentionsAreMembers(
       : "You can only mention people who are on this project.",
     { mentions: ["One of the people you mentioned is not on this project."] },
   );
+}
+
+/**
+ * No department can be mentioned into a project it does not work on — the mirror of the people
+ * check above, and the same refusal. A discipline belonging to another company is filtered out by
+ * `orgId` and then simply not named in the message, so a miss never says whether it exists at all.
+ */
+async function assertDisciplinesAreOnProject(
+  actor: ActorContext,
+  projectId: string,
+  disciplineIds: string[],
+): Promise<void> {
+  if (disciplineIds.length === 0) return;
+
+  const onProject = await prisma.projectDiscipline.findMany({
+    where: { projectId, disciplineId: { in: disciplineIds }, discipline: { orgId: actor.orgId } },
+    select: { disciplineId: true },
+  });
+  const allowed = new Set(onProject.map((row) => row.disciplineId));
+  const refused = disciplineIds.filter((disciplineId) => !allowed.has(disciplineId));
+  if (refused.length === 0) return;
+
+  const ours = await prisma.discipline.findMany({
+    where: { id: { in: refused }, orgId: actor.orgId },
+    select: { name: true },
+  });
+  const names = ours.map((discipline) => discipline.name).join(", ");
+
+  throw new ServiceError(
+    names
+      ? `You can only mention departments that are on this project. Remove ${names} from your comment, or ask a project manager to add that department to the project first.`
+      : "You can only mention departments that are on this project.",
+    { mentions: ["One of the departments you mentioned is not on this project."] },
+  );
+}
+
+/**
+ * The people a department mention reaches: the project's members who work in that department.
+ *
+ * Contractors are deliberately NOT filtered out here — every id goes through
+ * `notifiableRecipients()` next, which carries the same `role: { not: "EXTERNAL" }` filter every
+ * other fan-out uses plus the one exception it already makes for a person mention: the contractor
+ * this discipline task is assigned to still hears about a mention on their own work.
+ */
+async function disciplineMembers(projectId: string, disciplineIds: string[]): Promise<string[]> {
+  if (disciplineIds.length === 0) return [];
+
+  const members = await prisma.projectMember.findMany({
+    where: { projectId, disciplineId: { in: disciplineIds } },
+    select: { userId: true },
+  });
+  return [...new Set(members.map((member) => member.userId))];
 }
 
 /** Administrators and the project's managers may remove anyone's comment; everyone else, only their own. */

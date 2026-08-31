@@ -135,32 +135,58 @@ export const UserDTO = z.object({
   isActive: z.boolean(),
   // Only the admin user screens need sign-in history; the pickers must not carry it.
   lastLoginAt: dateOut.nullable().optional(),
+  /**
+   * When an EXTERNAL contractor's access ends; null means it never does. Admin screens only, like
+   * lastLoginAt — the pickers and mentionable lists must not carry it. "Expired" is derived from
+   * it at read time (`isAccessExpired()` in src/lib/access-expiry.ts), never stored.
+   */
+  accessExpiresAt: dateOut.nullable().optional(),
   createdAt: dateOut,
 });
 export type UserDTO = z.infer<typeof UserDTO>;
 
-export const CreateUserInput = z.object({
-  email: z.string().trim().toLowerCase().email().max(200),
-  name: shortText,
-  password: z.string().min(12).max(200),
-  role: RoleSchema,
-  disciplineId: id.nullable().optional(),
-  jobTitle: z.string().trim().max(120).nullable().optional(),
-  /** Required for an EXTERNAL contractor — the service refuses one without it. */
-  companyName: z.string().trim().max(120).nullable().optional(),
-});
+/** The refusal both user forms give when an access-end date is sent for somebody who is not a contractor. */
+const ACCESS_EXPIRY_EXTERNAL_ONLY = "Only an external contractor can have an access end date.";
+
+export const CreateUserInput = z
+  .object({
+    email: z.string().trim().toLowerCase().email().max(200),
+    name: shortText,
+    password: z.string().min(12).max(200),
+    role: RoleSchema,
+    disciplineId: id.nullable().optional(),
+    jobTitle: z.string().trim().max(120).nullable().optional(),
+    /** Required for an EXTERNAL contractor — the service refuses one without it. */
+    companyName: z.string().trim().max(120).nullable().optional(),
+    /** Optional, and only for an EXTERNAL contractor — after it, they are locked out. */
+    accessExpiresAt: dateIn.nullable().optional(),
+  })
+  .refine((value) => !value.accessExpiresAt || value.role === "EXTERNAL", {
+    message: ACCESS_EXPIRY_EXTERNAL_ONLY,
+    path: ["accessExpiresAt"],
+  });
 export type CreateUserInput = z.infer<typeof CreateUserInput>;
 
-export const UpdateUserInput = z.object({
-  id: id,
-  name: shortText.optional(),
-  role: RoleSchema.optional(),
-  disciplineId: id.nullable().optional(),
-  jobTitle: z.string().trim().max(120).nullable().optional(),
-  companyName: z.string().trim().max(120).nullable().optional(),
-  isActive: z.boolean().optional(),
-  password: z.string().min(12).max(200).optional(),
-});
+export const UpdateUserInput = z
+  .object({
+    id: id,
+    name: shortText.optional(),
+    role: RoleSchema.optional(),
+    disciplineId: id.nullable().optional(),
+    jobTitle: z.string().trim().max(120).nullable().optional(),
+    companyName: z.string().trim().max(120).nullable().optional(),
+    /**
+     * Only for an EXTERNAL contractor. A role sent alongside it must be EXTERNAL; when no role is
+     * sent, the service checks the one already on the account and clears the date for anybody else.
+     */
+    accessExpiresAt: dateIn.nullable().optional(),
+    isActive: z.boolean().optional(),
+    password: z.string().min(12).max(200).optional(),
+  })
+  .refine((value) => !value.accessExpiresAt || value.role === undefined || value.role === "EXTERNAL", {
+    message: ACCESS_EXPIRY_EXTERNAL_ONLY,
+    path: ["accessExpiresAt"],
+  });
 export type UpdateUserInput = z.infer<typeof UpdateUserInput>;
 
 /* ------------------------------------------------------------------ */
@@ -673,6 +699,37 @@ export type UploadMeta = z.infer<typeof UploadMeta>;
 /* Comments, notifications, activity                                   */
 /* ------------------------------------------------------------------ */
 
+/**
+ * What marks a department mention inside `Comment.mentions`.
+ *
+ * The schema is frozen, so the same `String[]` column carries both shapes: a bare id is a person,
+ * `"d:<disciplineId>"` is a whole department. The colon can never collide with a person's id
+ * because every id in this app is a cuid, which is letters and digits only.
+ */
+export const DISCIPLINE_MENTION_PREFIX = "d:";
+
+/** The stored token for a department mention. */
+export function disciplineMentionToken(disciplineId: string): string {
+  return `${DISCIPLINE_MENTION_PREFIX}${disciplineId}`;
+}
+
+/** The discipline a stored mention points at, or null when the mention is a person. */
+export function disciplineMentionTarget(mention: string): string | null {
+  return mention.startsWith(DISCIPLINE_MENTION_PREFIX)
+    ? mention.slice(DISCIPLINE_MENTION_PREFIX.length)
+    : null;
+}
+
+/**
+ * An id somebody sent us as a mention. The colon is refused so a browser can never post a
+ * ready-made `"d:..."` token: department mentions arrive in their own field and only the service
+ * writes the prefix, after it has checked the department really is on this project.
+ */
+const mentionId = id.refine(
+  (value) => !value.includes(":"),
+  "That is not somebody we can mention.",
+);
+
 export const CommentDTO = z.object({
   id: id,
   body: z.string(),
@@ -682,6 +739,11 @@ export const CommentDTO = z.object({
   authorCompanyName: z.string().nullable().optional(),
   mainTaskId: z.string().nullable(),
   disciplineTaskId: z.string().nullable(),
+  /**
+   * Who was mentioned: a person's id, or `"d:<disciplineId>"` for a whole department. A reader
+   * tells the two apart with `disciplineMentionTarget()` and resolves the name from the project's
+   * own disciplines, which every screen showing a thread already has.
+   */
   mentions: z.array(z.string()),
   editedAt: dateOut.nullable(),
   createdAt: dateOut,
@@ -695,7 +757,14 @@ export const CreateCommentInput = z
     body: z.string().trim().min(1, "Write something first.").max(5000),
     mainTaskId: id.nullable().optional(),
     disciplineTaskId: id.nullable().optional(),
-    mentions: z.array(id).max(50).default([]),
+    mentions: z.array(mentionId).max(50).default([]),
+    /**
+     * Departments mentioned in this comment, as plain discipline ids. They are kept apart from the
+     * people so the input says exactly what it means; the service checks each one is on this
+     * project and only then folds it into the stored `mentions` array as a `"d:"` token. Optional
+     * rather than defaulted, so a caller that mentions nobody's department says nothing at all.
+     */
+    disciplineMentions: z.array(mentionId).max(20).optional(),
   })
   .refine(
     (value) => Boolean(value.mainTaskId) !== Boolean(value.disciplineTaskId),

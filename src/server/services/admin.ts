@@ -35,6 +35,7 @@ const USER_SELECT = {
   disciplineId: true,
   jobTitle: true,
   companyName: true,
+  accessExpiresAt: true,
   isActive: true,
   lastLoginAt: true,
   createdAt: true,
@@ -49,6 +50,7 @@ type UserRow = {
   disciplineId: string | null;
   jobTitle: string | null;
   companyName: string | null;
+  accessExpiresAt: Date | null;
   isActive: boolean;
   lastLoginAt: Date | null;
   createdAt: Date;
@@ -65,6 +67,7 @@ function toUserDTO(row: UserRow): UserDTO {
     disciplineCode: row.discipline?.code ?? null,
     jobTitle: row.jobTitle,
     companyName: row.companyName,
+    accessExpiresAt: row.accessExpiresAt,
     isActive: row.isActive,
     lastLoginAt: row.lastLoginAt,
     createdAt: row.createdAt,
@@ -147,6 +150,16 @@ function companyNameFor(role: RoleName, companyName: string | null | undefined):
 }
 
 /**
+ * When a contractor's access ends. Optional — blank means it never does — and, like the company
+ * name, it belongs to an EXTERNAL contractor alone: it is cleared for every other role, so somebody
+ * who stops being a contractor can never be locked out by a date left over from that time.
+ */
+function accessExpiresFor(role: RoleName, accessExpiresAt: Date | null | undefined): Date | null {
+  if (role !== "EXTERNAL") return null;
+  return accessExpiresAt ?? null;
+}
+
+/**
  * Creates an account inside the administrator's own company. Signup creates the FIRST person in a
  * company; this is how every colleague after them gets in. The new account's orgId is taken from
  * the actor, never from the form — there is no way to add someone to another organisation.
@@ -165,6 +178,7 @@ export async function createUser(actor: ActorContext, input: CreateUserInput): P
 
   await assertDisciplineChoice(actor, input.role, input.disciplineId);
   const companyName = companyNameFor(input.role, input.companyName);
+  const accessExpiresAt = accessExpiresFor(input.role, input.accessExpiresAt);
   const passwordHash = await hashPassword(input.password);
 
   const created = await prisma.$transaction(async (tx) => {
@@ -178,6 +192,7 @@ export async function createUser(actor: ActorContext, input: CreateUserInput): P
         disciplineId: input.disciplineId ?? null,
         jobTitle: input.jobTitle ?? null,
         companyName,
+        accessExpiresAt,
       },
       select: USER_SELECT,
     });
@@ -191,7 +206,14 @@ export async function createUser(actor: ActorContext, input: CreateUserInput): P
       summary:
         `${actor.name} created an account for ${user.name}` +
         (user.companyName ? ` of ${user.companyName}` : ""),
-      metadata: { role: user.role, disciplineId: user.disciplineId, companyName: user.companyName },
+      // The date itself is not recorded — only that access was given an end at all, the same way
+      // the update below names the field that moved rather than its value.
+      metadata: {
+        role: user.role,
+        disciplineId: user.disciplineId,
+        companyName: user.companyName,
+        accessLimited: user.accessExpiresAt !== null,
+      },
     });
 
     return user;
@@ -217,6 +239,10 @@ export async function updateUser(actor: ActorContext, input: UpdateUserInput): P
   const nextCompanyName = companyNameFor(
     nextRole,
     input.companyName === undefined ? existing.companyName : input.companyName,
+  );
+  const nextAccessExpiresAt = accessExpiresFor(
+    nextRole,
+    input.accessExpiresAt === undefined ? existing.accessExpiresAt : input.accessExpiresAt,
   );
 
   // Nobody locks themselves out: neither by dropping their own administrator role...
@@ -253,6 +279,7 @@ export async function updateUser(actor: ActorContext, input: UpdateUserInput): P
         disciplineId: input.disciplineId === undefined ? undefined : input.disciplineId,
         jobTitle: input.jobTitle === undefined ? undefined : input.jobTitle,
         companyName: nextCompanyName,
+        accessExpiresAt: nextAccessExpiresAt,
         isActive: input.isActive ?? undefined,
         passwordHash,
       },
@@ -269,6 +296,10 @@ export async function updateUser(actor: ActorContext, input: UpdateUserInput): P
         : null,
       input.jobTitle !== undefined && input.jobTitle !== existing.jobTitle ? "job title" : null,
       nextCompanyName !== existing.companyName ? "company" : null,
+      // The field is named, never the date itself — an audit row says what moved, not what to.
+      (nextAccessExpiresAt?.getTime() ?? null) !== (existing.accessExpiresAt?.getTime() ?? null)
+        ? "access end date"
+        : null,
       input.isActive !== undefined && input.isActive !== existing.isActive ? "sign-in access" : null,
       passwordHash ? "password" : null,
     ].filter((field): field is string => field !== null);

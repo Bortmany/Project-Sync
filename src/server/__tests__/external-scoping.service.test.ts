@@ -31,6 +31,7 @@ import {
   listComments,
 } from "@/server/services/comments";
 import { getDashboardForActor } from "@/server/services/dashboard";
+import { listAllUsers, updateUser } from "@/server/services/admin";
 import { listUsers } from "@/server/services/directory";
 import {
   getVersionForDownload,
@@ -555,6 +556,70 @@ describe("a contractor's documents, search, directory and briefs are all narrowe
     ).toBe(1);
   });
 
+  it("is left out of a department mention, except on their own task", async () => {
+    // The contractor works in this department on this project, which is the only way a department
+    // mention could ever reach them.
+    await prisma.projectMember.updateMany({
+      where: { projectId: fixture.projectId, userId: contractor.userId },
+      data: { disciplineId: fixture.disciplineId },
+    });
+
+    await createComment(fixture.pmActor, {
+      mainTaskId: sharedMainTaskId,
+      body: "@MECH discipline can you all look at this?",
+      mentions: [],
+      disciplineMentions: [fixture.disciplineId],
+    });
+
+    expect(
+      await prisma.notification.count({ where: { userId: contractor.userId, type: "MENTIONED" } }),
+    ).toBe(0);
+
+    // The colleague in the same department did hear about it, which is what makes the omission
+    // deliberate rather than a broken fan-out.
+    expect(
+      await prisma.notification.count({
+        where: { userId: fixture.engineerActor.userId, type: "MENTIONED" },
+      }),
+    ).toBe(1);
+
+    // On their own task the same department mention reaches them, exactly as a personal one does.
+    await createComment(fixture.pmActor, {
+      disciplineTaskId: myTaskId,
+      body: "@MECH discipline the weld report, please.",
+      mentions: [],
+      disciplineMentions: [fixture.disciplineId],
+    });
+    expect(
+      await prisma.notification.count({ where: { userId: contractor.userId, type: "MENTIONED" } }),
+    ).toBe(1);
+  });
+
+  it("is never told the NAMES of the departments a comment mentioned", async () => {
+    // The project screen already hides every department but their own from a contractor. A
+    // notification body is the one door read scoping cannot close, so it says "your department"
+    // and never which ones — not even the one they are in.
+    await prisma.projectMember.updateMany({
+      where: { projectId: fixture.projectId, userId: contractor.userId },
+      data: { disciplineId: fixture.disciplineId },
+    });
+
+    await createComment(fixture.pmActor, {
+      disciplineTaskId: myTaskId,
+      body: "@MECH discipline and @ELEC discipline, please look at this.",
+      mentions: [],
+      disciplineMentions: [fixture.disciplineId, fixture.otherDisciplineId],
+    });
+
+    const told = await prisma.notification.findMany({
+      where: { userId: contractor.userId, type: "MENTIONED" },
+    });
+    expect(told).toHaveLength(1);
+    expect(told[0].body).toContain("mentioned your department");
+    expect(told[0].body).not.toContain("MECH");
+    expect(told[0].body).not.toContain("ELEC");
+  });
+
   it("can only star something they can see", async () => {
     await expect(
       toggleFavorite(contractor, { targetType: "DISCIPLINE_TASK", targetId: theirTaskId }),
@@ -928,5 +993,56 @@ describe("a contractor has no noticeboard at all", () => {
 
     const brief = await personBrief(contractor);
     expect(brief.announcements).toEqual({ items: [], total: 0 });
+  });
+});
+
+describe("their access can be given an end date", () => {
+  it("shows the date on the admin screen and nowhere a picker can reach", async () => {
+    await updateUser(fixture.adminActor, {
+      id: contractor.userId,
+      accessExpiresAt: new Date(Date.UTC(2030, 8, 30)),
+    });
+
+    const onAdminScreen = (await listAllUsers(fixture.adminActor)).find(
+      (person) => person.id === contractor.userId,
+    );
+    expect(onAdminScreen?.accessExpiresAt?.toISOString().slice(0, 10)).toBe("2030-09-30");
+
+    // The people picker is the same DTO with less on it: sign-in history and the access end date
+    // are admin-screen facts, and the picker must not carry either.
+    for (const person of await listUsers(fixture.adminActor)) {
+      expect(person.accessExpiresAt).toBeUndefined();
+      expect(person.lastLoginAt).toBeUndefined();
+    }
+  });
+
+  it("is not the same as deactivating them: the account and their work stay exactly as they were", async () => {
+    // A date that has passed locks the door (proved in access-expiry.service.test.ts) and changes
+    // nothing else — the row stays active, and the work they did is still there for the team.
+    await updateUser(fixture.adminActor, {
+      id: contractor.userId,
+      accessExpiresAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
+    });
+
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: contractor.userId } });
+    expect(row.isActive).toBe(true);
+
+    const theirWork = await getDisciplineTaskForActor(fixture.adminActor, myTaskId);
+    expect(theirWork.assigneeId).toBe(contractor.userId);
+  });
+
+  it("is cleared the moment they stop being a contractor", async () => {
+    await updateUser(fixture.adminActor, {
+      id: contractor.userId,
+      accessExpiresAt: new Date(Date.UTC(2030, 8, 30)),
+    });
+
+    const promoted = await updateUser(fixture.adminActor, {
+      id: contractor.userId,
+      role: "ENGINEER",
+      disciplineId: fixture.disciplineId,
+      companyName: null,
+    });
+    expect(promoted.accessExpiresAt).toBeNull();
   });
 });

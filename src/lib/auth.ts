@@ -4,6 +4,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import argon2 from "argon2";
+import { isAccessExpired } from "@/lib/access-expiry";
 import { assertSessionSecret } from "@/lib/boot-guards";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
@@ -86,6 +87,15 @@ export async function pruneExpiredSessions(): Promise<void> {
   }
 }
 
+/** Drops every session one person holds. Best effort: a failure here must not break the request. */
+export async function revokeSessions(userId: string): Promise<void> {
+  try {
+    await prisma.session.deleteMany({ where: { userId } });
+  } catch (error) {
+    logger.warn("Could not clear this person's sessions", { userId, error });
+  }
+}
+
 /** Creates a session row and puts the raw token in an httpOnly cookie. The raw token is never stored. */
 export async function createSession(
   userId: string,
@@ -132,6 +142,14 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   });
   if (!session || session.expiresAt <= new Date()) return null;
   if (!session.user.isActive) return null;
+
+  // A contractor whose access has run out is refused exactly like a deactivated account, and the
+  // sessions they still hold are dropped on the way out — so a browser already open dies with the
+  // date instead of lasting until the token would have expired.
+  if (isAccessExpired(session.user)) {
+    await revokeSessions(session.user.id);
+    return null;
+  }
 
   return {
     id: session.user.id,

@@ -3,6 +3,7 @@
 // else's notifications.
 
 import type { Prisma } from "@/generated/prisma/client";
+import { ACCESS_EXPIRY_GRACE_MS, ACCESS_EXPIRY_WARNING_MS } from "@/lib/access-expiry";
 import { prisma } from "@/lib/db";
 import type { NotificationDTO } from "@/lib/zod-schemas";
 import { NotificationDTO as NotificationSchema } from "@/lib/zod-schemas";
@@ -21,6 +22,18 @@ const DEADLINE_FORMAT = new Intl.DateTimeFormat("en-GB", {
   day: "numeric",
   month: "short",
   year: "numeric",
+});
+
+/**
+ * The same "30 Sep 2026", read in UTC. A contractor's access end date is stored at UTC midnight and
+ * the warning's own link names that UTC day, so the sentence has to say the same day the link does —
+ * on a server west of Greenwich the ordinary reading would print the day before.
+ */
+const ACCESS_END_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
 });
 
 type NotificationRow = {
@@ -110,7 +123,11 @@ export async function markAllNotificationsRead(actor: ActorContext): Promise<{ c
 /* The deadline scan (run by src/server/sweep.ts)                      */
 /* ------------------------------------------------------------------ */
 
-export type SweepCounts = { approaching: number; overdue: number };
+/** What the deadline scan itself wrote. */
+export type DeadlineCounts = { approaching: number; overdue: number };
+
+/** Everything one sweep wrote: the deadline reminders, plus the contractor access warnings. */
+export type SweepCounts = DeadlineCounts & { accessExpiring: number };
 
 /**
  * What the sweep wrote, ready for the chat copy. The organisation comes from the person the
@@ -120,7 +137,7 @@ export type SweepCounts = { approaching: number; overdue: number };
 export type SweepWebhookEvent = { orgId: string } & WebhookEvent;
 
 /** The rows that were written, plus the chat events they should produce once the sweep commits. */
-export type SweepOutcome = { counts: SweepCounts; events: SweepWebhookEvent[] };
+export type SweepOutcome = { counts: DeadlineCounts; events: SweepWebhookEvent[] };
 
 type Candidate = {
   userId: string;
@@ -164,6 +181,95 @@ export async function sweepDeadlineNotifications(
     counts: { approaching: approaching.count, overdue: overdue.count },
     events: [...approaching.events, ...overdue.events],
   };
+}
+
+/**
+ * Warns a company's administrators that a contractor's access is about to end.
+ *
+ * Run by the same hourly sweep, inside the same advisory-locked transaction, and kept quiet by the
+ * same trick the deadline reminders use — no new column, because the schema is frozen. The
+ * notification's `linkUrl` carries the contractor AND the date their access ends
+ * (`/admin/users?expiring=<userId>&on=<yyyy-mm-dd>`), so:
+ *  - the same warning is never sent twice for the same date, and
+ *  - extending the date changes the link, which earns one fresh warning about the new date.
+ *
+ * Recipients are the administrators of that contractor's OWN company and nobody else. Nothing in
+ * the app depends on this having run: an expired contractor is refused at sign-in either way.
+ */
+export async function sweepAccessExpiryNotifications(
+  tx: Prisma.TransactionClient,
+  now: Date = new Date(),
+): Promise<{ count: number }> {
+  const until = new Date(now.getTime() + ACCESS_EXPIRY_WARNING_MS);
+  // Anything later than this has not run out yet — the same one-day grace `isAccessExpired()` gives,
+  // so somebody whose last day is today is still warned about, and somebody already locked out is
+  // not warned about again.
+  const stillValid = new Date(now.getTime() - ACCESS_EXPIRY_GRACE_MS);
+
+  const ending = await tx.user.findMany({
+    where: {
+      role: "EXTERNAL",
+      isActive: true,
+      accessExpiresAt: { gt: stillValid, lte: until },
+    },
+    select: { id: true, name: true, orgId: true, accessExpiresAt: true },
+  });
+  if (ending.length === 0) return { count: 0 };
+
+  const admins = await tx.user.findMany({
+    where: {
+      orgId: { in: [...new Set(ending.map((person) => person.orgId))] },
+      role: "ADMIN",
+      isActive: true,
+    },
+    select: { id: true, orgId: true },
+  });
+  if (admins.length === 0) return { count: 0 };
+
+  const adminsOf = new Map<string, string[]>();
+  for (const admin of admins) {
+    adminsOf.set(admin.orgId, [...(adminsOf.get(admin.orgId) ?? []), admin.id]);
+  }
+
+  const wanted = ending.flatMap((person) => {
+    const expiresAt = person.accessExpiresAt as Date;
+    const linkUrl = `/admin/users?expiring=${person.id}&on=${expiresAt.toISOString().slice(0, 10)}`;
+    return (adminsOf.get(person.orgId) ?? []).map((adminId) => ({
+      userId: adminId,
+      linkUrl,
+      name: person.name,
+      expiresAt,
+    }));
+  });
+  if (wanted.length === 0) return { count: 0 };
+
+  const sent = await tx.notification.findMany({
+    where: {
+      type: "DEADLINE_APPROACHING",
+      linkUrl: { in: [...new Set(wanted.map((row) => row.linkUrl))] },
+    },
+    select: { userId: true, linkUrl: true },
+  });
+
+  const data = wanted
+    .filter(
+      (row) =>
+        !sent.some((existing) => existing.userId === row.userId && existing.linkUrl === row.linkUrl),
+    )
+    .map((row) => ({
+      userId: row.userId,
+      type: "DEADLINE_APPROACHING" as const,
+      title: "A contractor's access is ending",
+      body: `${row.name}'s access ends on ${ACCESS_END_FORMAT.format(row.expiresAt)}. Extend it in Admin → Users if their work is not finished.`,
+      linkUrl: row.linkUrl,
+      actorId: null,
+      createdAt: now,
+    }));
+
+  if (data.length === 0) return { count: 0 };
+
+  const result = await tx.notification.createMany({ data });
+  return { count: result.count };
 }
 
 /** Open tasks whose deadline falls in the given window, with the person who should hear about it. */

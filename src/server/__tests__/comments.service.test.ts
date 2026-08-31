@@ -3,11 +3,14 @@
 // The rules being proved: only people on the project may comment, nobody can be mentioned into a
 // project they are not on, a comment is only edited by its author (or an administrator), a removed
 // comment leaves a tombstone rather than disappearing, and every comment, edit and removal writes
-// exactly one row to the append-only audit trail.
+// exactly one row to the append-only audit trail. A department mention follows the same rules one
+// level up: the department has to be on the project, and the mention reaches that department's
+// people on it.
 
 import { beforeEach, afterAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import { ForbiddenError } from "@/lib/permissions";
+import { CreateCommentInput } from "@/lib/zod-schemas";
 import { ServiceError } from "@/server/errors";
 import { actorForUser } from "@/server/actor";
 import {
@@ -20,6 +23,7 @@ import {
 import { createMainTask } from "@/server/services/tasks";
 import {
   inThirtyDays,
+  makeDiscipline,
   makeProjectFixture,
   makeUser,
   resetDatabase,
@@ -141,6 +145,139 @@ describe("mentions", () => {
         mentions: [leaver.id],
       }),
     ).rejects.toBeInstanceOf(ServiceError);
+  });
+});
+
+describe("department mentions", () => {
+  /** Every MENTIONED notification written so far, with who it went to and what it said. */
+  async function mentionNotifications() {
+    return prisma.notification.findMany({
+      where: { type: "MENTIONED" },
+      select: { userId: true, title: true, body: true },
+    });
+  }
+
+  it("reaches the department's people on this project and nobody else", async () => {
+    const mainTask = await makeMainTask();
+
+    // Somebody in the same department who is not on this project at all.
+    await makeUser({
+      name: "Off Project",
+      role: "ENGINEER",
+      disciplineId: fixture.disciplineId,
+    });
+
+    // Somebody on this project, but in a different department.
+    const elsewhere = await makeUser({
+      name: "Elec Colleague",
+      role: "ENGINEER",
+      disciplineId: fixture.otherDisciplineId,
+    });
+    await prisma.projectMember.create({
+      data: {
+        projectId: fixture.projectId,
+        userId: elsewhere.id,
+        projectRole: "ENGINEER",
+        disciplineId: fixture.otherDisciplineId,
+      },
+    });
+
+    const comment = await createComment(fixture.pmActor, {
+      body: "@MECH discipline can you confirm the settlement figures?",
+      mainTaskId: mainTask.id,
+      mentions: [],
+      disciplineMentions: [fixture.disciplineId],
+    });
+
+    // One column, two shapes: the department is stored with its "d:" prefix.
+    expect(comment.mentions).toEqual([`d:${fixture.disciplineId}`]);
+
+    const told = await mentionNotifications();
+    expect(told.map((row) => row.userId)).toEqual([fixture.engineerActor.userId]);
+    // The body says "your department", never which one: one message goes to everybody the mention
+    // reached, and a notification body is the one door read scoping cannot close.
+    expect(told[0].body).toContain("mentioned your department");
+    expect(told[0].body).not.toContain("MECH discipline");
+  });
+
+  it("leaves out the person who wrote the comment", async () => {
+    const mainTask = await makeMainTask();
+
+    await createComment(fixture.engineerActor, {
+      body: "@MECH discipline I have picked this up.",
+      mainTaskId: mainTask.id,
+      mentions: [],
+      disciplineMentions: [fixture.disciplineId],
+    });
+
+    expect(await mentionNotifications()).toEqual([]);
+  });
+
+  it("tells somebody named and in the department exactly once", async () => {
+    const mainTask = await makeMainTask();
+
+    const comment = await createComment(fixture.pmActor, {
+      body: `@${fixture.engineerActor.name} and @MECH discipline, please look at this.`,
+      mainTaskId: mainTask.id,
+      mentions: [fixture.engineerActor.userId],
+      disciplineMentions: [fixture.disciplineId],
+    });
+
+    expect(comment.mentions).toEqual([fixture.engineerActor.userId, `d:${fixture.disciplineId}`]);
+
+    const told = await mentionNotifications();
+    expect(told).toHaveLength(1);
+    expect(told[0].userId).toBe(fixture.engineerActor.userId);
+    // The personal copy wins, because it says more than the department one.
+    expect(told[0].body).toContain("mentioned you");
+  });
+
+  it("refuses a department that is not on this project", async () => {
+    const mainTask = await makeMainTask();
+    const elsewhere = await makeDiscipline("PROC", 3);
+
+    await expect(
+      createComment(fixture.pmActor, {
+        body: "@PROC discipline please take a look.",
+        mainTaskId: mainTask.id,
+        mentions: [],
+        disciplineMentions: [elsewhere.id],
+      }),
+    ).rejects.toBeInstanceOf(ServiceError);
+
+    expect(await prisma.comment.count()).toBe(0);
+  });
+
+  it("refuses a ready-made department token sent from a browser", () => {
+    const forged = CreateCommentInput.safeParse({
+      body: "Trying it on.",
+      mainTaskId: "abc123",
+      mentions: [`d:${fixture.disciplineId}`],
+    });
+    expect(forged.success).toBe(false);
+
+    const alsoForged = CreateCommentInput.safeParse({
+      body: "Trying it on.",
+      mainTaskId: "abc123",
+      disciplineMentions: ["d:abc123"],
+    });
+    expect(alsoForged.success).toBe(false);
+  });
+
+  it("counts departments in the audit row beside the people", async () => {
+    const mainTask = await makeMainTask();
+
+    await createComment(fixture.pmActor, {
+      body: `@${fixture.engineerActor.name} and @MECH discipline, one more thing.`,
+      mainTaskId: mainTask.id,
+      mentions: [fixture.engineerActor.userId],
+      disciplineMentions: [fixture.disciplineId],
+    });
+
+    const row = await prisma.activityLog.findFirst({
+      where: { entityId: mainTask.id, action: "COMMENT_ADDED" },
+    });
+    expect(row?.metadata).toMatchObject({ mentions: 1, disciplineMentions: 1 });
   });
 });
 

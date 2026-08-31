@@ -75,6 +75,15 @@ other model reaches its organisation through one of them. In practice:
 - **They have no noticeboard.** No Messages row in the sidebar, `/messages` answers "not found", and
   every announcement and board read or write in `posts.ts` refuses them not-found-style. Their daily
   brief keeps working with an empty announcements section.
+- **Access can be given an end date.** `User.accessExpiresAt` is a contractor's last day; blank
+  means no expiry, and no other role may carry one. Once it has passed, `getSessionUser()` and the
+  login route refuse them **exactly as they refuse a deactivated account** — the same wording, the
+  same status, never a word about why — and `getSessionUser()` deletes their `Session` rows as it
+  goes, so a browser already open dies with the date. Nothing else changes: the account, its work
+  and its audit trail all stay, and extending the date in Admin → Users lets them straight back in.
+  "Expired" is derived from the date at read time (`isAccessExpired()` in
+  `src/lib/access-expiry.ts`), never stored, and it is admin-screen data only — `UserDTO` carries it
+  the way it carries `lastLoginAt`, so the directory and the pickers never do.
 - **The sign-off.** With `Project.externalSignoffRequired` on (the default), a contractor's
   completion becomes `AWAITING_REVIEW` with a `SUBMITTED_FOR_REVIEW` audit row and a notification to
   the discipline lead and the project's managers. `confirmDisciplineTaskReview()` runs the **real**
@@ -304,6 +313,18 @@ In practice:
     and the person). The generated migration's five trigram `DropIndex` lines were deleted by hand,
     and `pg_indexes` was checked on both databases afterwards.)
 
+  - `20260831135208_external_access_expiry` (contractor access expiry. ONE nullable column,
+    `User.accessExpiresAt` — the day an EXTERNAL contractor's access ends. Additive only: no
+    existing model, field, enum value or index was changed, and null (which is what every existing
+    account means) reads as "no expiry", so nobody who can sign in today loses access when it is
+    applied. Only a contractor ever carries a date — `createUser`/`updateUser` clear it for every
+    other role, and zod refuses one sent with an internal role — and **"expired" itself is never
+    stored**: it is derived from the date at read time by `isAccessExpired()` in
+    `src/lib/access-expiry.ts`, with the same one-day grace `isOverdue()` gives a deadline, so
+    somebody whose access ends 30 Sep is still let in on 30 Sep. The generated migration's five
+    trigram `DropIndex` lines were deleted by hand, and `pg_indexes` was checked on both databases
+    afterwards.)
+
 - **Careful with `prisma migrate dev`:** the trigram search indexes are hand-written raw SQL that the
   Prisma schema does not know about, so the generated migration will try to DROP them. Delete those
   `DropIndex` lines from the generated `migration.sql` before it goes anywhere near a real database.
@@ -393,14 +414,14 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `reopenDisciplineTask` | `{ id, reason }` | `ActionResult<DisciplineTaskDTO>` |
 | `addDependency` | `AddDependencyInput` | `ActionResult<DisciplineTaskDTO>` |
 | `removeDependency` | `AddDependencyInput` | `ActionResult<DisciplineTaskDTO>` |
-| `createComment` | `CreateCommentInput` | `ActionResult<CommentDTO>` |
+| `createComment` (`CreateCommentInput` now also carries an optional `disciplineMentions` — the departments mentioned, as plain discipline ids; the service folds them into the stored `mentions` array as `"d:"` tokens) | `CreateCommentInput` | `ActionResult<CommentDTO>` |
 | `editComment` | `{ id, body }` | `ActionResult<CommentDTO>` |
 | `deleteComment` | `{ id }` | `ActionResult<{ removed: true }>` (soft delete — the thread keeps a tombstone) |
 | `softDeleteDocument` (ADMIN / PM; never deletes a revision) | `{ id }` | `ActionResult<{ deleted: true }>` |
 | `markNotificationRead` (own notification only — someone else's is refused) | `{ id }` | `ActionResult<NotificationDTO>` |
 | `markAllNotificationsRead` (the signed-in person's unread only) | — | `ActionResult<{ count: number }>` |
-| `createUser` (always into the actor's own organisation) | `CreateUserInput` | `ActionResult<UserDTO>` |
-| `updateUser` | `UpdateUserInput` | `ActionResult<UserDTO>` |
+| `createUser` (always into the actor's own organisation; `CreateUserInput` and `UpdateUserInput` both now carry an optional, nullable `accessExpiresAt`, which zod refuses on any role but EXTERNAL and the service clears for one) | `CreateUserInput` | `ActionResult<UserDTO>` |
+| `updateUser` (an access end date sent for somebody who is no longer a contractor is cleared, exactly as `companyName` is; the audit row names "access end date" as a field that moved, never the date itself) | `UpdateUserInput` | `ActionResult<UserDTO>` |
 | `deactivateUser` | `{ id }` | `ActionResult<UserDTO>` |
 | `createDiscipline` | `CreateDisciplineInput` | `ActionResult<DisciplineDTO>` |
 | `updateDiscipline` | `UpdateDisciplineInput` | `ActionResult<DisciplineDTO>` |
@@ -452,10 +473,66 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
     identifies the task, so the sweep looks for a row of the same type, for the same person, with the
     same link. `OVERDUE` is once per person per task, ever; `DEADLINE_APPROACHING` only counts a row
     created inside the current 48-hour window, so moving a deadline out earns a fresh warning.
+  - **The same locked pass also warns about contractor access running out**
+    (`sweepAccessExpiryNotifications()` in `src/server/services/notifications.ts`): an EXTERNAL whose
+    `accessExpiresAt` falls inside the next seven days earns one `DEADLINE_APPROACHING` notification
+    to **the administrators of that contractor's own company** and nobody else — the tenant rule, in
+    the one place the sweep picks recipients. Kept quiet by the same `type` + `linkUrl` trick and no
+    new column: the link carries both the person and the date
+    (`/admin/users?expiring=<userId>&on=<yyyy-mm-dd>`), so the same date never warns twice and
+    extending the date earns exactly one fresh warning about the new one. It writes **in-app
+    notifications only** — no chat copy, because a lockout date is an administrator's housekeeping
+    rather than one of the six chat events, and `DEADLINE_APPROACHING`'s chat toggle means "a task
+    deadline is near".
   - **Nothing depends on the sweep having run.** Overdue is still derived at read time everywhere
-    (`isOverdue()`); a skipped run costs a nudge, never correctness.
+    (`isOverdue()`), and an expired contractor is refused at sign-in whether or not anybody was
+    warned; a skipped run costs a nudge, never correctness.
   - `SWEEP_DISABLED=1` stops the scheduler (the tests set it). `runSweepOnce()` itself ignores the
     flag so tests can call it directly.
+
+## Comments and mentions (people and whole departments)
+
+> You may mention a person who is on the project, or a whole department that is on the project.
+> Anything else is refused in the same plain English, and a refusal never says whether the person or
+> the department exists somewhere else.
+
+- **A department mention is stored in the SAME column, with no migration.** `Comment.mentions` is a
+  `String[]` of user ids; a department is kept in it as the token `"d:<disciplineId>"`
+  (`DISCIPLINE_MENTION_PREFIX`, `disciplineMentionToken()` and `disciplineMentionTarget()` in
+  `src/lib/zod-schemas.ts`). The schema is frozen after Milestone 1, and a second array column would
+  have been an additive change nobody needs: one list of "who was mentioned" is the honest shape,
+  and the read side already treats it as opaque strings. **The prefix cannot collide with a person's
+  id** because every id in this app is a cuid — letters and digits only, never a colon.
+- **The input names the two things separately.** `CreateCommentInput` carries `mentions` (people, as
+  plain ids) and an optional `disciplineMentions` (departments, as plain discipline ids). Neither
+  may contain a colon, which is what stops a browser posting a ready-made `"d:..."` token: the
+  prefix is written by `createComment()` alone, after the department has been checked, so a forged
+  token can never skip the check. `CommentDTO.mentions` returns the stored array as it is — a reader
+  tells the two apart with `disciplineMentionTarget()` and resolves the name from the project's own
+  disciplines, which every screen showing a thread already has.
+- **The department check mirrors the people check.** `assertDisciplinesAreOnProject()` is the twin
+  of `assertMentionsAreMembers()`: the department must have a `ProjectDiscipline` row on THAT
+  project, and the project is already the actor's company's by the time the loader has run. A
+  department from another company is filtered out by `orgId` and then simply not named in the
+  refusal, so a miss never reveals that the id is real elsewhere.
+- **Who a department mention reaches**: the project's members who work in that department, through
+  `notifiableRecipients()` — the same narrowing a person mention goes through, so **a contractor is
+  left out exactly as they are today, except on the discipline task assigned to them**. The actor is
+  never told, and somebody who is both named by name and in the department gets **one** notification,
+  the personal one. It is an ordinary `MENTIONED`, so it maps to the `mention` chat toggle and
+  reaches Slack or Teams through `notify()` like any other mention.
+- **The department notification never names the department**: "Layla al-Riyami mentioned your
+  department on "Flare tip replacement"." One comment may mention several departments and this is
+  one message to everybody it reached, so naming them would tell a contractor on their own task the
+  names of departments the project screen deliberately hides from them — and a notification body is
+  the one door read scoping cannot close. The comment itself says which department it was, to
+  everybody who may read it.
+- The audit row counts both, separately: `metadata: { commentId, mentions, disciplineMentions }`.
+
+**Any change touching this area adds or extends a test in
+`src/server/__tests__/comments.service.test.ts` in the same change** — and the tenant and contractor
+halves in `org-isolation.service.test.ts` and `external-scoping.service.test.ts`, which both probe
+department mentions.
 
 ## The noticeboard (announcements and the department board)
 

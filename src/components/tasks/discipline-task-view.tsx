@@ -153,6 +153,13 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
     userId: member.userId,
     userName: member.userName,
   }));
+  // The departments on this project, for "@Mechanical". Already loaded with the project — no
+  // second fetch for the composer.
+  const mentionableDepartments = (project.data?.disciplines ?? []).map((discipline) => ({
+    id: discipline.disciplineId,
+    name: discipline.name,
+    colorHex: discipline.colorHex,
+  }));
 
   // The action bar's two halves, decided together so they can never say different things: a
   // contractor on a sign-off project submits their work instead of completing it, and the "Awaiting
@@ -387,6 +394,7 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
                     mainTaskId={data.mainTaskId}
                     projectId={data.projectId}
                     members={mentionable}
+                    departments={mentionableDepartments}
                   />
                 ),
               },
