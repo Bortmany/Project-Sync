@@ -4,14 +4,14 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Project Nexus — Oman LNG",
+  title: "Tielora",
   description: "Multidisciplinary coordination for engineering teams.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-[var(--page-bg)] text-[var(--olng-text)] antialiased">
+      <body className="min-h-screen bg-[var(--page-bg)] text-[var(--brand-text)] antialiased">
         {children}
       </body>
     </html>

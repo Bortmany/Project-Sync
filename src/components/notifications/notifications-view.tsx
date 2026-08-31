@@ -38,7 +38,7 @@ export function NotificationsView() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
-        <h1 className="text-xl font-semibold text-[var(--olng-blue)]">Notifications</h1>
+        <h1 className="text-xl font-semibold text-[var(--brand-primary)]">Notifications</h1>
         <Button
           variant="secondary"
           onClick={() => markAllRead.mutate()}
@@ -63,7 +63,7 @@ export function NotificationsView() {
           action={
             <Link
               href="/dashboard"
-              className="inline-flex items-center justify-center rounded-[var(--radius)] border border-[var(--olng-blue)] bg-white px-4 py-2 text-sm font-semibold text-[var(--olng-blue)] transition-colors hover:bg-[var(--page-bg)]"
+              className="inline-flex items-center justify-center rounded-[var(--radius)] border border-[var(--brand-primary)] bg-white px-4 py-2 text-sm font-semibold text-[var(--brand-primary)] transition-colors hover:bg-[var(--page-bg)]"
             >
               Go to dashboard
             </Link>
@@ -75,7 +75,7 @@ export function NotificationsView() {
         <div className="space-y-6">
           {groups.unread.length > 0 ? (
             <section className="space-y-1">
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--olng-gray)]">
+              <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--brand-gray)]">
                 New
               </h2>
               <div className="divide-y divide-[var(--border)] rounded-[var(--radius)] border border-[var(--border)] bg-white">
@@ -88,7 +88,7 @@ export function NotificationsView() {
 
           {groups.read.length > 0 ? (
             <section className="space-y-1">
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--olng-gray)]">
+              <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--brand-gray)]">
                 Earlier
               </h2>
               <div className="divide-y divide-[var(--border)] rounded-[var(--radius)] border border-[var(--border)] bg-white">

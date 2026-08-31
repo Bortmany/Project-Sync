@@ -52,6 +52,37 @@ export const LoginInput = z.object({
 });
 export type LoginInput = z.infer<typeof LoginInput>;
 
+/** The discipline sets a brand-new company can start from. The lists live in src/server/industry-templates.ts. */
+export const IndustryTemplateSchema = z.enum(["OIL_AND_GAS", "CONSTRUCTION", "GENERIC"]);
+export type IndustryTemplateName = z.infer<typeof IndustryTemplateSchema>;
+
+/**
+ * Signing a new company up: the company itself and the person who will run it, in one form.
+ * The password rule is the same 12-character minimum an administrator's "create user" form uses.
+ */
+export const SignupInput = z.object({
+  organizationName: z.string().trim().min(2, "Tell us your company's name.").max(120),
+  industryTemplate: IndustryTemplateSchema,
+  name: z.string().trim().min(1, "Tell us your name.").max(200),
+  email: z.string().trim().toLowerCase().email("Use an email address like name@company.com.").max(200),
+  password: z
+    .string()
+    .min(12, "Use at least 12 characters — a short sentence works well.")
+    .max(200),
+});
+export type SignupInput = z.infer<typeof SignupInput>;
+
+/** What signup hands back once the company, its disciplines and its first administrator exist. */
+export const SignupResultDTO = z.object({
+  id: id,
+  name: z.string(),
+  role: RoleSchema,
+  organizationId: id,
+  organizationName: z.string(),
+  organizationSlug: z.string(),
+});
+export type SignupResultDTO = z.infer<typeof SignupResultDTO>;
+
 /* ------------------------------------------------------------------ */
 /* Users                                                               */
 /* ------------------------------------------------------------------ */
@@ -230,6 +261,68 @@ export const UpsertProjectDisciplineInput = z.object({
 export type UpsertProjectDisciplineInput = z.infer<typeof UpsertProjectDisciplineInput>;
 
 /* ------------------------------------------------------------------ */
+/* Phases (the stage gates)                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One stage gate on a project. `locked` and `lockedByPhaseName` are DERIVED at read time from the
+ * phases before this one (src/lib/phase-lock.ts) — neither is ever stored, in the same way OVERDUE
+ * is never stored on a task.
+ */
+export const PhaseDTO = z.object({
+  id: id,
+  projectId: id,
+  name: z.string(),
+  sortOrder: z.number().int(),
+  locked: z.boolean(),
+  /** The phase this one is waiting for, or null when nothing is holding it. */
+  lockedByPhaseName: z.string().nullable(),
+  overridden: z.boolean(),
+  overrideReason: z.string().nullable(),
+  overriddenByName: z.string().nullable(),
+  overriddenAt: dateOut.nullable(),
+  taskCount: z.number().int(),
+  completedCount: z.number().int(),
+});
+export type PhaseDTO = z.infer<typeof PhaseDTO>;
+
+export const CreatePhaseInput = z.object({
+  projectId: id,
+  name: z.string().trim().min(1, "Give the phase a name.").max(60),
+});
+export type CreatePhaseInput = z.infer<typeof CreatePhaseInput>;
+
+export const RenamePhaseInput = z.object({
+  id: id,
+  name: z.string().trim().min(1, "Give the phase a name.").max(60),
+});
+export type RenamePhaseInput = z.infer<typeof RenamePhaseInput>;
+
+/** The full ordered list of the project's phase ids — nothing may be left out or invented. */
+export const ReorderPhasesInput = z.object({
+  projectId: id,
+  phaseIds: z.array(id).min(1).max(50),
+});
+export type ReorderPhasesInput = z.infer<typeof ReorderPhasesInput>;
+
+export const DeletePhaseInput = z.object({ id: id });
+export type DeletePhaseInput = z.infer<typeof DeletePhaseInput>;
+
+/** The recorded, authorised way past a stage gate. Same rule as a main-task status override. */
+export const OverridePhaseLockInput = z.object({
+  id: id,
+  reason: z.string().trim().min(5, "Give a short reason (at least 5 characters).").max(500),
+});
+export type OverridePhaseLockInput = z.infer<typeof OverridePhaseLockInput>;
+
+/** Moving a main task into a phase, or out of every phase. Allowed even into a locked phase. */
+export const SetMainTaskPhaseInput = z.object({
+  id: id,
+  phaseId: id.nullable(),
+});
+export type SetMainTaskPhaseInput = z.infer<typeof SetMainTaskPhaseInput>;
+
+/* ------------------------------------------------------------------ */
 /* Main tasks                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -256,6 +349,9 @@ export const MainTaskDTO = z.object({
   id: id,
   projectId: id,
   projectCode: z.string(),
+  /** The stage gate this task sits behind. Null means unphased — never gated. */
+  phaseId: id.nullable(),
+  phaseName: z.string().nullable(),
   title: z.string(),
   description: z.string(),
   priority: PrioritySchema,
@@ -288,6 +384,8 @@ export const MainTaskListItemDTO = z.object({
   id: id,
   projectId: id,
   projectCode: z.string(),
+  /** The stage gate this task sits behind, so a listing can be grouped by phase. */
+  phaseId: id.nullable(),
   title: z.string(),
   priority: PrioritySchema,
   deadline: dateOut,
@@ -302,6 +400,8 @@ export type MainTaskListItemDTO = z.infer<typeof MainTaskListItemDTO>;
 
 export const CreateMainTaskInput = z.object({
   projectId: id,
+  /** Optional: the stage gate the task belongs to. Left out, the task is unphased. */
+  phaseId: id.nullable().optional(),
   title: shortText,
   description: longText,
   priority: PrioritySchema.default("MEDIUM"),
@@ -639,6 +739,11 @@ export const GanttDTO = z.object({
     z.object({
       id: id,
       title: z.string(),
+      /**
+       * The stage gate this bar sits behind, so the project timeline can draw phase bands.
+       * Left out entirely by the schedules that have no project to band (My tasks).
+       */
+      phaseId: id.nullable().optional(),
       startDate: dateOut.nullable(),
       deadline: dateOut,
       status: TaskStatusSchema,
@@ -762,3 +867,413 @@ export const MyTasksDTO = z.object({
   truncated: z.boolean(),
 });
 export type MyTasksDTO = z.infer<typeof MyTasksDTO>;
+
+/* ------------------------------------------------------------------ */
+/* Daily briefs (computed from what the app already records)           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One line in a brief. Everything is computed from data already in the database — there is no new
+ * personal data here and nothing is written by a brief.
+ */
+export const BriefItemDTO = z.object({
+  id: id,
+  title: z.string(),
+  /** Where the line goes: "/tasks/…" for a main task, "/discipline-tasks/…" for a discipline one. */
+  linkUrl: z.string(),
+  projectCode: z.string(),
+  disciplineCode: z.string().nullable(),
+  deadline: dateOut.nullable(),
+  /** Whole days past the deadline day. Only the overdue section fills this in. */
+  daysOverdue: z.number().int().nullable(),
+  /** Why the line is here, in plain English — the unblocked and mention sections use it. */
+  note: z.string().nullable(),
+  /** When the thing that put this line here happened. Null where there is no such moment. */
+  at: dateOut.nullable(),
+});
+export type BriefItemDTO = z.infer<typeof BriefItemDTO>;
+
+/**
+ * One section of a brief: the rows the screen shows, and the true count behind them. `total` is
+ * counted over everything that qualifies, so a capped list never makes the number a lie.
+ */
+export const BriefSectionDTO = z.object({
+  items: z.array(BriefItemDTO),
+  total: z.number().int(),
+});
+export type BriefSectionDTO = z.infer<typeof BriefSectionDTO>;
+
+/**
+ * "Your day": one person's own work, computed on the server. `since` is the start of the 24-hour
+ * window the newly-unblocked and mentions sections cover, so every section can state its own window
+ * on screen.
+ */
+export const BriefDTO = z.object({
+  generatedAt: dateOut,
+  since: dateOut,
+  dueToday: BriefSectionDTO,
+  overdue: BriefSectionDTO,
+  newlyUnblocked: BriefSectionDTO,
+  mentions: BriefSectionDTO,
+  awaitingReview: BriefSectionDTO,
+});
+export type BriefDTO = z.infer<typeof BriefDTO>;
+
+/**
+ * Progress now against progress seven days ago. The earlier number is DERIVED from the completion
+ * timestamps the app already keeps (a main task's completion moment is the last of its discipline
+ * tasks to finish, or the moment an authorised override was recorded) — there is no snapshot table
+ * and no stored history.
+ *
+ * The comparison is made between the tasks that existed then: `totalThen` leaves out anything
+ * created inside the week, so adding work to a project can never make its progress appear to fall,
+ * and work reopened inside the week is counted as it stood before it was reopened.
+ */
+export const ProjectBriefProgressDTO = z.object({
+  completed: z.number().int(),
+  total: z.number().int(),
+  pct: z.number().int(),
+  completedThen: z.number().int(),
+  /** How many main tasks existed seven days ago — the basis `pctThen` is a percentage of. */
+  totalThen: z.number().int(),
+  pctThen: z.number().int(),
+  /** The moment "seven days ago" means, so the screen can name the day. */
+  since: dateOut,
+});
+export type ProjectBriefProgressDTO = z.infer<typeof ProjectBriefProgressDTO>;
+
+/** A blocked discipline task, with the work it is still waiting on named. */
+export const BriefBlockedTaskDTO = z.object({
+  id: id,
+  title: z.string(),
+  linkUrl: z.string(),
+  disciplineCode: z.string(),
+  mainTaskTitle: z.string(),
+  unmetDependencies: z.array(z.string()),
+});
+export type BriefBlockedTaskDTO = z.infer<typeof BriefBlockedTaskDTO>;
+
+/** A shut gate and the phase that is holding it shut. Locked is derived, never stored. */
+export const BriefLockedPhaseDTO = z.object({
+  id: id,
+  name: z.string(),
+  lockedByPhaseName: z.string().nullable(),
+  openTaskCount: z.number().int(),
+});
+export type BriefLockedPhaseDTO = z.infer<typeof BriefLockedPhaseDTO>;
+
+/** How much late work each discipline is carrying. Overdue is derived at read time, as always. */
+export const BriefOverdueByDisciplineDTO = z.object({
+  disciplineCode: z.string(),
+  disciplineColorHex: z.string(),
+  count: z.number().int(),
+});
+export type BriefOverdueByDisciplineDTO = z.infer<typeof BriefOverdueByDisciplineDTO>;
+
+/** What keeps the next gate shut: the unfinished main tasks of the earliest phase with open work. */
+export const BriefNextGateDTO = z.object({
+  phaseId: id,
+  phaseName: z.string(),
+  items: z.array(BriefItemDTO),
+  total: z.number().int(),
+});
+export type BriefNextGateDTO = z.infer<typeof BriefNextGateDTO>;
+
+/** "Where we stand": one project, computed. Every member of the project may read it. */
+export const ProjectBriefDTO = z.object({
+  projectId: id,
+  projectCode: z.string(),
+  projectName: z.string(),
+  generatedAt: dateOut,
+  progress: ProjectBriefProgressDTO,
+  blockedTasks: z.array(BriefBlockedTaskDTO),
+  blockedTotal: z.number().int(),
+  lockedPhases: z.array(BriefLockedPhaseDTO),
+  overdueByDiscipline: z.array(BriefOverdueByDisciplineDTO),
+  overdueTotal: z.number().int(),
+  nextGate: BriefNextGateDTO.nullable(),
+  /** Unphased work, nearest deadlines first — the part of "what next" no gate speaks for. */
+  nearestDeadlines: z.array(BriefItemDTO),
+});
+export type ProjectBriefDTO = z.infer<typeof ProjectBriefDTO>;
+
+/* ------------------------------------------------------------------ */
+/* Chat integrations (Slack and Microsoft Teams)                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Which chat tool a webhook belongs to. A zod enum over a plain string column, NOT a database
+ * enum: adding a third tool later needs no migration.
+ */
+export const IntegrationKindSchema = z.enum(["SLACK", "TEAMS"]);
+export type IntegrationKindName = z.infer<typeof IntegrationKindSchema>;
+
+/**
+ * The events an organisation can switch on or off for a chat channel.
+ *
+ * The first five are notification copies — each one is what a `NotificationType` maps to. The sixth,
+ * `dailyBrief`, is NOT a notification fan-out at all: it is the once-a-day digest of work the app
+ * has already recorded, and nothing in the app ever writes a notification of that kind. See
+ * `TOGGLE_FOR_TYPE` in src/server/services/webhooks.ts, which the compiler stops from mapping
+ * anything to it.
+ */
+export const IntegrationEventSchema = z.enum([
+  "taskAssigned",
+  "mention",
+  "statusChange",
+  "overdueReminder",
+  "gateOverride",
+  "dailyBrief",
+]);
+export type IntegrationEventName = z.infer<typeof IntegrationEventSchema>;
+
+/**
+ * Every event, on or off, so a saved map is never half-defined.
+ *
+ * `dailyBrief` carries a default of `false` on purpose: rows saved before the digest existed have
+ * five keys, and without the default they would stop parsing — which would silently switch a
+ * company's whole chat delivery off. An old row therefore reads as "digest off", which is also what
+ * a brand-new one gets.
+ */
+export const IntegrationEventToggles = z.object({
+  taskAssigned: z.boolean(),
+  mention: z.boolean(),
+  statusChange: z.boolean(),
+  overdueReminder: z.boolean(),
+  gateOverride: z.boolean(),
+  dailyBrief: z.boolean().default(false),
+});
+export type IntegrationEventToggles = z.infer<typeof IntegrationEventToggles>;
+
+/**
+ * What a brand-new integration starts with: the five notification copies on, the daily digest off,
+ * and the channel itself still disabled. The digest is a scheduled post into somebody's channel, so
+ * it is only ever there because an administrator asked for it.
+ */
+export const DEFAULT_EVENT_TOGGLES: IntegrationEventToggles = {
+  taskAssigned: true,
+  mention: true,
+  statusChange: true,
+  overdueReminder: true,
+  gateOverride: true,
+  dailyBrief: false,
+};
+
+/**
+ * The host rules a webhook URL must satisfy, per kind. This is BOTH the form validation and the
+ * SSRF guard: `webhookUrlProblem` is called again at delivery time, on the stored value, so a URL
+ * that somehow got into the database another way is still never called.
+ */
+const WEBHOOK_RULES: Record<
+  IntegrationKindName,
+  { host: (host: string) => boolean; path: (path: string) => boolean; message: string }
+> = {
+  SLACK: {
+    host: (host) => host === "hooks.slack.com",
+    path: (path) => path.startsWith("/services/") && path.length > "/services/".length,
+    message:
+      "That does not look like a Slack webhook address. It should start with https://hooks.slack.com/services/",
+  },
+  TEAMS: {
+    host: (host) => host.endsWith(".logic.azure.com") || host.endsWith(".logic.azure.us"),
+    path: (path) => path.includes("/workflows/") && path.includes("/triggers/"),
+    message:
+      "That does not look like a Teams Workflows address. It should be the https link Teams gave you, containing logic.azure.com and /triggers/manual/paths/invoke",
+  },
+};
+
+/**
+ * Checks a pasted webhook address. Returns a plain-English problem, or null when it is fine.
+ * Only https is ever accepted, and only the hosts above — nothing else may be called.
+ */
+export function webhookUrlProblem(kind: IntegrationKindName, value: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return "Paste the whole web address, starting with https://";
+  }
+  if (url.protocol !== "https:") return "The address must start with https://";
+  if (url.username || url.password) return "Remove the username and password from the address.";
+  // `url.port` is empty for the default https port — Teams addresses are written with ":443" and
+  // the parser drops it. Anything else is a port nobody's chat webhook listens on, so it is refused
+  // rather than dialled.
+  if (url.port) return "Remove the port number from the address.";
+
+  const rule = WEBHOOK_RULES[kind];
+  if (!rule.host(url.hostname.toLowerCase())) return rule.message;
+  if (!rule.path(url.pathname)) return rule.message;
+  return null;
+}
+
+/**
+ * All the admin screen is ever told about a saved address: scheme and host, then an ellipsis.
+ * The secret part of the URL is never sent back to a browser once it has been saved.
+ */
+export function maskWebhookUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.host}/…`;
+  } catch {
+    return "…";
+  }
+}
+
+const webhookUrlField = z
+  .string()
+  .trim()
+  .min(1, "Paste the webhook address you copied.")
+  .max(500, "That address is too long to be a webhook address.");
+
+/** Pasting (or re-pasting) an address. Changing the address always means pasting it again. */
+export const SaveIntegrationInput = z
+  .object({
+    kind: IntegrationKindSchema,
+    webhookUrl: webhookUrlField,
+    eventToggles: IntegrationEventToggles.optional(),
+  })
+  .superRefine((value, ctx) => {
+    const problem = webhookUrlProblem(value.kind, value.webhookUrl);
+    if (problem) ctx.addIssue({ code: "custom", path: ["webhookUrl"], message: problem });
+  });
+export type SaveIntegrationInput = z.infer<typeof SaveIntegrationInput>;
+
+export const SetIntegrationEnabledInput = z.object({
+  kind: IntegrationKindSchema,
+  enabled: z.boolean(),
+});
+export type SetIntegrationEnabledInput = z.infer<typeof SetIntegrationEnabledInput>;
+
+export const SetEventTogglesInput = z.object({
+  kind: IntegrationKindSchema,
+  eventToggles: IntegrationEventToggles,
+});
+export type SetEventTogglesInput = z.infer<typeof SetEventTogglesInput>;
+
+export const IntegrationKindInput = z.object({ kind: IntegrationKindSchema });
+export type IntegrationKindInput = z.infer<typeof IntegrationKindInput>;
+
+/**
+ * One chat channel as the Admin screen sees it. `webhookUrlMasked` is scheme and host only —
+ * **the saved address is never returned by any read**, so changing it means pasting it again.
+ */
+export const OrgIntegrationDTO = z.object({
+  kind: IntegrationKindSchema,
+  configured: z.boolean(),
+  enabled: z.boolean(),
+  webhookUrlMasked: z.string().nullable(),
+  eventToggles: IntegrationEventToggles,
+  updatedAt: dateOut.nullable(),
+});
+export type OrgIntegrationDTO = z.infer<typeof OrgIntegrationDTO>;
+
+/** What "Send test message" comes back with. Never carries the address or a provider error body. */
+export const IntegrationTestResultDTO = z.object({
+  kind: IntegrationKindSchema,
+  delivered: z.boolean(),
+  message: z.string(),
+});
+export type IntegrationTestResultDTO = z.infer<typeof IntegrationTestResultDTO>;
+
+/* ------------------------------------------------------------------ */
+/* Microsoft 365 files (OneDrive and SharePoint)                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Graph ids are opaque strings from Microsoft, longer than our own cuids and put straight into a
+ * request path — so anything that could change the shape of that path is refused here, once, and
+ * the same helper is used again before any outbound call (src/lib/ms-graph.ts).
+ */
+export function isSafeGraphId(value: string): boolean {
+  return value.length > 0 && value.length <= 512 && !/[/?#%\\\s]/.test(value);
+}
+
+const graphId = z
+  .string()
+  .trim()
+  .min(1)
+  .max(512)
+  .refine(isSafeGraphId, "That file reference is not usable.");
+
+/**
+ * One company's Microsoft 365 connection, as the Admin screen sees it. No token, no tenant secret
+ * and no file address is ever part of this shape.
+ */
+export const MicrosoftConnectionDTO = z.object({
+  /** Whether this Tielora has an Azure app registered at all. False means the card is not shown. */
+  available: z.boolean(),
+  /** Whether APP_BASE_URL is set, which is what the callback address is built from. */
+  callbackReady: z.boolean(),
+  connected: z.boolean(),
+  /** The work domain of the account that connected, e.g. "contoso.com". Never a person's address. */
+  tenantDomain: z.string().nullable(),
+  connectedByName: z.string().nullable(),
+  connectedAt: dateOut.nullable(),
+  /** True once Microsoft has stopped accepting the saved token — an administrator must reconnect. */
+  needsReconnect: z.boolean(),
+});
+export type MicrosoftConnectionDTO = z.infer<typeof MicrosoftConnectionDTO>;
+
+/** One place files live: the person's own OneDrive, or a SharePoint document library. */
+export const MicrosoftDriveDTO = z.object({
+  id: graphId,
+  name: z.string(),
+  /** "OneDrive" or the SharePoint site's name — plain English for the picker's list. */
+  location: z.string(),
+});
+export type MicrosoftDriveDTO = z.infer<typeof MicrosoftDriveDTO>;
+
+/** One row in the file picker: a folder to open, or a file to attach. */
+export const MicrosoftItemDTO = z.object({
+  id: graphId,
+  name: z.string(),
+  isFolder: z.boolean(),
+  sizeBytes: z.number().nullable(),
+  lastModifiedAt: dateOut.nullable(),
+  /** Larger than the 25 MB upload limit, so the picker can say so before anyone waits. */
+  tooLarge: z.boolean(),
+});
+export type MicrosoftItemDTO = z.infer<typeof MicrosoftItemDTO>;
+
+/**
+ * What one step of browsing (or one search) answers with. The picker keeps its own breadcrumb from
+ * the folders it walked through, so the server never spends a second Graph call re-reading names it
+ * has just handed over.
+ */
+export const MicrosoftListingDTO = z.object({
+  driveId: graphId,
+  driveName: z.string(),
+  /** The folder being shown, or null for the top of the drive. */
+  folderId: graphId.nullable(),
+  items: z.array(MicrosoftItemDTO),
+  /** True when Microsoft had more rows than one page shows. */
+  truncated: z.boolean(),
+});
+export type MicrosoftListingDTO = z.infer<typeof MicrosoftListingDTO>;
+
+/**
+ * Where an attachment would go. Exactly the fields the upload dialog already sends, because the
+ * browse endpoints check the SAME permission an upload does before they show a single file name.
+ */
+export const MicrosoftTargetInput = UploadMeta.omit({ title: true, category: true, note: true });
+export type MicrosoftTargetInput = z.infer<typeof MicrosoftTargetInput>;
+
+export const MicrosoftBrowseInput = MicrosoftTargetInput.extend({
+  driveId: graphId.optional(),
+  /** The folder being opened. Absent means the drive's root. */
+  itemId: graphId.optional(),
+});
+export type MicrosoftBrowseInput = z.infer<typeof MicrosoftBrowseInput>;
+
+export const MicrosoftSearchInput = MicrosoftTargetInput.extend({
+  driveId: graphId,
+  q: z.string().trim().min(2, "Type at least two characters to search.").max(100),
+});
+export type MicrosoftSearchInput = z.infer<typeof MicrosoftSearchInput>;
+
+/** Attaching one picked file. Everything an upload carries, plus which file to fetch. */
+export const AttachMicrosoftFileInput = UploadMeta.extend({
+  driveId: graphId,
+  itemId: graphId,
+});
+export type AttachMicrosoftFileInput = z.infer<typeof AttachMicrosoftFileInput>;

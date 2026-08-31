@@ -14,7 +14,6 @@ export {
   statusLabel,
 } from "@/components/ui/indicators";
 export { EmptyState } from "@/components/ui/empty-state";
-export { SailMotif } from "@/components/ui/sail-motif";
 export { Tabs } from "@/components/ui/tabs";
 export type { TabItem } from "@/components/ui/tabs";
 export { Modal } from "@/components/ui/modal";

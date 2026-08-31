@@ -95,7 +95,7 @@ export function SearchBox() {
 
   return (
     <div ref={boxRef} className="relative flex-1 max-w-xl">
-      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--olng-gray)]">
+      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--brand-gray)]">
         <SearchIcon />
       </span>
       <input
@@ -114,9 +114,9 @@ export function SearchBox() {
         aria-controls="search-results"
         role="combobox"
         aria-autocomplete="list"
-        className="w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--page-bg)] py-2 pl-9 pr-14 text-sm text-[var(--olng-text)] placeholder:text-[var(--olng-gray)] focus:border-[var(--olng-blue)] focus:outline-none"
+        className="w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--page-bg)] py-2 pl-9 pr-14 text-sm text-[var(--brand-text)] placeholder:text-[var(--brand-gray)] focus:border-[var(--brand-primary)] focus:outline-none"
       />
-      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-[var(--border)] px-1 text-[10px] text-[var(--olng-gray)]">
+      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-[var(--border)] px-1 text-[10px] text-[var(--brand-gray)]">
         ⌘K
       </span>
 
@@ -144,7 +144,7 @@ export function SearchBox() {
               <Skeleton className="h-8 w-full" />
             </div>
           ) : total === 0 ? (
-            <p className="px-2 py-3 text-sm text-[var(--olng-text)]">
+            <p className="px-2 py-3 text-sm text-[var(--brand-text)]">
               No results for “{query.trim()}”. Try a different name, code, or keyword.
             </p>
           ) : (
@@ -156,7 +156,7 @@ export function SearchBox() {
                 if (groupRows.length === 0) return null;
                 return (
                   <section key={group} className="mb-1">
-                    <h3 className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--olng-gray)]">
+                    <h3 className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--brand-gray)]">
                       {GROUP_LABEL[group]}
                     </h3>
                     {groupRows.map((row) => {
@@ -175,10 +175,10 @@ export function SearchBox() {
                             active ? "bg-[var(--page-bg)]" : ""
                           }`}
                         >
-                          <span className="min-w-0 flex-1 truncate font-semibold text-[var(--olng-navy)]">
+                          <span className="min-w-0 flex-1 truncate font-semibold text-[var(--brand-ink)]">
                             {row.title}
                           </span>
-                          <span className="shrink-0 truncate text-xs text-[var(--olng-gray)]">
+                          <span className="shrink-0 truncate text-xs text-[var(--brand-gray)]">
                             {row.meta}
                           </span>
                         </button>
@@ -193,7 +193,7 @@ export function SearchBox() {
                   setOpen(false);
                   router.push(`/search?q=${encodeURIComponent(query.trim())}`);
                 }}
-                className="w-full rounded-[var(--radius)] px-2 py-2 text-left text-sm font-semibold text-[var(--olng-blue)] hover:bg-[var(--page-bg)]"
+                className="w-full rounded-[var(--radius)] px-2 py-2 text-left text-sm font-semibold text-[var(--brand-primary)] hover:bg-[var(--page-bg)]"
               >
                 View all {total} {total === 1 ? "result" : "results"} →
               </button>

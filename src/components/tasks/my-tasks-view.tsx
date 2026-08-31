@@ -110,8 +110,8 @@ function SegmentedLinks({
           aria-current={option.active ? "page" : undefined}
           className={`px-3 py-1.5 text-xs font-semibold transition-colors ${
             option.active
-              ? "bg-[var(--olng-blue)] text-white"
-              : "text-[var(--olng-text)] hover:bg-[var(--page-bg)]"
+              ? "bg-[var(--brand-primary)] text-white"
+              : "text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
           }`}
         >
           {option.label}
@@ -215,7 +215,7 @@ export function MyTasksView() {
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           {viewSwitcher}
-          <p className="text-xs text-[var(--olng-gray)]">
+          <p className="text-xs text-[var(--brand-gray)]">
             Your own work, on one schedule. Dates are changed on the task itself.
           </p>
         </div>
@@ -248,7 +248,7 @@ export function MyTasksView() {
         <div className="flex flex-wrap items-center gap-2">
           {groupBy === "due" ? (
             <>
-              <label className="text-xs text-[var(--olng-text)]" htmlFor="my-tasks-sort">
+              <label className="text-xs text-[var(--brand-text)]" htmlFor="my-tasks-sort">
                 Sort by
               </label>
               <Select
@@ -296,14 +296,14 @@ export function MyTasksView() {
 
             return (
               <section key={status}>
-                <h3 className="mb-1 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--olng-gray)]">
+                <h3 className="mb-1 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--brand-gray)]">
                   {isCompleted ? (
                     <button
                       type="button"
                       onClick={() => setShowCompleted((value) => !value)}
                       aria-expanded={open}
                       aria-controls="my-tasks-completed"
-                      className="flex items-center gap-1 uppercase tracking-wide text-[var(--olng-gray)] hover:text-[var(--olng-blue)]"
+                      className="flex items-center gap-1 uppercase tracking-wide text-[var(--brand-gray)] hover:text-[var(--brand-primary)]"
                     >
                       <span className={`transition-transform ${open ? "" : "-rotate-90"}`}>
                         <ChevronDownIcon size={14} />
@@ -326,12 +326,12 @@ export function MyTasksView() {
           })}
         </div>
       ) : visible.length === 0 ? (
-        <div className="py-8 text-center text-sm text-[var(--olng-text)]">
+        <div className="py-8 text-center text-sm text-[var(--brand-text)]">
           <p>No tasks match your filters.</p>
           <button
             type="button"
             onClick={clearFilters}
-            className="mt-1 font-semibold text-[var(--olng-blue)] underline underline-offset-2"
+            className="mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
           >
             Clear filters
           </button>
@@ -341,7 +341,7 @@ export function MyTasksView() {
       ) : (
         <div className="overflow-x-auto rounded-[var(--radius)] border border-[var(--border)] bg-white">
           <table className="w-full text-sm">
-            <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--olng-gray)]">
+            <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--brand-gray)]">
               <tr>
                 <th className="px-3 py-2 font-semibold">Title</th>
                 <th className="px-3 py-2 font-semibold">Project</th>
@@ -357,12 +357,12 @@ export function MyTasksView() {
                   <td className="px-3">
                     <Link
                       href={`/discipline-tasks/${task.id}`}
-                      className="font-semibold text-[var(--olng-blue)] hover:underline"
+                      className="font-semibold text-[var(--brand-primary)] hover:underline"
                     >
                       {task.title}
                     </Link>
                   </td>
-                  <td className="px-3 text-[var(--olng-text)]">{task.projectCode}</td>
+                  <td className="px-3 text-[var(--brand-text)]">{task.projectCode}</td>
                   <td className="px-3">
                     <DisciplineDot
                       colorHex={task.disciplineColorHex}
@@ -372,7 +372,7 @@ export function MyTasksView() {
                   </td>
                   <td
                     className="px-3"
-                    style={{ color: task.isOverdue ? "var(--status-blocked)" : "var(--olng-text)" }}
+                    style={{ color: task.isOverdue ? "var(--status-blocked)" : "var(--brand-text)" }}
                   >
                     {formatDate(task.deadline)}
                   </td>
@@ -390,7 +390,7 @@ export function MyTasksView() {
       )}
 
       {myTasks.data?.truncated ? (
-        <p className="text-xs text-[var(--olng-gray)]">
+        <p className="text-xs text-[var(--brand-gray)]">
           Showing your next 200 open tasks and your 50 most recently finished ones. The counts above
           cover all of your work.
         </p>
@@ -400,7 +400,7 @@ export function MyTasksView() {
         <button
           type="button"
           onClick={clearFilters}
-          className="text-xs font-semibold text-[var(--olng-blue)] underline underline-offset-2"
+          className="text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
         >
           Clear filters
         </button>

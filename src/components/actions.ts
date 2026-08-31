@@ -18,6 +18,16 @@ export {
   updateTaskDates,
 } from "@/server/actions/main-tasks";
 
+// The stage gates: phases, their order, and the recorded override that opens a locked one.
+export {
+  createPhase,
+  renamePhase,
+  reorderPhases,
+  deletePhase,
+  overridePhaseLock,
+  setMainTaskPhase,
+} from "@/server/actions/phases";
+
 export {
   createUser,
   updateUser,
@@ -25,6 +35,16 @@ export {
   createDiscipline,
   updateDiscipline,
 } from "@/server/actions/admin";
+
+// Admin → Integrations. No action here ever returns a saved webhook address.
+export {
+  saveIntegration,
+  setIntegrationEnabled,
+  setEventToggles,
+  sendTestMessage,
+  deleteIntegration,
+  disconnectMicrosoft,
+} from "@/server/actions/integrations";
 
 export { createComment, editComment, deleteComment } from "@/server/actions/comments";
 

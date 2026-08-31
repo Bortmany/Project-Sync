@@ -44,6 +44,7 @@ export function revalidateProject(projectId: string): void {
 export function revalidateAdmin(): void {
   revalidatePath("/admin/users");
   revalidatePath("/admin/disciplines");
+  revalidatePath("/admin/integrations");
 }
 
 /** Refreshes the pages a task change is visible on. */

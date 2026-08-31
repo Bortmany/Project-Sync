@@ -4,6 +4,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { PhaseRail, UNPHASED } from "@/components/projects/phase-rail";
 import { NewMainTaskDialog } from "@/components/tasks/new-main-task-dialog";
 import { useProjectMainTasks, type MainTaskFilters } from "@/components/hooks/use-api";
 import { formatDate, isDueSoon } from "@/components/format";
@@ -27,6 +28,9 @@ import type { MainTaskListItemDTO, ProjectDTO } from "@/lib/zod-schemas";
 type SortKey = "deadline" | "priority" | "status" | "title";
 
 const PRIORITY_RANK: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+
+/** Module-level so the "every task" query keeps one stable key however often the tab re-renders. */
+const NO_FILTERS: MainTaskFilters = {};
 
 function sortTasks(tasks: MainTaskListItemDTO[], sort: SortKey): MainTaskListItemDTO[] {
   const copy = [...tasks];
@@ -52,6 +56,8 @@ export function ProjectTasksTab({
   const [active, setActive] = useState<ActiveFilters>({});
   const [sort, setSort] = useState<SortKey>("deadline");
   const [dialogOpen, setDialogOpen] = useState(false);
+  /** A phase id, the "unphased" bucket, or null for every task on the project. */
+  const [phase, setPhase] = useState<string | null>(null);
 
   const filters: MainTaskFilters = useMemo(
     () => ({
@@ -64,7 +70,17 @@ export function ProjectTasksTab({
   );
 
   const tasks = useProjectMainTasks(project.id, filters);
-  const rows = sortTasks(tasks.data ?? [], sort);
+  // The phase segments show the project's real counts, straight from the phases route, so the
+  // "Unphased" segment beside them has to be counted the same way — over every main task, not over
+  // whatever the chips have narrowed the table to.
+  const everyTask = useProjectMainTasks(project.id, NO_FILTERS);
+  const unphasedCount = (everyTask.data ?? []).filter((task) => task.phaseId === null).length;
+
+  const shown = tasks.data ?? [];
+  const inPhase = phase
+    ? shown.filter((task) => (phase === UNPHASED ? task.phaseId === null : task.phaseId === phase))
+    : shown;
+  const rows = sortTasks(inPhase, sort);
 
   const dimensions: FilterDimension[] = [
     {
@@ -113,10 +129,18 @@ export function ProjectTasksTab({
 
   return (
     <div className="space-y-4">
+      <PhaseRail
+        projectId={project.id}
+        canManage={canManage}
+        unphasedCount={unphasedCount}
+        selected={phase}
+        onSelect={setPhase}
+      />
+
       <div className="flex flex-wrap items-start justify-between gap-3">
         <FilterChips filters={dimensions} active={active} onChange={setActive} />
         <div className="flex items-center gap-2">
-          <label htmlFor="project-task-sort" className="text-xs text-[var(--olng-text)]">
+          <label htmlFor="project-task-sort" className="text-xs text-[var(--brand-text)]">
             Sort by
           </label>
           <Select
@@ -141,13 +165,16 @@ export function ProjectTasksTab({
         />
       ) : tasks.isPending ? (
         <SkeletonRows rows={8} />
-      ) : rows.length === 0 && hasActiveFilters(active) ? (
-        <div className="py-8 text-center text-sm text-[var(--olng-text)]">
+      ) : rows.length === 0 && (hasActiveFilters(active) || phase !== null) ? (
+        <div className="py-8 text-center text-sm text-[var(--brand-text)]">
           <p>No tasks match your filters.</p>
           <button
             type="button"
-            onClick={() => setActive({})}
-            className="mt-1 font-semibold text-[var(--olng-blue)] underline underline-offset-2"
+            onClick={() => {
+              setActive({});
+              setPhase(null);
+            }}
+            className="mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
           >
             Clear filters
           </button>
@@ -164,7 +191,7 @@ export function ProjectTasksTab({
       ) : (
         <div className="overflow-x-auto rounded-[var(--radius)] border border-[var(--border)] bg-white">
           <table className="w-full text-sm">
-            <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--olng-gray)]">
+            <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--brand-gray)]">
               <tr>
                 <th className="px-3 py-2 font-semibold">Title</th>
                 <th className="px-3 py-2 font-semibold">Disciplines</th>
@@ -182,7 +209,7 @@ export function ProjectTasksTab({
                     <td className="px-3">
                       <Link
                         href={`/tasks/${task.id}`}
-                        className="font-semibold text-[var(--olng-blue)] hover:underline"
+                        className="font-semibold text-[var(--brand-primary)] hover:underline"
                       >
                         {task.title}
                       </Link>
@@ -197,7 +224,7 @@ export function ProjectTasksTab({
                           />
                         ))}
                         {task.disciplineSummary.length > 4 ? (
-                          <span className="text-xs text-[var(--olng-gray)]">
+                          <span className="text-xs text-[var(--brand-gray)]">
                             +{task.disciplineSummary.length - 4}
                           </span>
                         ) : null}
@@ -217,8 +244,8 @@ export function ProjectTasksTab({
                         color: task.isOverdue
                           ? "var(--status-blocked)"
                           : soon
-                            ? "var(--olng-sand)"
-                            : "var(--olng-text)",
+                            ? "var(--brand-stone)"
+                            : "var(--brand-text)",
                       }}
                     >
                       {formatDate(task.deadline)}

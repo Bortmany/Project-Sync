@@ -7,6 +7,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { z } from "zod";
 import {
   ActivityItemDTO,
+  BriefDTO,
   CommentDTO,
   DashboardDTO,
   DisciplineDTO,
@@ -16,8 +17,11 @@ import {
   GanttDTO,
   MainTaskDTO,
   MainTaskListItemDTO,
+  MicrosoftConnectionDTO,
   MyTasksDTO,
   PersonalTaskDTO,
+  PhaseDTO,
+  ProjectBriefDTO,
   ProjectDTO,
   ProjectListItemDTO,
   SearchResultsDTO,
@@ -202,6 +206,17 @@ export function useMyTasksGantt(enabled = true): UseQueryResult<GanttDTO> {
   });
 }
 
+/**
+ * "Your day": the signed-in person's brief, computed on the server. Everything in it is worked out
+ * from work the app already records, so it is only ever as fresh as the page.
+ */
+export function useMyBrief(): UseQueryResult<BriefDTO> {
+  return useQuery({
+    queryKey: ["my-tasks", "brief"],
+    queryFn: () => readRoute("/api/my-tasks/brief", BriefDTO),
+  });
+}
+
 /** The private scratchpad list: open items first, then the ones already ticked off. */
 export function usePersonalTasks(): UseQueryResult<PersonalTaskDTO[]> {
   return useQuery({
@@ -224,6 +239,27 @@ export function useProject(projectId: string): UseQueryResult<ProjectDTO> {
   return useQuery({
     queryKey: ["project", projectId],
     queryFn: () => readRoute(`/api/projects/${projectId}`, ProjectDTO),
+    enabled: projectId.length > 0,
+  });
+}
+
+/** "Where we stand": one project's brief, computed on the server. Every member may read it. */
+export function useProjectBrief(projectId: string): UseQueryResult<ProjectBriefDTO> {
+  return useQuery({
+    queryKey: ["project", projectId, "brief"],
+    queryFn: () => readRoute(`/api/projects/${projectId}/brief`, ProjectBriefDTO),
+    enabled: projectId.length > 0,
+  });
+}
+
+/**
+ * A project's stage gates. `locked` arrives derived from the server — the UI never works it out for
+ * itself, and hiding a control is a courtesy: the refusal that matters is the server's.
+ */
+export function usePhases(projectId: string): UseQueryResult<PhaseDTO[]> {
+  return useQuery({
+    queryKey: ["project", projectId, "phases"],
+    queryFn: () => readRoute(`/api/projects/${projectId}/phases`, z.array(PhaseDTO)),
     enabled: projectId.length > 0,
   });
 }
@@ -407,5 +443,29 @@ export function useDisciplineTaskComments(taskId: string): UseQueryResult<Commen
     queryKey: ["discipline-task", taskId, "comments"],
     queryFn: () =>
       readRoute(`/api/discipline-tasks/${taskId}/comments`, z.array(CommentRowDTO)),
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Microsoft 365 files                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Is "Attach from OneDrive or SharePoint" available to this person? Answers null while the feature
+ * is dormant (no Azure app registered) or the route refuses — which is what keeps the tab out of
+ * sight rather than showing a broken one. Cached for five minutes: it changes about once a year.
+ */
+export function useMicrosoftStatus(): UseQueryResult<MicrosoftConnectionDTO | null> {
+  return useQuery({
+    queryKey: ["microsoft-status"],
+    queryFn: async () => {
+      try {
+        return await readRoute("/api/integrations/microsoft/status", MicrosoftConnectionDTO);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 5 * 60_000,
+    retry: false,
   });
 }

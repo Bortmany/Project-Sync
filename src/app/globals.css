@@ -1,20 +1,20 @@
 @import "tailwindcss";
 
-/* Oman LNG brand tokens — the only colours allowed in this app. Never introduce a new hex value. */
+/* Tielora brand tokens — the only colours allowed in this app. Never introduce a new hex value. */
 :root {
-  --olng-blue: #00558c; /* primary actions, links, active nav, headers */
-  --olng-navy: #003e51; /* sidebar background, dark surfaces */
-  --olng-mid: #004f71; /* hover states on navy, secondary emphasis */
-  --olng-sail: #5bc2e7; /* highlights, progress fill, focus rings, sail motif */
-  --olng-text: #5f6062; /* body text — warm gray, never pure black */
-  --olng-gray: #b1b3b4; /* borders, muted text, disabled */
-  --olng-sand: #d1ccbd; /* rare secondary accent (awaiting review badge) */
+  --brand-primary: #2e5aac; /* primary actions, links, active nav, headers */
+  --brand-ink: #152647; /* sidebar background, dark surfaces */
+  --brand-mid: #1f3d77; /* hover states on ink, secondary emphasis */
+  --brand-accent: #46c4b0; /* highlights, progress fill, focus rings */
+  --brand-text: #4a4e57; /* body text — warm gray, never pure black */
+  --brand-gray: #a9aeb8; /* borders, muted text, disabled */
+  --brand-stone: #d8d2c4; /* rare secondary accent (awaiting review badge) */
 
   /* Status colours (brand family + conventional signals) */
-  --status-not-started: #b1b3b4;
-  --status-in-progress: #00558c;
+  --status-not-started: var(--brand-gray);
+  --status-in-progress: var(--brand-primary);
   --status-blocked: #b54a4a; /* the only red on screen */
-  --status-awaiting-review: #d1ccbd;
+  --status-awaiting-review: var(--brand-stone);
   --status-completed: #3e7a5e;
 
   /* Surfaces */
@@ -25,13 +25,13 @@
 }
 
 @theme inline {
-  --color-olng-blue: var(--olng-blue);
-  --color-olng-navy: var(--olng-navy);
-  --color-olng-mid: var(--olng-mid);
-  --color-olng-sail: var(--olng-sail);
-  --color-olng-text: var(--olng-text);
-  --color-olng-gray: var(--olng-gray);
-  --color-olng-sand: var(--olng-sand);
+  --color-brand-primary: var(--brand-primary);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-mid: var(--brand-mid);
+  --color-brand-accent: var(--brand-accent);
+  --color-brand-text: var(--brand-text);
+  --color-brand-gray: var(--brand-gray);
+  --color-brand-stone: var(--brand-stone);
   --color-status-not-started: var(--status-not-started);
   --color-status-in-progress: var(--status-in-progress);
   --color-status-blocked: var(--status-blocked);
@@ -47,12 +47,12 @@
 html,
 body {
   background: var(--page-bg);
-  color: var(--olng-text);
+  color: var(--brand-text);
   font-family: Candara, "Segoe UI", "Trebuchet MS", system-ui, sans-serif;
 }
 
-/* Keyboard focus is always visible, in the brand's sail blue. */
+/* Keyboard focus is always visible, in the brand's accent teal. */
 :focus-visible {
-  outline: 2px solid var(--olng-sail);
+  outline: 2px solid var(--brand-accent);
   outline-offset: 2px;
 }

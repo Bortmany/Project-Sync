@@ -16,10 +16,10 @@ const DEBOUNCE_MS = 250;
 function Row({ row }: { row: SearchRow }) {
   const body = (
     <>
-      <span className="min-w-0 flex-1 truncate font-semibold text-[var(--olng-navy)]">
+      <span className="min-w-0 flex-1 truncate font-semibold text-[var(--brand-ink)]">
         {row.title}
       </span>
-      <span className="shrink-0 text-xs text-[var(--olng-gray)]">{row.meta}</span>
+      <span className="shrink-0 text-xs text-[var(--brand-gray)]">{row.meta}</span>
     </>
   );
 
@@ -48,7 +48,7 @@ function Group({ rows, label }: { rows: SearchRow[]; label: string }) {
 
   return (
     <section className="rounded-[var(--radius)] border border-[var(--border)] bg-white p-2">
-      <h2 className="px-3 py-1 text-sm font-semibold text-[var(--olng-navy)]">
+      <h2 className="px-3 py-1 text-sm font-semibold text-[var(--brand-ink)]">
         {label} ({rows.length})
       </h2>
       <div className="divide-y divide-[var(--border)]">
@@ -60,7 +60,7 @@ function Group({ rows, label }: { rows: SearchRow[]; label: string }) {
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="px-3 py-2 text-xs font-semibold text-[var(--olng-blue)] underline underline-offset-2"
+          className="px-3 py-2 text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
         >
           Show more ({hidden})
         </button>
@@ -102,7 +102,7 @@ export function SearchResultsView() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold text-[var(--olng-blue)]">Search</h1>
+      <h1 className="text-xl font-semibold text-[var(--brand-primary)]">Search</h1>
 
       <Input
         type="search"
@@ -115,7 +115,7 @@ export function SearchResultsView() {
       />
 
       {!ready ? (
-        <p className="py-8 text-center text-sm text-[var(--olng-text)]">
+        <p className="py-8 text-center text-sm text-[var(--brand-text)]">
           Type to search projects, tasks, documents, and people.
         </p>
       ) : search.isError ? (
@@ -131,7 +131,7 @@ export function SearchResultsView() {
         />
       ) : (
         <div className="space-y-4">
-          <p className="text-sm text-[var(--olng-gray)]">
+          <p className="text-sm text-[var(--brand-gray)]">
             {total} {total === 1 ? "result" : "results"} for “{query.trim()}”
           </p>
           {GROUP_ORDER.map((group) => {

@@ -9,11 +9,12 @@ import {
   useMainTaskSchedule,
   useMe,
   useMyTasksGantt,
+  usePhases,
   useProject,
   useProjectGantt,
 } from "@/components/hooks/use-api";
 import { EmptyState, ErrorBanner, SkeletonRows } from "@/components/ui";
-import type { GanttDTO, ProjectDTO } from "@/lib/zod-schemas";
+import type { GanttDTO, PhaseDTO, ProjectDTO } from "@/lib/zod-schemas";
 
 // The chart is the heaviest thing in the app (a whole hand-drawn SVG timeline with dragging), and
 // it lives behind a tab most visits never open. Loading it only when the tab is actually shown
@@ -28,6 +29,7 @@ const LOAD_ERROR = "Couldn't load the schedule. Try refreshing the page.";
 function Schedule({
   gantt,
   project,
+  phases,
   isPending,
   isError,
   onRetry,
@@ -37,6 +39,8 @@ function Schedule({
 }: {
   gantt: GanttDTO | undefined;
   project: ProjectDTO | undefined;
+  /** The project's stage gates, so the chart can band the rows. Only the project view has them. */
+  phases?: PhaseDTO[];
   isPending: boolean;
   isError: boolean;
   onRetry: () => void;
@@ -59,6 +63,7 @@ function Schedule({
       gantt={gantt}
       project={readOnly ? undefined : project}
       me={readOnly ? undefined : me.data}
+      phases={phases}
       queryKey={queryKey}
     />
   );
@@ -67,11 +72,13 @@ function Schedule({
 /** Every main task on the project, with its discipline tasks beneath it. */
 export function ProjectTimelineTab({ project }: { project: ProjectDTO }) {
   const gantt = useProjectGantt(project.id);
+  const phases = usePhases(project.id);
 
   return (
     <Schedule
       gantt={gantt.data}
       project={project}
+      phases={phases.data}
       isPending={gantt.isPending}
       isError={gantt.isError}
       onRetry={() => void gantt.refetch()}

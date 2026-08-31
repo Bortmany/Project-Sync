@@ -79,7 +79,7 @@ export function ProjectDocumentsTab({
     <div className="space-y-4">
       <div className="flex flex-wrap items-end gap-3">
         <label className="block space-y-1">
-          <span className="block text-xs text-[var(--olng-gray)]">Search</span>
+          <span className="block text-xs text-[var(--brand-gray)]">Search</span>
           <Input
             value={search}
             placeholder="Search documents…"
@@ -88,7 +88,7 @@ export function ProjectDocumentsTab({
           />
         </label>
         <label className="block space-y-1">
-          <span className="block text-xs text-[var(--olng-gray)]">Main task</span>
+          <span className="block text-xs text-[var(--brand-gray)]">Main task</span>
           <Select
             value={mainTaskFilter}
             className="w-64"
@@ -113,7 +113,7 @@ export function ProjectDocumentsTab({
         showLocation
         locationFor={(document) => {
           const placement = placementOf(document);
-          if (!placement) return <span className="text-[var(--olng-gray)]">—</span>;
+          if (!placement) return <span className="text-[var(--brand-gray)]">—</span>;
           return (
             <Link
               href={
@@ -121,7 +121,7 @@ export function ProjectDocumentsTab({
                   ? `/discipline-tasks/${document.disciplineTaskId}`
                   : `/tasks/${placement.mainTaskId}`
               }
-              className="text-[var(--olng-blue)] hover:underline"
+              className="text-[var(--brand-primary)] hover:underline"
             >
               {placement.mainTaskTitle}
               {placement.disciplineCode ? ` → ${placement.disciplineCode}` : ""}
@@ -130,7 +130,7 @@ export function ProjectDocumentsTab({
         }}
         empty={
           isFiltering ? (
-            <div className="py-8 text-center text-sm text-[var(--olng-text)]">
+            <div className="py-8 text-center text-sm text-[var(--brand-text)]">
               <p>No documents match your search.</p>
               <button
                 type="button"
@@ -138,7 +138,7 @@ export function ProjectDocumentsTab({
                   setSearch("");
                   setMainTaskFilter("");
                 }}
-                className="mt-1 font-semibold text-[var(--olng-blue)] underline underline-offset-2"
+                className="mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
               >
                 Clear filters
               </button>

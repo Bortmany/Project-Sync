@@ -37,14 +37,14 @@ export function UserPicker({
     return (
       <div className="flex min-h-9 items-center gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-white px-2 py-1">
         <Avatar name={value.name} size={24} />
-        <span className="min-w-0 flex-1 truncate text-sm text-[var(--olng-navy)]">
+        <span className="min-w-0 flex-1 truncate text-sm text-[var(--brand-ink)]">
           {value.name}
         </span>
         <button
           type="button"
           onClick={() => onChange(null)}
           aria-label={`Remove ${value.name}`}
-          className="rounded px-1 text-[var(--olng-gray)] hover:text-[var(--olng-navy)]"
+          className="rounded px-1 text-[var(--brand-gray)] hover:text-[var(--brand-ink)]"
         >
           ×
         </button>
@@ -79,7 +79,7 @@ export function UserPicker({
               Couldn&apos;t load people. Try again.
             </p>
           ) : (people.data ?? []).length === 0 ? (
-            <p className="p-2 text-xs text-[var(--olng-gray)]">No one matches that search.</p>
+            <p className="p-2 text-xs text-[var(--brand-gray)]">No one matches that search.</p>
           ) : (
             (people.data ?? []).map((person) => (
               <button
@@ -94,10 +94,10 @@ export function UserPicker({
               >
                 <Avatar name={person.name} size={24} />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm text-[var(--olng-navy)]">
+                  <span className="block truncate text-sm text-[var(--brand-ink)]">
                     {person.name}
                   </span>
-                  <span className="block truncate text-xs text-[var(--olng-gray)]">
+                  <span className="block truncate text-xs text-[var(--brand-gray)]">
                     {person.email}
                   </span>
                 </span>

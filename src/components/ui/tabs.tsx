@@ -38,8 +38,8 @@ export function Tabs({
               }}
               className={`-mb-px shrink-0 whitespace-nowrap border-b-2 px-4 py-2 text-sm font-semibold transition-colors ${
                 selected
-                  ? "border-[var(--olng-blue)] text-[var(--olng-blue)]"
-                  : "border-transparent text-[var(--olng-text)] hover:text-[var(--olng-navy)]"
+                  ? "border-[var(--brand-primary)] text-[var(--brand-primary)]"
+                  : "border-transparent text-[var(--brand-text)] hover:text-[var(--brand-ink)]"
               }`}
             >
               {item.label}

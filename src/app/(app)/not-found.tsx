@@ -3,18 +3,18 @@
 import Link from "next/link";
 import { EmptyState } from "@/components/ui";
 
-export const metadata = { title: "Page not found — Project Nexus" };
+export const metadata = { title: "Page not found — Tielora" };
 
 export default function AppNotFound() {
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold text-[var(--olng-blue)]">Page not found</h1>
+      <h1 className="text-xl font-semibold text-[var(--brand-primary)]">Page not found</h1>
       <EmptyState
         message="We couldn't find that page. It may have been removed, or the link may be out of date."
         action={
           <Link
             href="/dashboard"
-            className="inline-flex items-center justify-center rounded-[var(--radius)] bg-[var(--olng-blue)] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[var(--olng-mid)]"
+            className="inline-flex items-center justify-center rounded-[var(--radius)] bg-[var(--brand-primary)] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[var(--brand-mid)]"
           >
             Back to the dashboard
           </Link>

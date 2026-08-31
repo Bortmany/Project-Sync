@@ -10,6 +10,8 @@ export type Membership = {
 
 export type Actor = {
   userId: string;
+  /** The organisation this person belongs to. Nobody ever acts outside it. */
+  orgId: string;
   role: RoleValue;
   memberships: Membership[];
 };
@@ -34,13 +36,20 @@ export type Action =
   | "COMMENT"
   | "MANAGE_USERS"
   | "MANAGE_DISCIPLINES"
+  | "MANAGE_INTEGRATIONS"
   | "VIEW_PROJECT";
 
+/**
+ * What is being acted on.
+ *
+ * `orgId` is the organisation the TARGET belongs to, read from the row itself — never assumed to be
+ * the actor's. The type makes it impossible to name a project without it: a check that mentions a
+ * `projectId` must also say whose project it is, and `can()` refuses the moment the two disagree.
+ */
 export type PermissionContext = {
-  projectId?: string;
   disciplineId?: string | null;
   assigneeId?: string | null;
-};
+} & ({ projectId?: undefined; orgId?: undefined } | { projectId: string; orgId: string });
 
 export class ForbiddenError extends Error {
   readonly action: Action;
@@ -54,7 +63,7 @@ export class ForbiddenError extends Error {
 }
 
 /** Actions only an administrator ever performs. */
-const ADMIN_ONLY: Action[] = ["MANAGE_USERS", "MANAGE_DISCIPLINES"];
+const ADMIN_ONLY: Action[] = ["MANAGE_USERS", "MANAGE_DISCIPLINES", "MANAGE_INTEGRATIONS"];
 
 /** Actions a discipline lead may perform inside their own discipline on a project they belong to. */
 const LEAD_DISCIPLINE_ACTIONS: Action[] = [
@@ -90,6 +99,10 @@ function effectiveRole(actor: Actor, membership: Membership | undefined): RoleVa
 
 /** Answers "may this person do this?" — the only place that question is answered. */
 export function can(actor: Actor, action: Action, ctx: PermissionContext = {}): boolean {
+  // The organisation boundary comes first and applies to everybody, administrators included: being
+  // an ADMIN makes you the administrator of your OWN company, never of anyone else's.
+  if (ctx.orgId && ctx.orgId !== actor.orgId) return false;
+
   if (actor.role === "ADMIN") return true;
   if (ADMIN_ONLY.includes(action)) return false;
 
@@ -154,6 +167,7 @@ export const PERMISSION_MATRIX: Record<RoleValue, { always: Action[]; conditiona
       "COMMENT",
       "MANAGE_USERS",
       "MANAGE_DISCIPLINES",
+      "MANAGE_INTEGRATIONS",
       "VIEW_PROJECT",
     ],
     conditional: [],

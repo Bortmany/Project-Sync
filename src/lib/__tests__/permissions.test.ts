@@ -11,6 +11,8 @@ import {
   type PermissionContext,
 } from "@/lib/permissions";
 
+const ORG = "org-1";
+const OTHER_ORG = "org-2";
 const PROJECT = "proj-1";
 const OTHER_PROJECT = "proj-2";
 const MECH = "disc-mech";
@@ -36,45 +38,52 @@ const ALL_ACTIONS: Action[] = [
   "COMMENT",
   "MANAGE_USERS",
   "MANAGE_DISCIPLINES",
+  "MANAGE_INTEGRATIONS",
   "VIEW_PROJECT",
 ];
 
-const admin: Actor = { userId: "u-admin", role: "ADMIN", memberships: [] };
+const admin: Actor = { userId: "u-admin", orgId: ORG, role: "ADMIN", memberships: [] };
 
 const pm: Actor = {
   userId: "u-pm",
+  orgId: ORG,
   role: "PROJECT_MANAGER",
   memberships: [{ projectId: PROJECT, projectRole: "PROJECT_MANAGER" }],
 };
 
 const lead: Actor = {
   userId: "u-lead",
+  orgId: ORG,
   role: "DISCIPLINE_LEAD",
   memberships: [{ projectId: PROJECT, projectRole: "DISCIPLINE_LEAD", disciplineId: MECH }],
 };
 
 const engineer: Actor = {
   userId: "u-eng",
+  orgId: ORG,
   role: "ENGINEER",
   memberships: [{ projectId: PROJECT, projectRole: "ENGINEER", disciplineId: MECH }],
 };
 
-const outsider: Actor = { userId: "u-out", role: "ENGINEER", memberships: [] };
+const outsider: Actor = { userId: "u-out", orgId: ORG, role: "ENGINEER", memberships: [] };
 
 /** ctx used for the table test: own project, own discipline, own assignment. */
-const ownCtx: PermissionContext = { projectId: PROJECT, disciplineId: MECH };
+const ownCtx: PermissionContext = { projectId: PROJECT, orgId: ORG, disciplineId: MECH };
 
 describe("admin", () => {
   it("may do everything, in any project, member or not", () => {
     for (const action of ALL_ACTIONS) {
-      expect(can(admin, action, { projectId: OTHER_PROJECT })).toBe(true);
+      expect(can(admin, action, { projectId: OTHER_PROJECT, orgId: ORG })).toBe(true);
     }
   });
 });
 
 describe("project manager", () => {
   const allowedInOwnProject: Action[] = ALL_ACTIONS.filter(
-    (action) => action !== "MANAGE_USERS" && action !== "MANAGE_DISCIPLINES",
+    (action) =>
+      action !== "MANAGE_USERS" &&
+      action !== "MANAGE_DISCIPLINES" &&
+      action !== "MANAGE_INTEGRATIONS",
   );
 
   it("may run everything inside their own project", () => {
@@ -86,14 +95,15 @@ describe("project manager", () => {
     }
   });
 
-  it("may never manage users or disciplines", () => {
+  it("may never manage users, disciplines or chat integrations", () => {
     expect(can(pm, "MANAGE_USERS", ownCtx)).toBe(false);
     expect(can(pm, "MANAGE_DISCIPLINES", ownCtx)).toBe(false);
+    expect(can(pm, "MANAGE_INTEGRATIONS", ownCtx)).toBe(false);
   });
 
   it("may not touch a project they do not belong to", () => {
     for (const action of allowedInOwnProject.filter((a) => a !== "CREATE_PROJECT")) {
-      expect({ action, allowed: can(pm, action, { projectId: OTHER_PROJECT }) }).toEqual({
+      expect({ action, allowed: can(pm, action, { projectId: OTHER_PROJECT, orgId: ORG }) }).toEqual({
         action,
         allowed: false,
       });
@@ -128,29 +138,30 @@ describe("discipline lead", () => {
   });
 
   it("may not assign or complete work in another discipline", () => {
-    expect(can(lead, "ASSIGN_DISCIPLINE_TASK", { projectId: PROJECT, disciplineId: ELEC })).toBe(false);
-    expect(can(lead, "COMPLETE_DISCIPLINE_TASK", { projectId: PROJECT, disciplineId: ELEC })).toBe(false);
+    expect(can(lead, "ASSIGN_DISCIPLINE_TASK", { projectId: PROJECT, orgId: ORG, disciplineId: ELEC })).toBe(false);
+    expect(can(lead, "COMPLETE_DISCIPLINE_TASK", { projectId: PROJECT, orgId: ORG, disciplineId: ELEC })).toBe(false);
   });
 
   it("may not work in a project they do not belong to", () => {
-    expect(can(lead, "VIEW_PROJECT", { projectId: OTHER_PROJECT })).toBe(false);
-    expect(can(lead, "ASSIGN_DISCIPLINE_TASK", { projectId: OTHER_PROJECT, disciplineId: MECH })).toBe(
+    expect(can(lead, "VIEW_PROJECT", { projectId: OTHER_PROJECT, orgId: ORG })).toBe(false);
+    expect(can(lead, "ASSIGN_DISCIPLINE_TASK", { projectId: OTHER_PROJECT, orgId: ORG, disciplineId: MECH })).toBe(
       false,
     );
   });
 });
 
 describe("engineer", () => {
-  const ownTask: PermissionContext = { projectId: PROJECT, disciplineId: MECH, assigneeId: "u-eng" };
+  const ownTask: PermissionContext = { projectId: PROJECT, orgId: ORG, disciplineId: MECH, assigneeId: "u-eng" };
   const someoneElsesTask: PermissionContext = {
     projectId: PROJECT,
+    orgId: ORG,
     disciplineId: MECH,
     assigneeId: "u-other",
   };
 
   it("may view and comment on their project", () => {
-    expect(can(engineer, "VIEW_PROJECT", { projectId: PROJECT })).toBe(true);
-    expect(can(engineer, "COMMENT", { projectId: PROJECT })).toBe(true);
+    expect(can(engineer, "VIEW_PROJECT", { projectId: PROJECT, orgId: ORG })).toBe(true);
+    expect(can(engineer, "COMMENT", { projectId: PROJECT, orgId: ORG })).toBe(true);
   });
 
   it("may update, complete and upload on a task assigned to them", () => {
@@ -166,7 +177,7 @@ describe("engineer", () => {
   });
 
   it("may not touch a task with no assignee at all", () => {
-    expect(can(engineer, "COMPLETE_DISCIPLINE_TASK", { projectId: PROJECT })).toBe(false);
+    expect(can(engineer, "COMPLETE_DISCIPLINE_TASK", { projectId: PROJECT, orgId: ORG })).toBe(false);
   });
 
   it("may not manage anything", () => {
@@ -184,12 +195,12 @@ describe("engineer", () => {
 
 describe("non-member", () => {
   it("cannot even view the project", () => {
-    expect(can(outsider, "VIEW_PROJECT", { projectId: PROJECT })).toBe(false);
+    expect(can(outsider, "VIEW_PROJECT", { projectId: PROJECT, orgId: ORG })).toBe(false);
   });
 
   it("is denied every action on that project", () => {
     for (const action of ALL_ACTIONS) {
-      expect({ action, allowed: can(outsider, action, { projectId: PROJECT, assigneeId: "u-out" }) }).toEqual(
+      expect({ action, allowed: can(outsider, action, { projectId: PROJECT, orgId: ORG, assigneeId: "u-out" }) }).toEqual(
         { action, allowed: false },
       );
     }
@@ -200,26 +211,69 @@ describe("the project role always wins inside a project", () => {
   it("treats an engineer who manages a project as a project manager there", () => {
     const actor: Actor = {
       userId: "u-mixed",
+      orgId: ORG,
       role: "ENGINEER",
       memberships: [{ projectId: PROJECT, projectRole: "PROJECT_MANAGER" }],
     };
-    expect(can(actor, "CREATE_MAIN_TASK", { projectId: PROJECT })).toBe(true);
-    expect(can(actor, "MANAGE_USERS", { projectId: PROJECT })).toBe(false);
+    expect(can(actor, "CREATE_MAIN_TASK", { projectId: PROJECT, orgId: ORG })).toBe(true);
+    expect(can(actor, "MANAGE_USERS", { projectId: PROJECT, orgId: ORG })).toBe(false);
   });
 
   it("restricts a global project manager added to a project as an engineer", () => {
     const actor: Actor = {
       userId: "u-demoted",
+      orgId: ORG,
       role: "PROJECT_MANAGER",
       memberships: [{ projectId: PROJECT, projectRole: "ENGINEER", disciplineId: MECH }],
     };
-    expect(can(actor, "OVERRIDE_MAIN_TASK_STATUS", { projectId: PROJECT })).toBe(false);
-    expect(can(actor, "DELETE_PROJECT", { projectId: PROJECT })).toBe(false);
-    expect(can(actor, "MANAGE_MEMBERS", { projectId: PROJECT })).toBe(false);
+    expect(can(actor, "OVERRIDE_MAIN_TASK_STATUS", { projectId: PROJECT, orgId: ORG })).toBe(false);
+    expect(can(actor, "DELETE_PROJECT", { projectId: PROJECT, orgId: ORG })).toBe(false);
+    expect(can(actor, "MANAGE_MEMBERS", { projectId: PROJECT, orgId: ORG })).toBe(false);
     // Their own assigned work still behaves like an engineer's.
     expect(
-      can(actor, "COMPLETE_DISCIPLINE_TASK", { projectId: PROJECT, assigneeId: "u-demoted" }),
+      can(actor, "COMPLETE_DISCIPLINE_TASK", { projectId: PROJECT, orgId: ORG, assigneeId: "u-demoted" }),
     ).toBe(true);
+  });
+});
+
+describe("the organisation boundary is absolute", () => {
+  it("denies every action on another company's project, to every role, administrators included", () => {
+    const theirProject: PermissionContext = {
+      projectId: PROJECT,
+      orgId: OTHER_ORG,
+      disciplineId: MECH,
+      assigneeId: "u-eng",
+    };
+
+    for (const actor of [admin, pm, lead, engineer, outsider]) {
+      for (const action of ALL_ACTIONS) {
+        expect({ who: actor.userId, action, allowed: can(actor, action, theirProject) }).toEqual({
+          who: actor.userId,
+          action,
+          allowed: false,
+        });
+      }
+    }
+  });
+
+  it("still allows the very same checks inside the actor's own company", () => {
+    expect(can(admin, "DELETE_PROJECT", { projectId: PROJECT, orgId: ORG })).toBe(true);
+    expect(can(pm, "CREATE_MAIN_TASK", { projectId: PROJECT, orgId: ORG })).toBe(true);
+  });
+
+  it("refuses an administrator whose membership somehow names another company's project", () => {
+    // The impossible case, in case a bug ever makes it possible: a stale membership row cannot
+    // become a way in, because the organisation is checked before any role is considered.
+    const strayAdmin: Actor = {
+      userId: "u-stray",
+      orgId: ORG,
+      role: "ADMIN",
+      memberships: [{ projectId: PROJECT, projectRole: "ADMIN" }],
+    };
+    expect(can(strayAdmin, "VIEW_PROJECT", { projectId: PROJECT, orgId: OTHER_ORG })).toBe(false);
+    expect(() =>
+      assertCan(strayAdmin, "VIEW_PROJECT", { projectId: PROJECT, orgId: OTHER_ORG }),
+    ).toThrow(ForbiddenError);
   });
 });
 
@@ -237,7 +291,10 @@ type MatrixCase = {
 };
 
 const EVERYTHING_BUT_ADMIN_ONLY: Action[] = ALL_ACTIONS.filter(
-  (action) => action !== "MANAGE_USERS" && action !== "MANAGE_DISCIPLINES",
+  (action) =>
+    action !== "MANAGE_USERS" &&
+    action !== "MANAGE_DISCIPLINES" &&
+    action !== "MANAGE_INTEGRATIONS",
 );
 const MEMBER_ONLY: Action[] = ["VIEW_PROJECT", "COMMENT"];
 const LEAD_IN_OWN_DISCIPLINE: Action[] = [
@@ -258,7 +315,7 @@ const MATRIX: MatrixCase[] = [
   {
     who: "an administrator, on a project they are not even a member of",
     actor: admin,
-    ctx: { projectId: OTHER_PROJECT, disciplineId: ELEC, assigneeId: "somebody-else" },
+    ctx: { projectId: OTHER_PROJECT, orgId: ORG, disciplineId: ELEC, assigneeId: "somebody-else" },
     allowed: ALL_ACTIONS,
   },
   {
@@ -270,47 +327,49 @@ const MATRIX: MatrixCase[] = [
   {
     who: "a project manager looking at a project they are not on",
     actor: pm,
-    ctx: { projectId: OTHER_PROJECT, disciplineId: MECH, assigneeId: "u-pm" },
+    ctx: { projectId: OTHER_PROJECT, orgId: ORG, disciplineId: MECH, assigneeId: "u-pm" },
     allowed: ["CREATE_PROJECT"],
   },
   {
     who: "a discipline lead, in their own discipline",
     actor: lead,
-    ctx: { projectId: PROJECT, disciplineId: MECH },
+    ctx: { projectId: PROJECT, orgId: ORG, disciplineId: MECH },
     allowed: LEAD_IN_OWN_DISCIPLINE,
   },
   {
     who: "a discipline lead, looking at another discipline's work",
     actor: lead,
-    ctx: { projectId: PROJECT, disciplineId: ELEC, assigneeId: "u-lead" },
+    ctx: { projectId: PROJECT, orgId: ORG, disciplineId: ELEC, assigneeId: "u-lead" },
     allowed: [...MEMBER_ONLY, "UPLOAD_DOCUMENT"],
   },
   {
     who: "a discipline lead whose membership carries no discipline at all",
     actor: {
       userId: "u-lead-nodisc",
+      orgId: ORG,
       role: "DISCIPLINE_LEAD",
       memberships: [{ projectId: PROJECT, projectRole: "DISCIPLINE_LEAD", disciplineId: null }],
     },
-    ctx: { projectId: PROJECT, disciplineId: MECH },
+    ctx: { projectId: PROJECT, orgId: ORG, disciplineId: MECH },
     allowed: [...MEMBER_ONLY, "UPLOAD_DOCUMENT"],
   },
   {
     who: "an engineer on a task assigned to them",
     actor: engineer,
-    ctx: { projectId: PROJECT, disciplineId: MECH, assigneeId: "u-eng" },
+    ctx: { projectId: PROJECT, orgId: ORG, disciplineId: MECH, assigneeId: "u-eng" },
     allowed: ENGINEER_ON_OWN_TASK,
   },
   {
     who: "an engineer on a colleague's task",
     actor: engineer,
-    ctx: { projectId: PROJECT, disciplineId: MECH, assigneeId: "u-someone-else" },
+    ctx: { projectId: PROJECT, orgId: ORG, disciplineId: MECH, assigneeId: "u-someone-else" },
     allowed: MEMBER_ONLY,
   },
   {
     who: "a global engineer who runs this particular project",
     actor: {
       userId: "u-eng-pm",
+      orgId: ORG,
       role: "ENGINEER",
       memberships: [{ projectId: PROJECT, projectRole: "PROJECT_MANAGER" }],
     },
@@ -322,26 +381,28 @@ const MATRIX: MatrixCase[] = [
     who: "a global project manager who joined this project as an engineer",
     actor: {
       userId: "u-pm-eng",
+      orgId: ORG,
       role: "PROJECT_MANAGER",
       memberships: [{ projectId: PROJECT, projectRole: "ENGINEER", disciplineId: MECH }],
     },
-    ctx: { projectId: PROJECT, disciplineId: MECH, assigneeId: "u-pm-eng" },
+    ctx: { projectId: PROJECT, orgId: ORG, disciplineId: MECH, assigneeId: "u-pm-eng" },
     allowed: [...ENGINEER_ON_OWN_TASK, "CREATE_PROJECT"],
   },
   {
     who: "a global project manager who joined this project as a discipline lead",
     actor: {
       userId: "u-pm-lead",
+      orgId: ORG,
       role: "PROJECT_MANAGER",
       memberships: [{ projectId: PROJECT, projectRole: "DISCIPLINE_LEAD", disciplineId: MECH }],
     },
-    ctx: { projectId: PROJECT, disciplineId: MECH },
+    ctx: { projectId: PROJECT, orgId: ORG, disciplineId: MECH },
     allowed: [...LEAD_IN_OWN_DISCIPLINE, "CREATE_PROJECT"],
   },
   {
     who: "somebody who is on no project at all",
     actor: outsider,
-    ctx: { projectId: PROJECT, disciplineId: MECH, assigneeId: "u-out" },
+    ctx: { projectId: PROJECT, orgId: ORG, disciplineId: MECH, assigneeId: "u-out" },
     allowed: [],
   },
   {
@@ -379,8 +440,8 @@ describe("the whole permission matrix", () => {
   it("keeps the UI hint map inside what the server would actually allow", () => {
     for (const [role, hints] of Object.entries(PERMISSION_MATRIX)) {
       for (const action of hints.always) {
-        const actor: Actor = { userId: "u-hint", role: role as Actor["role"], memberships: [] };
-        expect({ role, action, allowed: can(actor, action, { projectId: PROJECT }) }).toEqual({
+        const actor: Actor = { userId: "u-hint", orgId: ORG, role: role as Actor["role"], memberships: [] };
+        expect({ role, action, allowed: can(actor, action, { projectId: PROJECT, orgId: ORG }) }).toEqual({
           role,
           action,
           allowed: true,
@@ -392,12 +453,12 @@ describe("the whole permission matrix", () => {
 
 describe("assertCan", () => {
   it("stays quiet when the answer is yes", () => {
-    expect(() => assertCan(admin, "DELETE_PROJECT", { projectId: PROJECT })).not.toThrow();
+    expect(() => assertCan(admin, "DELETE_PROJECT", { projectId: PROJECT, orgId: ORG })).not.toThrow();
   });
 
   it("throws a typed error with plain-English wording when the answer is no", () => {
     try {
-      assertCan(engineer, "DELETE_PROJECT", { projectId: PROJECT });
+      assertCan(engineer, "DELETE_PROJECT", { projectId: PROJECT, orgId: ORG });
       throw new Error("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(ForbiddenError);

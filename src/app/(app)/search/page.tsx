@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import { SearchResultsView } from "@/components/search/search-results-view";
 import { SkeletonRows } from "@/components/ui";
 
-export const metadata = { title: "Search — Project Nexus" };
+export const metadata = { title: "Search — Tielora" };
 
 export default function SearchPage() {
   return (

@@ -7,7 +7,7 @@ import { NoAccess } from "@/components/admin/no-access";
 import { currentActor } from "@/server/session";
 import { listDisciplinesForAdmin } from "@/server/services/admin";
 
-export const metadata = { title: "Disciplines — Project Nexus" };
+export const metadata = { title: "Disciplines — Tielora" };
 export const dynamic = "force-dynamic";
 
 export default async function AdminDisciplinesPage() {

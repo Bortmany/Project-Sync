@@ -1,16 +1,20 @@
-# Project Nexus — Oman LNG
+# Tielora
 
-Project Nexus is Oman LNG's internal coordination platform for multidisciplinary engineering work.
-A **project** holds **main tasks**; each main task is delivered by **discipline tasks** (Mechanical,
-Electrical, Instrumentation, Civil, Process, HSE, Reliability, Inspection) with their required
-documents, dependencies, comments and a full audit trail. A main task's status and progress are
-always calculated from its discipline tasks — never typed in by hand.
+Tielora is a multi-company coordination platform for multidisciplinary engineering work. A
+**project** holds **main tasks**; each main task is delivered by **discipline tasks** (Mechanical,
+Electrical, Instrumentation, Civil, Process, HSE, Reliability, Inspection — the set depends on the
+company's industry template) with their required documents, dependencies, comments and a full audit
+trail. A main task's status and progress are always calculated from its discipline tasks — never
+typed in by hand.
 
-It is a private, admin-invite-only tool. There is no public signup.
+**Many companies, one database.** A company signs itself up at `/signup` (`POST /api/auth/signup`),
+picks an industry template — oil and gas / energy, construction, or a blank three-discipline set —
+and gets those disciplines, its own workspace and its own administrator. Everyone else is added from
+the Admin section. No person of any role ever sees another company's data; that rule, and where it
+is enforced, is the first section of `docs/CONVENTIONS.md`.
 
 Read [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) before changing anything — it is this repo's law.
-Design tokens and screen patterns are in [`docs/design-notes.md`](docs/design-notes.md). Launch gates
-and deployment steps are in [`docs/GO-LIVE.md`](docs/GO-LIVE.md).
+Launch gates and deployment steps are in [`docs/GO-LIVE.md`](docs/GO-LIVE.md).
 
 ## Screenshots
 
@@ -49,23 +53,24 @@ npx prisma generate && npx prisma migrate deploy && npm run seed && npm run dev
 
 ### Seed sign-in
 
-`npm run seed` creates the eight engineering disciplines, a small demo project (`SUR-EXP`) and these
-people. **Development only — never use them anywhere real.** The seed prints the password when it
+`npm run seed` creates one demo company (**Meridian Energy Demo**, fictional), its eight engineering
+disciplines, a small demo project (`SUR-EXP`) and these people. **Development only — never use them anywhere real.** The seed prints the password when it
 runs.
 
 | Email | Password | Role |
 |---|---|---|
-| `admin@omanlng.example` | `Nexus!Demo2026` | Administrator (full access) |
-| `layla.alriyami@omanlng.example` | `Nexus!Demo2026` | Project manager |
-| `khalid.alfarsi@omanlng.example` | `Nexus!Demo2026` | Discipline lead (Mechanical) |
-| `john.carter@omanlng.example` | `Nexus!Demo2026` | Engineer (Mechanical) |
+| `admin@tielora.example` | `Meridian!Demo2026` | Administrator (full access) |
+| `layla.alriyami@tielora.example` | `Meridian!Demo2026` | Project manager |
+| `khalid.alfarsi@tielora.example` | `Meridian!Demo2026` | Discipline lead (Mechanical) |
+| `john.carter@tielora.example` | `Meridian!Demo2026` | Engineer (Mechanical) |
 
 Fourteen demo people are created in all — the four above are the ones worth signing in as. Every
 demo account shares the same password.
 
 Run `SEED_RESET=1 npm run seed` to rebuild the demo project from scratch. `npm run seed` on its own
 is safe to repeat — it refreshes the disciplines and people and leaves an existing demo project
-alone. Accounts are created by an administrator inside the app; there is no signup page.
+alone. Inside a workspace, accounts are created by that company's administrator; a new company
+starts its own workspace at `/signup`.
 
 ## Environment
 
@@ -118,5 +123,5 @@ everything is well and `503` when it is not — that is the URL to point a hosti
 - `src/server/` — services (all the real work, inside transactions), server actions and the
   deadline sweep.
 - `src/components/ui/` — the shared UI kit; `src/components/shell/` — sidebar and top bar.
-- `src/app/` — routes: `(auth)` for sign-in, `(app)` for everything behind a session, `api/` for the
-  read routes and uploads.
+- `src/app/` — routes: `(auth)` for sign-in and sign-up, `(app)` for everything behind a session,
+  `api/` for the read routes, sign-up and uploads.

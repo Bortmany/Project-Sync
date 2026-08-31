@@ -84,7 +84,7 @@ export function uploadsFolderWritable(dataDir: string): boolean {
 
 function refuse(problems: string[]): void {
   if (problems.length === 0) return;
-  throw new Error(`Project Nexus cannot start in production:\n- ${problems.join("\n- ")}`);
+  throw new Error(`Tielora cannot start in production:\n- ${problems.join("\n- ")}`);
 }
 
 /**

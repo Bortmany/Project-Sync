@@ -245,7 +245,7 @@ export function NewProjectDialog({
 
         {step === 2 ? (
           <div className="space-y-3">
-            <p className="text-sm font-semibold text-[var(--olng-navy)]">
+            <p className="text-sm font-semibold text-[var(--brand-ink)]">
               Which disciplines are involved in this project?
             </p>
             {disciplines.isPending ? (
@@ -278,7 +278,7 @@ export function NewProjectDialog({
                       }
                     />
                     <DisciplineDot colorHex={discipline.colorHex} code={discipline.code} />
-                    <span className="text-[var(--olng-navy)]">{discipline.name}</span>
+                    <span className="text-[var(--brand-ink)]">{discipline.name}</span>
                   </label>
                 ))}
               </div>
@@ -288,7 +288,7 @@ export function NewProjectDialog({
 
         {step === 3 ? (
           <div className="space-y-3">
-            <p className="text-sm font-semibold text-[var(--olng-navy)]">
+            <p className="text-sm font-semibold text-[var(--brand-ink)]">
               Add people to this project
             </p>
             {members.map((row, index) => (
@@ -368,7 +368,7 @@ export function NewProjectDialog({
                   { key: newKey(), user: null, projectRole: "ENGINEER", disciplineId: "" },
                 ])
               }
-              className="text-sm font-semibold text-[var(--olng-blue)] underline underline-offset-2"
+              className="text-sm font-semibold text-[var(--brand-primary)] underline underline-offset-2"
             >
               + Add person
             </button>

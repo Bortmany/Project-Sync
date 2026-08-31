@@ -1,5 +1,9 @@
 // A small harness for the service tests: a clean test database between tests, plus the fixtures
-// every scenario needs (people, a project, a main task with its discipline tasks).
+// every scenario needs (an organisation, people, a project, a main task with its discipline tasks).
+//
+// Everything belongs to an organisation now. A test that does not care which one gets the default
+// company created on demand after each reset; a test that DOES care (the org-isolation suite) makes
+// its own with makeOrg() and passes the id in.
 
 import { prisma } from "@/lib/db";
 import type { RoleName } from "@/lib/zod-schemas";
@@ -20,24 +24,51 @@ const TABLES = [
   "ProjectMember",
   "ProjectDiscipline",
   "Project",
+  "OrgIntegration",
+  "MicrosoftConnection",
   "Session",
   "User",
   "Discipline",
+  "Organization",
 ];
 
 /** Empties every table. Only ever run against DATABASE_URL_TEST. */
 export async function resetDatabase(): Promise<void> {
   const list = TABLES.map((table) => `"${table}"`).join(", ");
   await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`);
+  defaultOrgId = null;
+}
+
+/** A company of its own. Two of these side by side are how the isolation suite proves separation. */
+export async function makeOrg(name = "Tielora Test Company"): Promise<{ id: string; name: string }> {
+  const org = await prisma.organization.create({
+    data: {
+      name,
+      slug: `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Math.floor(Math.random() * 1_000_000_000)}`,
+      industryTemplate: "OIL_AND_GAS",
+    },
+  });
+  return { id: org.id, name: org.name };
+}
+
+/** The company a test gets when it does not say. One per reset, made the first time it is needed. */
+let defaultOrgId: string | null = null;
+
+export async function defaultOrg(): Promise<string> {
+  if (!defaultOrgId) defaultOrgId = (await makeOrg()).id;
+  return defaultOrgId;
 }
 
 export async function makeUser(options: {
   name: string;
   role: RoleName;
   disciplineId?: string | null;
-}): Promise<{ id: string; name: string }> {
+  orgId?: string;
+}): Promise<{ id: string; name: string; orgId: string }> {
+  const orgId = options.orgId ?? (await defaultOrg());
   const user = await prisma.user.create({
     data: {
+      orgId,
       email: `${options.name.toLowerCase().replace(/[^a-z]+/g, ".")}.${Date.now()}${Math.random()}@test.example`,
       name: options.name,
       passwordHash: "not-a-real-hash",
@@ -45,17 +76,28 @@ export async function makeUser(options: {
       disciplineId: options.disciplineId ?? null,
     },
   });
-  return { id: user.id, name: user.name };
+  return { id: user.id, name: user.name, orgId: user.orgId };
 }
 
-export async function makeDiscipline(code: string, sortOrder = 1): Promise<{ id: string; code: string }> {
+export async function makeDiscipline(
+  code: string,
+  sortOrder = 1,
+  orgId?: string,
+): Promise<{ id: string; code: string }> {
   const discipline = await prisma.discipline.create({
-    data: { code, name: `${code} discipline`, colorHex: "#00558C", sortOrder },
+    data: {
+      orgId: orgId ?? (await defaultOrg()),
+      code,
+      name: `${code} discipline`,
+      colorHex: "#2E5AAC",
+      sortOrder,
+    },
   });
   return { id: discipline.id, code: discipline.code };
 }
 
 export type Fixture = {
+  orgId: string;
   disciplineId: string;
   otherDisciplineId: string;
   adminActor: ActorContext;
@@ -69,17 +111,24 @@ export type Fixture = {
  * A project with one discipline, an administrator, a project manager, an engineer on the project,
  * and one person who is on nothing at all.
  */
-export async function makeProjectFixture(): Promise<Fixture> {
-  const discipline = await makeDiscipline("MECH", 1);
-  const otherDiscipline = await makeDiscipline("ELEC", 2);
+export async function makeProjectFixture(orgIdIn?: string): Promise<Fixture> {
+  const orgId = orgIdIn ?? (await defaultOrg());
+  const discipline = await makeDiscipline("MECH", 1, orgId);
+  const otherDiscipline = await makeDiscipline("ELEC", 2, orgId);
 
-  const admin = await makeUser({ name: "Nexus Administrator", role: "ADMIN" });
-  const pm = await makeUser({ name: "Layla al-Riyami", role: "PROJECT_MANAGER" });
-  const engineer = await makeUser({ name: "John Carter", role: "ENGINEER", disciplineId: discipline.id });
-  const outsider = await makeUser({ name: "Priya Nair", role: "ENGINEER" });
+  const admin = await makeUser({ name: "Tielora Administrator", role: "ADMIN", orgId });
+  const pm = await makeUser({ name: "Layla al-Riyami", role: "PROJECT_MANAGER", orgId });
+  const engineer = await makeUser({
+    name: "John Carter",
+    role: "ENGINEER",
+    disciplineId: discipline.id,
+    orgId,
+  });
+  const outsider = await makeUser({ name: "Priya Nair", role: "ENGINEER", orgId });
 
   const project = await prisma.project.create({
     data: {
+      orgId,
       name: "Test project",
       code: `TEST-${Math.floor(Math.random() * 1_000_000)}`,
       description: "A project for the service tests.",
@@ -98,6 +147,7 @@ export async function makeProjectFixture(): Promise<Fixture> {
   });
 
   return {
+    orgId,
     disciplineId: discipline.id,
     otherDisciplineId: otherDiscipline.id,
     adminActor: await actorForUser(admin.id),

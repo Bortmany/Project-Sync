@@ -10,6 +10,7 @@ import {
   MIN_SECRET_LENGTH,
   sessionSecretProblems,
 } from "@/lib/boot-guards";
+import { secretBoxAvailable } from "@/lib/secret-box";
 
 const GOOD_SECRET = "x".repeat(MIN_SECRET_LENGTH);
 const writable = () => true;
@@ -107,5 +108,19 @@ describe("the two halves run at different moments", () => {
     );
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain("SESSION_SECRET");
+  });
+
+  // The encryption box derives its AES key from the same secret, so a secret the boot guard is
+  // happy with must always be one the box can actually use. If the two floors ever drift apart,
+  // production could start with a secret that cannot encrypt a Microsoft token — this fails first.
+  it("lets production start only with a secret the encryption box can use", () => {
+    const tooShort = "x".repeat(MIN_SECRET_LENGTH - 1);
+    const longEnough = "x".repeat(MIN_SECRET_LENGTH);
+
+    expect(sessionSecretProblems({ NODE_ENV: "production", SESSION_SECRET: tooShort })).toHaveLength(1);
+    expect(secretBoxAvailable({ NODE_ENV: "production", SESSION_SECRET: tooShort })).toBe(false);
+
+    expect(sessionSecretProblems({ NODE_ENV: "production", SESSION_SECRET: longEnough })).toEqual([]);
+    expect(secretBoxAvailable({ NODE_ENV: "production", SESSION_SECRET: longEnough })).toBe(true);
   });
 });

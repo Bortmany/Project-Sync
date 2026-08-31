@@ -40,7 +40,7 @@ function ColorPicker({
             title={color.label}
             onClick={() => onChange(color.hex)}
             className={`h-8 w-8 rounded-full border-2 ${
-              selected ? "border-[var(--olng-navy)]" : "border-transparent"
+              selected ? "border-[var(--brand-ink)]" : "border-transparent"
             }`}
             style={{ backgroundColor: color.hex }}
           />
@@ -146,7 +146,7 @@ export function AdminDisciplinesView({ disciplines }: { disciplines: DisciplineD
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold text-[var(--olng-blue)]">Disciplines</h1>
+        <h1 className="text-xl font-semibold text-[var(--brand-primary)]">Disciplines</h1>
         <Button onClick={() => setAdding(true)}>+ Add discipline</Button>
       </div>
 
@@ -155,7 +155,7 @@ export function AdminDisciplinesView({ disciplines }: { disciplines: DisciplineD
       ) : (
         <div className="overflow-x-auto rounded-[var(--radius)] border border-[var(--border)] bg-white">
           <table className="w-full text-sm">
-            <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--olng-gray)]">
+            <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--brand-gray)]">
               <tr>
                 <th className="px-3 py-2 font-semibold">Code</th>
                 <th className="px-3 py-2 font-semibold">Name</th>
@@ -167,8 +167,8 @@ export function AdminDisciplinesView({ disciplines }: { disciplines: DisciplineD
             <tbody className="divide-y divide-[var(--border)]">
               {disciplines.map((discipline) => (
                 <tr key={discipline.id} className="h-11 hover:bg-[var(--page-bg)]">
-                  <td className="px-3 font-semibold text-[var(--olng-navy)]">{discipline.code}</td>
-                  <td className="px-3 text-[var(--olng-text)]">{discipline.name}</td>
+                  <td className="px-3 font-semibold text-[var(--brand-ink)]">{discipline.code}</td>
+                  <td className="px-3 text-[var(--brand-text)]">{discipline.name}</td>
                   <td className="px-3">
                     <DisciplineDot
                       colorHex={discipline.colorHex}
@@ -180,14 +180,14 @@ export function AdminDisciplinesView({ disciplines }: { disciplines: DisciplineD
                       showCode
                     />
                   </td>
-                  <td className="px-3 tabular-nums text-[var(--olng-text)]">
+                  <td className="px-3 tabular-nums text-[var(--brand-text)]">
                     {discipline.sortOrder}
                   </td>
                   <td className="px-3">
                     <button
                       type="button"
                       onClick={() => setEditing(discipline)}
-                      className="text-xs font-semibold text-[var(--olng-blue)] hover:underline"
+                      className="text-xs font-semibold text-[var(--brand-primary)] hover:underline"
                     >
                       Edit
                     </button>

@@ -9,7 +9,7 @@ import { currentActor } from "@/server/session";
 import { listAllUsers } from "@/server/services/admin";
 import { listDisciplines } from "@/server/services/directory";
 
-export const metadata = { title: "Users — Project Nexus" };
+export const metadata = { title: "Users — Tielora" };
 export const dynamic = "force-dynamic";
 
 export default async function AdminUsersPage() {
@@ -17,7 +17,7 @@ export default async function AdminUsersPage() {
   if (!actor) redirect("/login");
   if (!can(actor, "MANAGE_USERS")) return <NoAccess />;
 
-  const [users, disciplines] = await Promise.all([listAllUsers(actor), listDisciplines()]);
+  const [users, disciplines] = await Promise.all([listAllUsers(actor), listDisciplines(actor)]);
 
   return <AdminUsersView users={users} disciplines={disciplines} />;
 }

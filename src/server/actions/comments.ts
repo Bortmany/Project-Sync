@@ -28,7 +28,7 @@ export async function createComment(input: CreateCommentInput): Promise<ActionRe
 
   try {
     const comment = await comments.createComment(guard.actor, parsed.data);
-    const scope = await comments.commentScope(comment.id);
+    const scope = await comments.commentScope(guard.actor, comment.id);
     revalidateTask(scope.projectId, scope.mainTaskId, scope.disciplineTaskId ?? undefined);
     return { ok: true, data: comment };
   } catch (error) {
@@ -48,7 +48,7 @@ export async function editComment(input: {
 
   try {
     const comment = await comments.editComment(guard.actor, parsed.data);
-    const scope = await comments.commentScope(comment.id);
+    const scope = await comments.commentScope(guard.actor, comment.id);
     revalidateTask(scope.projectId, scope.mainTaskId, scope.disciplineTaskId ?? undefined);
     return { ok: true, data: comment };
   } catch (error) {

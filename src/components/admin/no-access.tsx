@@ -6,8 +6,8 @@ import { Card } from "@/components/ui";
 export function NoAccess() {
   return (
     <Card title="Admin">
-      <p className="text-sm text-[var(--olng-text)]">
-        This page is for administrators. Ask your Project Nexus admin if you need something changed
+      <p className="text-sm text-[var(--brand-text)]">
+        This page is for administrators. Ask your workspace administrator if you need something changed
         here.
       </p>
     </Card>

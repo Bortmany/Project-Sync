@@ -16,7 +16,10 @@ const UPCOMING_LIMIT = 20;
 
 /** Everything the dashboard shows, scoped to the projects this person may see. */
 export async function getDashboardForActor(actor: ActorContext): Promise<DashboardDTO> {
-  const projects = actor.role === "ADMIN" ? await activeProjects() : await activeProjectsForUser(actor.userId);
+  const projects =
+    actor.role === "ADMIN"
+      ? await activeProjects(actor.orgId)
+      : await activeProjectsForUser(actor.orgId, actor.userId);
   const projectIds = projects.map((project) => project.id);
   const projectCodes = new Map(projects.map((project) => [project.id, project.code]));
 
@@ -94,8 +97,12 @@ export async function getDashboardForActor(actor: ActorContext): Promise<Dashboa
   };
 
   // The discipline catalogue is a handful of rows; only the ones with work on these projects.
+  // Every project here already belongs to the actor's company, so the org filter is belt and braces.
   const disciplines = await prisma.discipline.findMany({
-    where: { id: { in: [...new Set(disciplineRows.map((row) => row.disciplineId))] } },
+    where: {
+      id: { in: [...new Set(disciplineRows.map((row) => row.disciplineId))] },
+      orgId: actor.orgId,
+    },
     select: { id: true, code: true, name: true, colorHex: true, sortOrder: true },
   });
 

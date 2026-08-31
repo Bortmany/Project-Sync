@@ -1,4 +1,5 @@
-// Seed: the eight disciplines, a demo administrator, a demo team and one fully worked demo project.
+// Seed: one demo organisation, its eight disciplines, a demo administrator, a demo team and one
+// fully worked demo project.
 //
 // Everything after the people is created THROUGH THE SERVICE LAYER, so the demo data has real audit
 // rows, real derived progress and real gating — nothing is written straight into the tables.
@@ -8,6 +9,7 @@
 import "dotenv/config";
 import argon2 from "argon2";
 import { prisma } from "@/lib/db";
+import { phaseLockedFor, sortPhases } from "@/lib/phase-lock";
 import { effectiveStatus, isOverdue } from "@/lib/progress";
 import type { RoleName, TaskStatusName } from "@/lib/zod-schemas";
 import { actorForUser, type ActorContext } from "@/server/actor";
@@ -19,6 +21,7 @@ import {
   completeDisciplineTask,
   createMainTask,
   overrideMainTaskStatus,
+  setMainTaskPhase,
   updateDisciplineTaskStatus,
 } from "@/server/services/tasks";
 
@@ -27,19 +30,25 @@ import {
 /* ------------------------------------------------------------------ */
 
 const DISCIPLINES = [
-  { code: "MECH", name: "Mechanical", colorHex: "#00558C", sortOrder: 1 },
-  { code: "ELEC", name: "Electrical", colorHex: "#5BC2E7", sortOrder: 2 },
-  { code: "INST", name: "Instrumentation", colorHex: "#004F71", sortOrder: 3 },
-  { code: "CIVIL", name: "Civil", colorHex: "#8A8D6A", sortOrder: 4 },
-  { code: "PROC", name: "Process", colorHex: "#003E51", sortOrder: 5 },
-  { code: "HSE", name: "HSE", colorHex: "#3E7A5E", sortOrder: 6 },
-  { code: "REL", name: "Reliability", colorHex: "#B08D57", sortOrder: 7 },
-  { code: "INSP", name: "Inspection", colorHex: "#7A6A8A", sortOrder: 8 },
+  { code: "MECH", name: "Mechanical", colorHex: "#2E5AAC", sortOrder: 1 },
+  { code: "ELEC", name: "Electrical", colorHex: "#46C4B0", sortOrder: 2 },
+  { code: "INST", name: "Instrumentation", colorHex: "#1F3D77", sortOrder: 3 },
+  { code: "CIVIL", name: "Civil", colorHex: "#7A8450", sortOrder: 4 },
+  { code: "PROC", name: "Process", colorHex: "#152647", sortOrder: 5 },
+  { code: "HSE", name: "HSE", colorHex: "#2F7D63", sortOrder: 6 },
+  { code: "REL", name: "Reliability", colorHex: "#A8763C", sortOrder: 7 },
+  { code: "INSP", name: "Inspection", colorHex: "#6B5B95", sortOrder: 8 },
 ];
 
+// The demo company every seeded person and project belongs to. Real companies arrive through
+// /api/auth/signup; this one exists so a fresh checkout has something to look at.
+const ORG_NAME = "Meridian Energy Demo";
+const ORG_SLUG = "meridian-energy-demo";
+const ORG_TEMPLATE = "OIL_AND_GAS";
+
 // Demo credentials for local development only — never use these anywhere real.
-const ADMIN_EMAIL = "admin@omanlng.example";
-const DEMO_PASSWORD = "Nexus!Demo2026";
+const ADMIN_EMAIL = "admin@tielora.example";
+const DEMO_PASSWORD = "Meridian!Demo2026";
 const PROJECT_CODE = "SUR-EXP";
 
 type Person = {
@@ -51,19 +60,19 @@ type Person = {
 };
 
 const PEOPLE: Person[] = [
-  { email: "layla.alriyami@omanlng.example", name: "Layla al-Riyami", role: "PROJECT_MANAGER", discipline: null, jobTitle: "Project manager" },
-  { email: "omar.alhabsi@omanlng.example", name: "Omar al-Habsi", role: "PROJECT_MANAGER", discipline: null, jobTitle: "Deputy project manager" },
-  { email: "khalid.alfarsi@omanlng.example", name: "Khalid al-Farsi", role: "DISCIPLINE_LEAD", discipline: "MECH", jobTitle: "Mechanical lead" },
-  { email: "fatma.alzadjali@omanlng.example", name: "Fatma al-Zadjali", role: "DISCIPLINE_LEAD", discipline: "ELEC", jobTitle: "Electrical lead" },
-  { email: "sarah.whitmore@omanlng.example", name: "Sarah Whitmore", role: "DISCIPLINE_LEAD", discipline: "INST", jobTitle: "Instrumentation lead" },
-  { email: "yousuf.alamri@omanlng.example", name: "Yousuf al-Amri", role: "DISCIPLINE_LEAD", discipline: "CIVIL", jobTitle: "Civil lead" },
-  { email: "maria.santos@omanlng.example", name: "Maria Santos", role: "DISCIPLINE_LEAD", discipline: "PROC", jobTitle: "Process lead" },
-  { email: "salim.alhinai@omanlng.example", name: "Salim al-Hinai", role: "DISCIPLINE_LEAD", discipline: "HSE", jobTitle: "HSE lead" },
-  { email: "daniel.okoro@omanlng.example", name: "Daniel Okoro", role: "DISCIPLINE_LEAD", discipline: "REL", jobTitle: "Reliability lead" },
-  { email: "aisha.alkindi@omanlng.example", name: "Aisha al-Kindi", role: "DISCIPLINE_LEAD", discipline: "INSP", jobTitle: "Inspection lead" },
-  { email: "john.carter@omanlng.example", name: "John Carter", role: "ENGINEER", discipline: "MECH", jobTitle: "Mechanical engineer" },
-  { email: "priya.nair@omanlng.example", name: "Priya Nair", role: "ENGINEER", discipline: "INST", jobTitle: "Instrumentation engineer" },
-  { email: "ahmed.albalushi@omanlng.example", name: "Ahmed al-Balushi", role: "ENGINEER", discipline: "ELEC", jobTitle: "Electrical engineer" },
+  { email: "layla.alriyami@tielora.example", name: "Layla al-Riyami", role: "PROJECT_MANAGER", discipline: null, jobTitle: "Project manager" },
+  { email: "omar.alhabsi@tielora.example", name: "Omar al-Habsi", role: "PROJECT_MANAGER", discipline: null, jobTitle: "Deputy project manager" },
+  { email: "khalid.alfarsi@tielora.example", name: "Khalid al-Farsi", role: "DISCIPLINE_LEAD", discipline: "MECH", jobTitle: "Mechanical lead" },
+  { email: "fatma.alzadjali@tielora.example", name: "Fatma al-Zadjali", role: "DISCIPLINE_LEAD", discipline: "ELEC", jobTitle: "Electrical lead" },
+  { email: "sarah.whitmore@tielora.example", name: "Sarah Whitmore", role: "DISCIPLINE_LEAD", discipline: "INST", jobTitle: "Instrumentation lead" },
+  { email: "yousuf.alamri@tielora.example", name: "Yousuf al-Amri", role: "DISCIPLINE_LEAD", discipline: "CIVIL", jobTitle: "Civil lead" },
+  { email: "maria.santos@tielora.example", name: "Maria Santos", role: "DISCIPLINE_LEAD", discipline: "PROC", jobTitle: "Process lead" },
+  { email: "salim.alhinai@tielora.example", name: "Salim al-Hinai", role: "DISCIPLINE_LEAD", discipline: "HSE", jobTitle: "HSE lead" },
+  { email: "daniel.okoro@tielora.example", name: "Daniel Okoro", role: "DISCIPLINE_LEAD", discipline: "REL", jobTitle: "Reliability lead" },
+  { email: "aisha.alkindi@tielora.example", name: "Aisha al-Kindi", role: "DISCIPLINE_LEAD", discipline: "INSP", jobTitle: "Inspection lead" },
+  { email: "john.carter@tielora.example", name: "John Carter", role: "ENGINEER", discipline: "MECH", jobTitle: "Mechanical engineer" },
+  { email: "priya.nair@tielora.example", name: "Priya Nair", role: "ENGINEER", discipline: "INST", jobTitle: "Instrumentation engineer" },
+  { email: "ahmed.albalushi@tielora.example", name: "Ahmed al-Balushi", role: "ENGINEER", discipline: "ELEC", jobTitle: "Electrical engineer" },
 ];
 
 // Task dates are always stored at UTC midnight — the same invariant the services enforce.
@@ -92,6 +101,12 @@ type SeedMainTask = {
   startDate: string;
   deadline: string;
   owner: string;
+  /**
+   * Which stage gate this work sits behind, by phase name. Left out, the task is unphased and is
+   * never gated — the demo shows both. Phases are assigned AFTER the work has been driven to its
+   * end state, because a locked phase would (rightly) refuse those very completions.
+   */
+  phase?: string;
   subtasks: SeedSubtask[];
   /** PROC → MECH → INSP style chains, by subtask title. */
   chain?: string[];
@@ -106,12 +121,13 @@ const WORK: SeedMainTask[] = [
     priority: "HIGH",
     startDate: "2026-03-15",
     deadline: "2026-09-30",
-    owner: "layla.alriyami@omanlng.example",
+    owner: "layla.alriyami@tielora.example",
+    phase: "FEED",
     subtasks: [
       {
         discipline: "MECH",
         title: "Mechanical design review comments closed",
-        assignee: "john.carter@omanlng.example",
+        assignee: "john.carter@tielora.example",
         deadline: "2026-08-20",
         documents: [{ name: "Vendor data sheet (nice to have)", isMandatory: false }],
         end: "COMPLETED",
@@ -119,21 +135,21 @@ const WORK: SeedMainTask[] = [
       {
         discipline: "ELEC",
         title: "Electrical single line diagrams reviewed",
-        assignee: "ahmed.albalushi@omanlng.example",
+        assignee: "ahmed.albalushi@tielora.example",
         deadline: "2026-08-25",
         end: "COMPLETED",
       },
       {
         discipline: "INST",
         title: "Instrument index and loop drawings reviewed",
-        assignee: "priya.nair@omanlng.example",
+        assignee: "priya.nair@tielora.example",
         deadline: "2026-09-01",
         end: "COMPLETED",
       },
       {
         discipline: "CIVIL",
         title: "Civil foundation load check",
-        assignee: "yousuf.alamri@omanlng.example",
+        assignee: "yousuf.alamri@tielora.example",
         deadline: "2026-09-20",
         documents: [
           { name: "Foundation load calculation report", isMandatory: true },
@@ -145,7 +161,7 @@ const WORK: SeedMainTask[] = [
       {
         discipline: "PROC",
         title: "Process safeguarding review sign-off",
-        assignee: "maria.santos@omanlng.example",
+        assignee: "maria.santos@tielora.example",
         deadline: "2026-09-25",
       },
     ],
@@ -157,19 +173,20 @@ const WORK: SeedMainTask[] = [
     priority: "MEDIUM",
     startDate: "2026-06-01",
     deadline: "2026-11-15",
-    owner: "omar.alhabsi@omanlng.example",
+    owner: "omar.alhabsi@tielora.example",
+    phase: "Detail design",
     subtasks: [
-      { discipline: "MECH", title: "Mechanical datasheets compiled", assignee: "john.carter@omanlng.example", deadline: "2026-10-20", end: "IN_PROGRESS" },
-      { discipline: "ELEC", title: "Electrical load list finalised", assignee: "fatma.alzadjali@omanlng.example", deadline: "2026-10-22", end: "IN_PROGRESS" },
-      { discipline: "INST", title: "Control narrative updated", assignee: "sarah.whitmore@omanlng.example", deadline: "2026-10-25" },
-      { discipline: "CIVIL", title: "Structural steel drawings issued", assignee: "yousuf.alamri@omanlng.example", deadline: "2026-10-28", end: "IN_PROGRESS" },
-      { discipline: "PROC", title: "Heat and material balance rev C", assignee: "maria.santos@omanlng.example", deadline: "2026-10-30" },
-      { discipline: "HSE", title: "HSE dossier assembled", assignee: "salim.alhinai@omanlng.example", deadline: "2026-11-01" },
-      { discipline: "REL", title: "Criticality assessment attached", assignee: "daniel.okoro@omanlng.example", deadline: "2026-11-03" },
+      { discipline: "MECH", title: "Mechanical datasheets compiled", assignee: "john.carter@tielora.example", deadline: "2026-10-20", end: "IN_PROGRESS" },
+      { discipline: "ELEC", title: "Electrical load list finalised", assignee: "fatma.alzadjali@tielora.example", deadline: "2026-10-22", end: "IN_PROGRESS" },
+      { discipline: "INST", title: "Control narrative updated", assignee: "sarah.whitmore@tielora.example", deadline: "2026-10-25" },
+      { discipline: "CIVIL", title: "Structural steel drawings issued", assignee: "yousuf.alamri@tielora.example", deadline: "2026-10-28", end: "IN_PROGRESS" },
+      { discipline: "PROC", title: "Heat and material balance rev C", assignee: "maria.santos@tielora.example", deadline: "2026-10-30" },
+      { discipline: "HSE", title: "HSE dossier assembled", assignee: "salim.alhinai@tielora.example", deadline: "2026-11-01" },
+      { discipline: "REL", title: "Criticality assessment attached", assignee: "daniel.okoro@tielora.example", deadline: "2026-11-03" },
       {
         discipline: "INSP",
         title: "Inspection release certificates collected",
-        assignee: "aisha.alkindi@omanlng.example",
+        assignee: "aisha.alkindi@tielora.example",
         deadline: "2026-11-05",
         end: "BLOCKED",
         note: "The vendor has not released the certificates for the two spare exchangers yet.",
@@ -182,11 +199,11 @@ const WORK: SeedMainTask[] = [
     priority: "MEDIUM",
     startDate: "2026-04-01",
     deadline: "2026-05-25",
-    owner: "layla.alriyami@omanlng.example",
+    owner: "layla.alriyami@tielora.example",
     subtasks: [
-      { discipline: "INSP", title: "Inspection findings closed", assignee: "aisha.alkindi@omanlng.example", deadline: "2026-05-15", end: "COMPLETED" },
-      { discipline: "MECH", title: "Repair work packs signed off", assignee: "khalid.alfarsi@omanlng.example", deadline: "2026-05-18", end: "COMPLETED" },
-      { discipline: "REL", title: "Failure history updated", assignee: "daniel.okoro@omanlng.example", deadline: "2026-05-20", end: "COMPLETED" },
+      { discipline: "INSP", title: "Inspection findings closed", assignee: "aisha.alkindi@tielora.example", deadline: "2026-05-15", end: "COMPLETED" },
+      { discipline: "MECH", title: "Repair work packs signed off", assignee: "khalid.alfarsi@tielora.example", deadline: "2026-05-18", end: "COMPLETED" },
+      { discipline: "REL", title: "Failure history updated", assignee: "daniel.okoro@tielora.example", deadline: "2026-05-20", end: "COMPLETED" },
     ],
   },
   {
@@ -196,12 +213,13 @@ const WORK: SeedMainTask[] = [
     priority: "CRITICAL",
     startDate: "2026-06-15",
     deadline: "2026-08-01",
-    owner: "omar.alhabsi@omanlng.example",
+    owner: "omar.alhabsi@tielora.example",
+    phase: "Procurement",
     subtasks: [
-      { discipline: "MECH", title: "Compressor general arrangement reviewed", assignee: "khalid.alfarsi@omanlng.example", deadline: "2026-07-20", end: "COMPLETED" },
-      { discipline: "ELEC", title: "Motor data sheets reviewed", assignee: "ahmed.albalushi@omanlng.example", deadline: "2026-07-22", end: "IN_PROGRESS" },
-      { discipline: "INST", title: "Vibration monitoring scope reviewed", assignee: "priya.nair@omanlng.example", deadline: "2026-07-25" },
-      { discipline: "REL", title: "Spare parts list reviewed", assignee: "daniel.okoro@omanlng.example", deadline: "2026-07-28" },
+      { discipline: "MECH", title: "Compressor general arrangement reviewed", assignee: "khalid.alfarsi@tielora.example", deadline: "2026-07-20", end: "COMPLETED" },
+      { discipline: "ELEC", title: "Motor data sheets reviewed", assignee: "ahmed.albalushi@tielora.example", deadline: "2026-07-22", end: "IN_PROGRESS" },
+      { discipline: "INST", title: "Vibration monitoring scope reviewed", assignee: "priya.nair@tielora.example", deadline: "2026-07-25" },
+      { discipline: "REL", title: "Spare parts list reviewed", assignee: "daniel.okoro@tielora.example", deadline: "2026-07-28" },
     ],
   },
   {
@@ -210,14 +228,15 @@ const WORK: SeedMainTask[] = [
     priority: "HIGH",
     startDate: "2026-04-10",
     deadline: "2026-10-15",
-    owner: "layla.alriyami@omanlng.example",
+    owner: "layla.alriyami@tielora.example",
+    phase: "FEED",
     subtasks: [
-      { discipline: "HSE", title: "Safety-critical actions closed", assignee: "salim.alhinai@omanlng.example", deadline: "2026-09-10", end: "COMPLETED" },
-      { discipline: "PROC", title: "Relief scenario recalculated", assignee: "maria.santos@omanlng.example", deadline: "2026-09-15", end: "COMPLETED" },
+      { discipline: "HSE", title: "Safety-critical actions closed", assignee: "salim.alhinai@tielora.example", deadline: "2026-09-10", end: "COMPLETED" },
+      { discipline: "PROC", title: "Relief scenario recalculated", assignee: "maria.santos@tielora.example", deadline: "2026-09-15", end: "COMPLETED" },
       {
         discipline: "REL",
         title: "Reliability improvement action (optional)",
-        assignee: "daniel.okoro@omanlng.example",
+        assignee: "daniel.okoro@tielora.example",
         deadline: "2026-10-10",
         isMandatory: false,
         end: "IN_PROGRESS",
@@ -226,7 +245,7 @@ const WORK: SeedMainTask[] = [
     override: {
       status: "COMPLETED",
       reason: "Remaining action transferred to operations MOC-1182",
-      by: "layla.alriyami@omanlng.example",
+      by: "layla.alriyami@tielora.example",
     },
   },
   {
@@ -236,11 +255,12 @@ const WORK: SeedMainTask[] = [
     priority: "MEDIUM",
     startDate: "2026-12-01",
     deadline: "2027-02-15",
-    owner: "omar.alhabsi@omanlng.example",
+    owner: "omar.alhabsi@tielora.example",
+    phase: "Commissioning",
     subtasks: [
-      { discipline: "PROC", title: "Process line walkdown", assignee: "maria.santos@omanlng.example", deadline: "2027-01-10" },
-      { discipline: "MECH", title: "Mechanical completion walkdown", assignee: "khalid.alfarsi@omanlng.example", deadline: "2027-01-25" },
-      { discipline: "INSP", title: "Final inspection walkdown", assignee: "aisha.alkindi@omanlng.example", deadline: "2027-02-10" },
+      { discipline: "PROC", title: "Process line walkdown", assignee: "maria.santos@tielora.example", deadline: "2027-01-10" },
+      { discipline: "MECH", title: "Mechanical completion walkdown", assignee: "khalid.alfarsi@tielora.example", deadline: "2027-01-25" },
+      { discipline: "INSP", title: "Final inspection walkdown", assignee: "aisha.alkindi@tielora.example", deadline: "2027-02-10" },
     ],
     chain: ["Process line walkdown", "Mechanical completion walkdown", "Final inspection walkdown"],
   },
@@ -255,10 +275,13 @@ const out = (line: string) => process.stdout.write(`${line}\n`);
 async function main() {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not set. Copy .env.example to .env.");
 
-  const disciplineIdByCode = await seedDisciplines();
-  const userIdByEmail = await seedPeople(disciplineIdByCode);
+  const org = await seedOrganization();
+  const disciplineIdByCode = await seedDisciplines(org.id);
+  const userIdByEmail = await seedPeople(org.id, disciplineIdByCode);
 
-  const existing = await prisma.project.findUnique({ where: { code: PROJECT_CODE } });
+  const existing = await prisma.project.findUnique({
+    where: { orgId_code: { orgId: org.id, code: PROJECT_CODE } },
+  });
   if (existing && process.env.SEED_RESET !== "1") {
     out(`The demo project ${PROJECT_CODE} is already here, so nothing was rebuilt.`);
     out("Run SEED_RESET=1 npm run seed to rebuild it from scratch (development data only).");
@@ -374,26 +397,63 @@ async function main() {
     }
   }
 
+  // The stage gates. createProject already made the five OIL_AND_GAS phases; the work is put behind
+  // them LAST, once every completion above has happened, because a locked phase refuses exactly
+  // those transitions. The result is a realistic mid-project picture: FEED is still open (the civil
+  // load check is unfinished), so Detail design, Procurement, Construction and Commissioning are all
+  // locked, and the inspection close-out sits outside the gates entirely.
+  const phaseIdByName = new Map(
+    (await prisma.projectPhase.findMany({ where: { projectId: project.id } })).map((phase) => [
+      phase.name,
+      phase.id,
+    ]),
+  );
+  for (const work of WORK) {
+    if (!work.phase) continue;
+    const mainTask = await prisma.mainTask.findFirstOrThrow({
+      where: { projectId: project.id, title: work.title },
+      select: { id: true },
+    });
+    await setMainTaskPhase(adminActor, {
+      id: mainTask.id,
+      phaseId: phaseIdByName.get(work.phase) as string,
+    });
+  }
+
   await seedDocuments({ projectId: project.id, userIdByEmail });
   await seedComments({ projectId: project.id, userIdByEmail, actorFor });
 
   await report();
 }
 
-async function seedDisciplines(): Promise<Map<string, string>> {
+/** The demo company itself. Everything else the seed writes belongs to it. */
+async function seedOrganization(): Promise<{ id: string }> {
+  const org = await prisma.organization.upsert({
+    where: { slug: ORG_SLUG },
+    update: { name: ORG_NAME },
+    create: { name: ORG_NAME, slug: ORG_SLUG, industryTemplate: ORG_TEMPLATE },
+    select: { id: true },
+  });
+  return org;
+}
+
+async function seedDisciplines(orgId: string): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   for (const discipline of DISCIPLINES) {
     const row = await prisma.discipline.upsert({
-      where: { code: discipline.code },
+      where: { orgId_code: { orgId, code: discipline.code } },
       update: { name: discipline.name, colorHex: discipline.colorHex, sortOrder: discipline.sortOrder },
-      create: discipline,
+      create: { ...discipline, orgId },
     });
     map.set(row.code, row.id);
   }
   return map;
 }
 
-async function seedPeople(disciplineIdByCode: Map<string, string>): Promise<Map<string, string>> {
+async function seedPeople(
+  orgId: string,
+  disciplineIdByCode: Map<string, string>,
+): Promise<Map<string, string>> {
   const passwordHash = await argon2.hash(DEMO_PASSWORD, { type: argon2.argon2id });
   const map = new Map<string, string>();
 
@@ -401,8 +461,9 @@ async function seedPeople(disciplineIdByCode: Map<string, string>): Promise<Map<
     where: { email: ADMIN_EMAIL },
     update: { role: "ADMIN", isActive: true },
     create: {
+      orgId,
       email: ADMIN_EMAIL,
-      name: "Nexus Administrator",
+      name: "Meridian Administrator",
       passwordHash,
       role: "ADMIN",
       jobTitle: "System administrator",
@@ -416,6 +477,7 @@ async function seedPeople(disciplineIdByCode: Map<string, string>): Promise<Map<
       where: { email: person.email },
       update: { name: person.name, role: person.role, disciplineId, jobTitle: person.jobTitle, isActive: true },
       create: {
+        orgId,
         email: person.email,
         name: person.name,
         passwordHash,
@@ -451,6 +513,8 @@ async function resetDemoProject(projectId: string): Promise<void> {
   await prisma.document.deleteMany({ where: { projectId } });
   await prisma.disciplineTask.deleteMany({ where: { id: { in: subtaskIds } } });
   await prisma.mainTask.deleteMany({ where: { projectId } });
+  // Phases go after the main tasks that point at them — the same order the Restrict rule requires.
+  await prisma.projectPhase.deleteMany({ where: { projectId } });
   await prisma.projectMember.deleteMany({ where: { projectId } });
   await prisma.projectDiscipline.deleteMany({ where: { projectId } });
   await prisma.activityLog.deleteMany({ where: { projectId } });
@@ -461,7 +525,9 @@ async function resetDemoProject(projectId: string): Promise<void> {
 
 /** Prints what is now in the database, plus the demo logins. */
 async function report(): Promise<void> {
-  const project = await prisma.project.findUnique({ where: { code: PROJECT_CODE } });
+  const project = await prisma.project.findFirst({
+    where: { code: PROJECT_CODE, organization: { slug: ORG_SLUG } },
+  });
   if (!project) {
     out("No demo project found.");
     return;
@@ -473,7 +539,7 @@ async function report(): Promise<void> {
     include: { _count: { select: { disciplineTasks: true } } },
   });
   const [users, activity] = await Promise.all([
-    prisma.user.count({ where: { isActive: true } }),
+    prisma.user.count({ where: { orgId: project.orgId, isActive: true } }),
     prisma.activityLog.count({ where: { projectId: project.id } }),
   ]);
 
@@ -500,10 +566,41 @@ async function report(): Promise<void> {
   out(line(headers));
   out(widths.map((width) => "-".repeat(width)).join("  "));
   for (const row of rows) out(line(row));
+  // The stage gates, with the lock state derived exactly the way the app derives it.
+  const phases = await prisma.projectPhase.findMany({ where: { projectId: project.id } });
+  const phaseTasks = await prisma.mainTask.findMany({
+    where: { projectId: project.id, phaseId: { not: null }, deletedAt: null },
+    select: { phaseId: true, status: true, statusOverride: true },
+  });
+  const gates = phaseLockedFor(
+    phases.map((phase) => {
+      const own = phaseTasks.filter((task) => task.phaseId === phase.id);
+      return {
+        id: phase.id,
+        name: phase.name,
+        sortOrder: phase.sortOrder,
+        overridden: phase.overriddenById !== null,
+        taskCount: own.length,
+        completedCount: own.filter(
+          (task) => effectiveStatus(task.status, task.statusOverride) === "COMPLETED",
+        ).length,
+      };
+    }),
+  );
+
+  out("");
+  out("Phases (locked is derived, never stored):");
+  for (const gate of sortPhases([...gates.values()])) {
+    out(
+      `  ${gate.name.padEnd(16)} ${gate.completedCount}/${gate.taskCount} complete` +
+        (gate.locked ? `  — locked until ${gate.lockedByPhaseName} is complete` : ""),
+    );
+  }
+
   out("");
   out(`${users} people, ${mainTasks.length} main tasks, ${activity} audit entries on this project.`);
   out("");
-  out("Demo logins (development only — every account uses the same password):");
+  out(`Demo logins for ${ORG_NAME} (development only — every account uses the same password):`);
   out(`  administrator   ${ADMIN_EMAIL}`);
   out(`  project manager ${PEOPLE[0].email}`);
   out(`  discipline lead ${PEOPLE[5].email}`);

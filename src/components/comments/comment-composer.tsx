@@ -172,7 +172,7 @@ export function CommentComposer({
                   onClick={() => choose(person)}
                 >
                   <Avatar name={person.userName} size={24} />
-                  <span className="text-[var(--olng-navy)]">{person.userName}</span>
+                  <span className="text-[var(--brand-ink)]">{person.userName}</span>
                 </button>
               </li>
             ))}
@@ -181,7 +181,7 @@ export function CommentComposer({
       </div>
 
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs text-[var(--olng-gray)]">
+        <p className="text-xs text-[var(--brand-gray)]">
           Type @ to mention someone on this project.
         </p>
         <Button loading={pending} disabled={body.trim().length === 0} onClick={post}>

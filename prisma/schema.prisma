@@ -1,4 +1,4 @@
-// Project Nexus — complete data model. FROZEN after Milestone 1: schema changes need main-session approval.
+// Tielora — complete data model. FROZEN after Milestone 1: schema changes need main-session approval.
 
 generator client {
   provider = "prisma-client"
@@ -50,8 +50,95 @@ enum NotificationType {
   OVERRIDE_APPLIED
 }
 
+/// One customer company. EVERY tenant-owned row reaches its organisation through this model:
+/// a User, a Discipline and a Project each carry a required orgId, and everything else hangs off
+/// one of those three. Nothing is ever shared between organisations.
+model Organization {
+  id     String @id @default(cuid())
+  name   String
+  /// The company's handle, unique across the whole product and derived from its name at signup.
+  slug   String @unique
+  /// Which discipline template the company started from: OIL_AND_GAS, CONSTRUCTION or GENERIC.
+  industryTemplate String
+  createdAt        DateTime @default(now())
+
+  users        User[]
+  disciplines  Discipline[]
+  projects     Project[]
+  integrations OrgIntegration[]
+  microsoft    MicrosoftConnection?
+}
+
+/// One company's link to its own Microsoft 365 (OneDrive / SharePoint), so members can attach a file
+/// that already lives there instead of downloading and re-uploading it.
+///
+/// ONE ROW PER COMPANY (`orgId` is unique): an administrator connects on behalf of the company and
+/// everyone browses through that connection, so what the company can see in Tielora is exactly what
+/// that administrator's Microsoft account can see.
+/// `refreshTokenEnc` and `accessTokenEnc` are AES-256-GCM ciphertext under a key derived from
+/// SESSION_SECRET (src/lib/secret-box.ts). They are NEVER stored in plain text, never returned by
+/// any read, never written to an audit row and never logged — one step stricter than the chat
+/// webhook address, because these can be exchanged for new credentials.
+/// `staleAt` is set when Microsoft stops accepting the saved token; the screens then ask an
+/// administrator to reconnect instead of failing silently.
+/// Nothing about a file is stored here: an attached file becomes an ordinary DocumentVersion
+/// through the usual validateUpload → storeFile path, so the append-only guarantee is untouched.
+model MicrosoftConnection {
+  id                   String    @id @default(cuid())
+  orgId                String    @unique
+  /// The customer's Microsoft Entra tenant id, as returned when they connected.
+  tenantId             String
+  /// The work domain of the connecting account, e.g. "contoso.com" — shown on the admin card.
+  tenantDomain         String?
+  connectedById        String?
+  connectedAt          DateTime  @default(now())
+  refreshTokenEnc      String
+  accessTokenEnc       String?
+  accessTokenExpiresAt DateTime?
+  staleAt              DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  connectedBy  User?        @relation("MicrosoftConnectionConnectedBy", fields: [connectedById], references: [id], onDelete: SetNull)
+}
+
+/// One company's chat-notification hook: where Tielora posts a copy of its notifications.
+///
+/// `kind` is a STRING validated by zod (IntegrationKindSchema in src/lib/zod-schemas.ts), not a
+/// Prisma enum, so a third kind of chat tool needs no migration.
+/// `webhookUrl` is a bearer secret — anyone holding it can post into that channel. It is never
+/// returned by any read API and never written to an audit row or a log line; the admin screen only
+/// ever sees scheme + host.
+/// `eventToggles` is a small map of per-event booleans, again validated by zod on the way in.
+/// In-app Notifications remain the source of truth: delivery here is best-effort.
+model OrgIntegration {
+  id           String   @id @default(cuid())
+  orgId        String
+  /// "SLACK" or "TEAMS" today. One row per kind per organisation.
+  kind         String
+  webhookUrl   String
+  enabled      Boolean  @default(false)
+  eventToggles Json
+  /// When the daily brief digest last ran for this channel. Null means never. It is a FACT about
+  /// delivery, not a derived state, which is why it is stored: it is the only thing that keeps the
+  /// digest to once a day while the sweep itself runs every hour.
+  dailyBriefSentAt DateTime?
+  createdById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation("OrgIntegrationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, kind])
+}
+
 model User {
   id           String    @id @default(cuid())
+  orgId        String
+  /// Globally unique on purpose: one email address signs in to exactly one organisation, so the
+  /// sign-in form never has to ask which company you meant.
   email        String    @unique // always stored lowercased
   name         String
   passwordHash String
@@ -63,7 +150,8 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  discipline Discipline? @relation(fields: [disciplineId], references: [id])
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  discipline   Discipline?  @relation(fields: [disciplineId], references: [id])
 
   sessions              Session[]
   createdProjects       Project[]           @relation("ProjectCreatedBy")
@@ -72,6 +160,7 @@ model User {
   createdMainTasks      MainTask[]          @relation("MainTaskCreatedBy")
   ownedMainTasks        MainTask[]          @relation("MainTaskOwner")
   overriddenMainTasks   MainTask[]          @relation("MainTaskOverriddenBy")
+  overriddenPhases      ProjectPhase[]      @relation("ProjectPhaseOverriddenBy")
   assignedTasks         DisciplineTask[]    @relation("DisciplineTaskAssignee")
   tasksAssignedByMe     DisciplineTask[]    @relation("DisciplineTaskAssignedBy")
   tasksCompletedByMe    DisciplineTask[]    @relation("DisciplineTaskCompletedBy")
@@ -83,8 +172,11 @@ model User {
   activityLogs          ActivityLog[]
   favorites             Favorite[]
   personalTasks         PersonalTask[]
+  createdIntegrations   OrgIntegration[]    @relation("OrgIntegrationCreatedBy")
+  microsoftConnections  MicrosoftConnection[] @relation("MicrosoftConnectionConnectedBy")
 
   @@index([isActive])
+  @@index([orgId, isActive])
 }
 
 model Session {
@@ -105,23 +197,31 @@ model Session {
 
 model Discipline {
   id        String   @id @default(cuid())
-  code      String   @unique
+  orgId     String
+  code      String
   name      String
   colorHex  String
   sortOrder Int
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
   users              User[]
   projectDisciplines ProjectDiscipline[]
   projectMembers     ProjectMember[]
   disciplineTasks    DisciplineTask[]
+
+  // Per organisation, not global: two companies may both run a "Civil" discipline.
+  @@unique([orgId, code])
+  @@unique([orgId, name])
 }
 
 model Project {
   id          String        @id @default(cuid())
+  orgId       String
   name        String
-  code        String        @unique
+  code        String
   description String
   status      ProjectStatus @default(ACTIVE)
   startDate   DateTime?
@@ -131,17 +231,22 @@ model Project {
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
-  createdBy User @relation("ProjectCreatedBy", fields: [createdById], references: [id])
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation("ProjectCreatedBy", fields: [createdById], references: [id])
 
   disciplines ProjectDiscipline[]
   members     ProjectMember[]
+  phases      ProjectPhase[]
   mainTasks   MainTask[]
   documents   Document[]
   activity    ActivityLog[]
   favorites   Favorite[]
 
+  // Per organisation, not global: two companies may both run a project called "PH-1".
+  @@unique([orgId, code])
   @@index([status])
   @@index([deletedAt])
+  @@index([orgId, deletedAt])
 }
 
 model ProjectDiscipline {
@@ -176,9 +281,34 @@ model ProjectMember {
   @@index([userId])
 }
 
+/// A stage gate on a project. A phase is LOCKED while any phase before it (lower sortOrder) still
+/// has a main task that is not complete — and "locked" is DERIVED at read time, never stored, in
+/// exactly the way OVERDUE is. The only legal way past a gate is the recorded override below:
+/// who, why (5 characters minimum) and when, with a PHASE_OVERRIDE_APPLIED audit row beside it.
+model ProjectPhase {
+  id             String    @id @default(cuid())
+  projectId      String
+  name           String
+  sortOrder      Int
+  overriddenById String?
+  overrideReason String?
+  overriddenAt   DateTime?
+  createdAt      DateTime  @default(now())
+
+  project      Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  overriddenBy User?   @relation("ProjectPhaseOverriddenBy", fields: [overriddenById], references: [id])
+
+  mainTasks MainTask[]
+
+  @@unique([projectId, name])
+  @@index([projectId, sortOrder])
+}
+
 model MainTask {
   id             String      @id @default(cuid())
   projectId      String
+  /// Which stage gate this task sits behind. Null means unphased — never gated.
+  phaseId        String?
   title          String
   description    String
   priority       Priority    @default(MEDIUM)
@@ -199,6 +329,9 @@ model MainTask {
   updatedAt      DateTime    @updatedAt
 
   project      Project @relation(fields: [projectId], references: [id])
+  // Restrict, not SetNull: a phase may only be deleted once no main task references it, and the
+  // service says so in plain English rather than silently unphasing somebody's work.
+  phase        ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: Restrict)
   createdBy    User    @relation("MainTaskCreatedBy", fields: [createdById], references: [id])
   owner        User?   @relation("MainTaskOwner", fields: [ownerId], references: [id])
   overriddenBy User?   @relation("MainTaskOverriddenBy", fields: [overriddenById], references: [id])

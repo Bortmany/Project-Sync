@@ -1,5 +1,9 @@
 # Project Nexus — UI spec
 
+> **Superseded in part by the Milestone 2 Tielora rebrand.** The layout patterns still hold; the
+> brand names and the `--olng-*` tokens in this file do not — the live tokens are `--brand-*` in
+> `src/app/globals.css`, and the sign-in panel now carries the Tielora wordmark with no sail motif.
+
 Internal Oman LNG multidisciplinary engineering coordination platform. Desktop-first (design canvas: 1440px), English-only, no RTL. Built from `docs/design-notes.md` — brand tokens, layout system, and component names below are taken verbatim from that doc; nothing here contradicts it.
 
 This spec covers all 15 screens a builder needs. Component props/variants are collected once in **§15 Shared components** — every screen below references those names verbatim instead of redefining them.

@@ -10,7 +10,7 @@ export async function GET() {
   if (guard.response) return guard.response;
 
   try {
-    return ok(await listDisciplines());
+    return ok(await listDisciplines(guard.actor));
   } catch (error) {
     return failFrom(error, { route: "GET /api/disciplines" });
   }

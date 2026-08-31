@@ -10,6 +10,7 @@ import {
   clearOverride,
   createDisciplineTask,
   overrideMainTaskStatus,
+  setMainTaskPhase,
   updateMainTask,
 } from "@/components/actions";
 import { MainTaskActivity } from "@/components/activity/activity-feeds";
@@ -21,6 +22,7 @@ import {
   isManagerOn,
   useMainTask,
   useMe,
+  usePhases,
   useProject,
 } from "@/components/hooks/use-api";
 import { FavoriteStar } from "@/components/shell/favorite-star";
@@ -69,12 +71,14 @@ function EditDetailsDialog({
 }) {
   const queryClient = useQueryClient();
   const { run, pending, error, fieldErrors } = useAction();
+  const phases = usePhases(task.projectId);
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
   const [priority, setPriority] = useState<PriorityName>(task.priority);
   const [startDate, setStartDate] = useState(toDateInputValue(task.startDate));
   const [deadline, setDeadline] = useState(toDateInputValue(task.deadline));
   const [ownerId, setOwnerId] = useState(task.ownerId ?? "");
+  const [phaseId, setPhaseId] = useState(task.phaseId ?? "NONE");
 
   const dateOrderError =
     startDate && deadline && deadline < startDate
@@ -96,8 +100,8 @@ function EditDetailsDialog({
             disabled={!title.trim() || !deadline || Boolean(dateOrderError)}
             onClick={() =>
               run(
-                () =>
-                  updateMainTask({
+                async () => {
+                  const saved = await updateMainTask({
                     id: task.id,
                     title: title.trim(),
                     description: description.trim(),
@@ -105,13 +109,37 @@ function EditDetailsDialog({
                     startDate: startDate ? new Date(startDate) : null,
                     deadline: new Date(deadline),
                     ownerId: ownerId || null,
-                  }),
+                  });
+                  if (!saved.ok) return saved;
+
+                  // Moving between phases is its own recorded change (setMainTaskPhase), so it is
+                  // sent separately and only when the choice actually changed. Its answer is the
+                  // one that decides how this save reports: a refused move is not a saved task.
+                  const next = phaseId === "NONE" ? null : phaseId;
+                  if (next === (task.phaseId ?? null)) return saved;
+
+                  const moved = await setMainTaskPhase({ id: task.id, phaseId: next });
+                  if (!moved.ok) {
+                    // The details did save, so the page behind the dialog is refreshed even though
+                    // this save is reported as a failure.
+                    void queryClient.invalidateQueries({ queryKey: ["task", task.id] });
+                    return {
+                      ok: false as const,
+                      error: `The details were saved, but the phase could not be changed. ${moved.error}`,
+                      fieldErrors: moved.fieldErrors,
+                    };
+                  }
+                  return moved;
+                },
                 {
                   success: "Task updated.",
                   failure: "Couldn't save these changes. Try again.",
                   onSuccess: () => {
                     void queryClient.invalidateQueries({ queryKey: ["task", task.id] });
                     void queryClient.invalidateQueries({ queryKey: ["project", task.projectId] });
+                    void queryClient.invalidateQueries({
+                      queryKey: ["project", task.projectId, "phases"],
+                    });
                     onClose();
                   },
                 },
@@ -155,6 +183,22 @@ function EditDetailsDialog({
             />
           </Field>
         </div>
+        {(phases.data ?? []).length > 0 ? (
+          <Field
+            label="Phase"
+            hint="Work can be moved into a locked phase at any time. It just can't be completed there until the gate opens."
+          >
+            <Select value={phaseId} onChange={(event) => setPhaseId(event.target.value)}>
+              {(phases.data ?? []).map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                  {item.locked ? " (locked)" : ""}
+                </option>
+              ))}
+              <option value="NONE">No phase</option>
+            </Select>
+          </Field>
+        ) : null}
         <Field label="Owner">
           <Select value={ownerId} onChange={(event) => setOwnerId(event.target.value)}>
             <option value="">No owner</option>
@@ -435,13 +479,13 @@ export function MainTaskView({ taskId }: { taskId: string }) {
 
       <header className="space-y-3">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="min-w-0 break-words text-xl font-semibold text-[var(--olng-blue)]">
+          <h1 className="min-w-0 break-words text-xl font-semibold text-[var(--brand-primary)]">
             {data.title}
           </h1>
           <StatusBadge status={data.effectiveStatus} overridden={Boolean(data.statusOverride)} />
           {data.statusOverride ? (
             <span
-              className="rounded-full bg-[var(--olng-sand)] px-2 py-0.5 text-xs font-semibold text-[var(--olng-navy)]"
+              className="rounded-full bg-[var(--brand-stone)] px-2 py-0.5 text-xs font-semibold text-[var(--brand-ink)]"
               title={`Overridden by ${data.overriddenByName ?? "someone"} — reason: ${
                 data.overrideReason ?? "not recorded"
               }`}
@@ -454,7 +498,7 @@ export function MainTaskView({ taskId }: { taskId: string }) {
         </div>
 
         <div className="max-w-md space-y-1">
-          <p className="text-sm text-[var(--olng-text)]">
+          <p className="text-sm text-[var(--brand-text)]">
             {data.counts.completed} of {data.counts.disciplineTasks} disciplines complete ·{" "}
             {data.progressPct}%
           </p>
@@ -463,7 +507,7 @@ export function MainTaskView({ taskId }: { taskId: string }) {
 
         <p
           className="text-sm"
-          style={{ color: data.isOverdue ? "var(--status-blocked)" : "var(--olng-text)" }}
+          style={{ color: data.isOverdue ? "var(--status-blocked)" : "var(--brand-text)" }}
         >
           Deadline {formatDate(data.deadline)}
           {data.isOverdue ? " — overdue" : ""}
@@ -492,7 +536,7 @@ export function MainTaskView({ taskId }: { taskId: string }) {
       <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
         <div className="min-w-0 space-y-5">
           <section className="space-y-3">
-            <h2 className="text-sm font-semibold text-[var(--olng-navy)]">Discipline progress</h2>
+            <h2 className="text-sm font-semibold text-[var(--brand-ink)]">Discipline progress</h2>
 
             {data.disciplineSummary.length === 0 ? (
               <EmptyState
@@ -509,26 +553,26 @@ export function MainTaskView({ taskId }: { taskId: string }) {
                   <li key={item.disciplineTaskId}>
                     <Link
                       href={`/discipline-tasks/${item.disciplineTaskId}`}
-                      className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[var(--radius)] border border-[var(--border)] bg-white p-3 transition-colors hover:border-[var(--olng-blue)] hover:bg-[var(--page-bg)] ${
+                      className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[var(--radius)] border border-[var(--border)] bg-white p-3 transition-colors hover:border-[var(--brand-primary)] hover:bg-[var(--page-bg)] ${
                         item.status === "BLOCKED" ? "border-l-4 border-l-[var(--status-blocked)]" : ""
                       }`}
                     >
                       <DisciplineDot colorHex={item.colorHex} code={item.code} showCode />
-                      <span className="w-full min-w-0 basis-full text-sm font-semibold text-[var(--olng-navy)] sm:w-auto sm:flex-1 sm:basis-40">
+                      <span className="w-full min-w-0 basis-full text-sm font-semibold text-[var(--brand-ink)] sm:w-auto sm:flex-1 sm:basis-40">
                         {item.title}
                       </span>
                       {item.assigneeName ? (
-                        <span className="inline-flex min-w-0 max-w-full items-center gap-2 text-xs text-[var(--olng-text)]">
+                        <span className="inline-flex min-w-0 max-w-full items-center gap-2 text-xs text-[var(--brand-text)]">
                           <Avatar name={item.assigneeName} size={24} />
                           <span className="truncate">{item.assigneeName}</span>
                         </span>
                       ) : (
-                        <span className="text-xs text-[var(--olng-gray)]">Unassigned</span>
+                        <span className="text-xs text-[var(--brand-gray)]">Unassigned</span>
                       )}
                       <span
                         className="text-xs"
                         style={{
-                          color: item.isOverdue ? "var(--status-blocked)" : "var(--olng-text)",
+                          color: item.isOverdue ? "var(--status-blocked)" : "var(--brand-text)",
                         }}
                       >
                         {formatDate(item.deadline)}
@@ -543,14 +587,14 @@ export function MainTaskView({ taskId }: { taskId: string }) {
                               item.requiredDocsSatisfied < item.requiredDocsTotal &&
                               item.status !== "COMPLETED"
                                 ? "var(--status-blocked)"
-                                : "var(--olng-gray)",
+                                : "var(--brand-gray)",
                           }}
                         >
                           {item.requiredDocsSatisfied}/{item.requiredDocsTotal} documents
                         </span>
                       ) : null}
                       <StatusBadge status={item.status} />
-                      <ChevronRightIcon className="shrink-0 text-[var(--olng-gray)]" />
+                      <ChevronRightIcon className="shrink-0 text-[var(--brand-gray)]" />
                     </Link>
                   </li>
                 ))}
@@ -594,32 +638,40 @@ export function MainTaskView({ taskId }: { taskId: string }) {
           <Card title="Details">
             <dl className="space-y-3 text-sm">
               <div>
-                <dt className="text-xs text-[var(--olng-gray)]">Owner</dt>
-                <dd className="mt-1 flex items-center gap-2 text-[var(--olng-navy)]">
+                <dt className="text-xs text-[var(--brand-gray)]">Owner</dt>
+                <dd className="mt-1 flex items-center gap-2 text-[var(--brand-ink)]">
                   {data.ownerName ? (
                     <>
                       <Avatar name={data.ownerName} size={24} />
                       {data.ownerName}
                     </>
                   ) : (
-                    <span className="text-[var(--olng-gray)]">No owner</span>
+                    <span className="text-[var(--brand-gray)]">No owner</span>
                   )}
                 </dd>
               </div>
               <div>
-                <dt className="text-xs text-[var(--olng-gray)]">Created</dt>
+                <dt className="text-xs text-[var(--brand-gray)]">Phase</dt>
+                <dd className="mt-1 text-[var(--brand-ink)]">
+                  {data.phaseName ?? (
+                    <span className="text-[var(--brand-gray)]">No phase — never gated</span>
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-[var(--brand-gray)]">Created</dt>
                 <dd className="mt-1">
                   {data.createdByName} · {formatDate(data.createdAt)}
                 </dd>
               </div>
               <div>
-                <dt className="text-xs text-[var(--olng-gray)]">Dates</dt>
+                <dt className="text-xs text-[var(--brand-gray)]">Dates</dt>
                 <dd className="mt-1">
                   {formatDate(data.startDate)} — {formatDate(data.deadline)}
                 </dd>
               </div>
               <div>
-                <dt className="text-xs text-[var(--olng-gray)]">Disciplines involved</dt>
+                <dt className="text-xs text-[var(--brand-gray)]">Disciplines involved</dt>
                 <dd className="mt-1 space-y-1">
                   {data.disciplineSummary.map((item) => (
                     <span key={item.disciplineId} className="flex items-center gap-2">

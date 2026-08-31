@@ -17,6 +17,16 @@ function base(size: number, className?: string) {
   };
 }
 
+/** A closed padlock — the stage gate marker on a locked phase. */
+export function LockIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg {...base(size, className)}>
+      <rect x="4.5" y="8.5" width="11" height="8" rx="1.5" />
+      <path d="M7 8.5V6a3 3 0 0 1 6 0v2.5" />
+    </svg>
+  );
+}
+
 export function DashboardIcon({ size = 18, className }: IconProps) {
   return (
     <svg {...base(size, className)}>
@@ -80,6 +90,16 @@ export function DisciplinesIcon({ size = 18, className }: IconProps) {
       <circle cx="14" cy="6" r="2.5" />
       <circle cx="6" cy="14" r="2.5" />
       <circle cx="14" cy="14" r="2.5" />
+    </svg>
+  );
+}
+
+/** A chat bubble with a link through it — the Slack and Teams connections. */
+export function IntegrationsIcon({ size = 18, className }: IconProps) {
+  return (
+    <svg {...base(size, className)}>
+      <path d="M16.5 11.5a2 2 0 0 1-2 2H8l-3.5 2.5v-2.5a2 2 0 0 1-1-1.7V6a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2z" />
+      <path d="M7.5 8.8h5M7.5 11h3" />
     </svg>
   );
 }

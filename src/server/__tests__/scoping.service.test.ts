@@ -115,6 +115,7 @@ beforeEach(async () => {
   // The stranger's own project, so every refusal below is about this project, not about having none.
   const other = await prisma.project.create({
     data: {
+      orgId: fixture.orgId,
       name: "The stranger's own project",
       code: `OTHER-${Math.floor(Math.random() * 1_000_000)}`,
       description: "A project the outsider really is on.",

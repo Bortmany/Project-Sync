@@ -8,6 +8,7 @@ import { checkDtoList } from "@/server/serialize";
 
 /** The vocabulary of audit actions. Keep new entries short, upper case and past tense. */
 export const ACTIVITY = {
+  ORG_CREATED: "ORG_CREATED",
   PROJECT_CREATED: "PROJECT_CREATED",
   PROJECT_UPDATED: "PROJECT_UPDATED",
   MEMBER_ADDED: "MEMBER_ADDED",
@@ -18,6 +19,13 @@ export const ACTIVITY = {
   DISCIPLINE_REMOVED: "DISCIPLINE_REMOVED",
   MAIN_TASK_CREATED: "MAIN_TASK_CREATED",
   MAIN_TASK_UPDATED: "MAIN_TASK_UPDATED",
+  MAIN_TASK_PHASE_CHANGED: "MAIN_TASK_PHASE_CHANGED",
+  PHASE_CREATED: "PHASE_CREATED",
+  PHASE_RENAMED: "PHASE_RENAMED",
+  PHASES_REORDERED: "PHASES_REORDERED",
+  PHASE_DELETED: "PHASE_DELETED",
+  /** The recorded, authorised way past a stage gate — the phase-level twin of OVERRIDE_APPLIED. */
+  PHASE_OVERRIDE_APPLIED: "PHASE_OVERRIDE_APPLIED",
   OVERRIDE_APPLIED: "OVERRIDE_APPLIED",
   OVERRIDE_CLEARED: "OVERRIDE_CLEARED",
   TASK_CREATED: "TASK_CREATED",
@@ -40,6 +48,17 @@ export const ACTIVITY = {
   USER_REACTIVATED: "USER_REACTIVATED",
   DISCIPLINE_CREATED: "DISCIPLINE_CREATED",
   DISCIPLINE_UPDATED: "DISCIPLINE_UPDATED",
+  // Chat integrations. None of these rows ever carries the webhook address — kind and switches only.
+  INTEGRATION_CONNECTED: "INTEGRATION_CONNECTED",
+  INTEGRATION_UPDATED: "INTEGRATION_UPDATED",
+  INTEGRATION_ENABLED: "INTEGRATION_ENABLED",
+  INTEGRATION_DISABLED: "INTEGRATION_DISABLED",
+  INTEGRATION_EVENTS_CHANGED: "INTEGRATION_EVENTS_CHANGED",
+  INTEGRATION_TEST_SENT: "INTEGRATION_TEST_SENT",
+  INTEGRATION_REMOVED: "INTEGRATION_REMOVED",
+  // Microsoft 365 files. These rows carry the tenant id and who connected — never a token.
+  MICROSOFT_CONNECTED: "MICROSOFT_CONNECTED",
+  MICROSOFT_DISCONNECTED: "MICROSOFT_DISCONNECTED",
 } as const;
 
 export type ActivityAction = (typeof ACTIVITY)[keyof typeof ACTIVITY];
@@ -48,15 +67,20 @@ export type AppendActivityInput = {
   actorId: string;
   projectId: string | null;
   entityType:
+    // The organisation itself — the very first audit row a company ever has, written at signup.
+    | "Organization"
     | "Project"
     | "ProjectMember"
     | "ProjectDiscipline"
+    | "ProjectPhase"
     | "MainTask"
     | "DisciplineTask"
     | "Document"
     // Admin-section rows carry no project — they are about the organisation, not one project.
     | "User"
-    | "Discipline";
+    | "Discipline"
+    | "OrgIntegration"
+    | "MicrosoftConnection";
   entityId: string;
   action: ActivityAction;
   /** Plain English, e.g. "Ahmed al-Balushi marked Electrical review complete". */

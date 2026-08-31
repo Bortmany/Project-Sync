@@ -25,6 +25,7 @@ import type {
   MainTaskListItemDTO,
   OverrideStatusInput,
   PriorityName,
+  SetMainTaskPhaseInput,
   TaskStatusName,
   UpdateDisciplineTaskInput,
   UpdateMainTaskInput,
@@ -42,6 +43,12 @@ import { NotFoundError, ServiceError } from "@/server/errors";
 import { checkDto, checkDtoList } from "@/server/serialize";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
 import { notify } from "@/server/services/notify";
+import {
+  assertPhaseUnlocked,
+  gateChangeWords,
+  gateChangesBetween,
+  phaseStatesFor,
+} from "@/server/services/phases";
 import { assertCanViewProject } from "@/server/services/projects";
 
 /** The filters the main-task list accepts. */
@@ -69,7 +76,7 @@ export async function listMainTasksForProject(
     where: { id: projectId },
     select: { code: true },
   });
-  const tasks = await activeMainTasks(projectId);
+  const tasks = await activeMainTasks(actor.orgId, projectId);
   if (tasks.length === 0) return [];
 
   const subtasks = await liveSubtasksFor(tasks.map((task) => task.id));
@@ -99,7 +106,7 @@ export async function listMainTasksForProject(
 
 /** One main task in full. */
 export async function getMainTaskForActor(actor: ActorContext, mainTaskId: string): Promise<MainTaskDTO> {
-  const task = await loadMainTask(mainTaskId);
+  const task = await loadMainTask(actor, mainTaskId);
   await assertCanViewProject(actor, task.projectId);
   return buildMainTaskDTO(mainTaskId);
 }
@@ -109,7 +116,7 @@ export async function getDisciplineTaskForActor(
   actor: ActorContext,
   disciplineTaskId: string,
 ): Promise<DisciplineTaskDTO> {
-  const task = await loadDisciplineTask(disciplineTaskId);
+  const task = await loadDisciplineTask(actor, disciplineTaskId);
   await assertCanViewProject(actor, task.mainTask.projectId);
   return buildDisciplineTaskDTO(disciplineTaskId);
 }
@@ -143,12 +150,12 @@ export async function listMainTaskItems(mainTaskIds: string[]): Promise<MainTask
 /** The whole project on one timeline: every live main task with the discipline tasks beneath it. */
 export async function ganttForProject(actor: ActorContext, projectId: string): Promise<GanttDTO> {
   await assertCanViewProject(actor, projectId);
-  return buildGantt(await activeMainTasks(projectId));
+  return buildGantt(await activeMainTasks(actor.orgId, projectId));
 }
 
 /** One main task on a timeline, with its own discipline tasks. Same shape as the project view. */
 export async function ganttForMainTask(actor: ActorContext, mainTaskId: string): Promise<GanttDTO> {
-  const task = await loadMainTask(mainTaskId);
+  const task = await loadMainTask(actor, mainTaskId);
   await assertCanViewProject(actor, task.projectId);
   return buildGantt([task]);
 }
@@ -156,6 +163,8 @@ export async function ganttForMainTask(actor: ActorContext, mainTaskId: string):
 type GanttTaskRow = {
   id: string;
   title: string;
+  /** Left undefined by schedules with no project behind them; the chart then draws no bands. */
+  phaseId?: string | null;
   startDate: Date | null;
   deadline: Date;
   status: TaskStatusName;
@@ -171,6 +180,7 @@ async function buildGantt(tasks: GanttTaskRow[]): Promise<GanttDTO> {
   const mainTasks = tasks.map((task) => ({
     id: task.id,
     title: task.title,
+    phaseId: task.phaseId ?? null,
     startDate: task.startDate,
     deadline: task.deadline,
     status: effectiveStatus(task.status, task.statusOverride),
@@ -196,9 +206,11 @@ async function buildGantt(tasks: GanttTaskRow[]): Promise<GanttDTO> {
 
 /** Creates a main task and, optionally, the discipline tasks that deliver it. */
 export async function createMainTask(actor: ActorContext, input: CreateMainTaskInput): Promise<MainTaskDTO> {
-  const project = await prisma.project.findFirst({ where: { id: input.projectId, ...notDeleted } });
+  const project = await prisma.project.findFirst({
+    where: { id: input.projectId, orgId: actor.orgId, ...notDeleted },
+  });
   if (!project) throw new NotFoundError("We could not find that project.");
-  assertCan(actor, "CREATE_MAIN_TASK", { projectId: project.id });
+  assertCan(actor, "CREATE_MAIN_TASK", { projectId: project.id, orgId: project.orgId });
 
   const disciplineIds = [...new Set(input.disciplineTasks.map((task) => task.disciplineId))];
   const enabled = await enabledDisciplines(project.id);
@@ -213,12 +225,16 @@ export async function createMainTask(actor: ActorContext, input: CreateMainTaskI
   for (const task of input.disciplineTasks) {
     if (task.assigneeId) await assertOnProject(project.id, task.assigneeId, "assignee");
   }
+  // A task may be created straight into a locked phase — teams prepare the next stage ahead of the
+  // gate. Only completing work under it is refused.
+  if (input.phaseId) await assertPhaseOnProject(project.id, input.phaseId);
 
   const deadline = utcMidnight(input.deadline);
   const mainTaskId = await prisma.$transaction(async (tx) => {
     const mainTask = await tx.mainTask.create({
       data: {
         projectId: project.id,
+        phaseId: input.phaseId ?? null,
         title: input.title,
         description: input.description,
         priority: input.priority,
@@ -285,11 +301,10 @@ export async function createMainTask(actor: ActorContext, input: CreateMainTaskI
     .map((task) => task.assigneeId)
     .filter((id): id is string => Boolean(id) && id !== actor.userId);
   if (assignees.length > 0) {
-    await notify(assignees, "ASSIGNED", {
+    await notify(actor, assignees, "ASSIGNED", {
       title: "New work assigned to you",
       body: `${actor.name} assigned you a discipline task under "${input.title}".`,
       linkUrl: `/tasks/${mainTaskId}`,
-      actorId: actor.userId,
     });
   }
 
@@ -298,8 +313,8 @@ export async function createMainTask(actor: ActorContext, input: CreateMainTaskI
 
 /** Changes a main task's own details. Never its status or progress — those are derived. */
 export async function updateMainTask(actor: ActorContext, input: UpdateMainTaskInput): Promise<MainTaskDTO> {
-  const existing = await loadMainTask(input.id);
-  assertCan(actor, "EDIT_MAIN_TASK", { projectId: existing.projectId });
+  const existing = await loadMainTask(actor, input.id);
+  assertCan(actor, "EDIT_MAIN_TASK", { projectId: existing.projectId, orgId: existing.project.orgId });
   if (input.ownerId) await assertOnProject(existing.projectId, input.ownerId, "owner");
   const nextStart = utcMidnightOrNull(input.startDate);
   const nextDeadline = input.deadline === undefined ? undefined : utcMidnight(input.deadline);
@@ -336,6 +351,68 @@ export async function updateMainTask(actor: ActorContext, input: UpdateMainTaskI
 }
 
 /**
+ * Moves a main task into a phase, or out of every phase ("No phase" — never gated).
+ *
+ * Allowed in both directions even when the target phase is locked: planning work into the next
+ * stage is exactly what a team does while a gate is shut. Only completion-type transitions are
+ * refused, and those are judged when they are attempted.
+ */
+export async function setMainTaskPhase(
+  actor: ActorContext,
+  input: SetMainTaskPhaseInput,
+): Promise<MainTaskDTO> {
+  const existing = await loadMainTask(actor, input.id);
+  assertCan(actor, "EDIT_MAIN_TASK", {
+    projectId: existing.projectId,
+    orgId: existing.project.orgId,
+  });
+
+  const phase = input.phaseId ? await assertPhaseOnProject(existing.projectId, input.phaseId) : null;
+  if ((existing.phaseId ?? null) === (phase?.id ?? null)) return buildMainTaskDTO(existing.id);
+
+  const before = existing.phaseId
+    ? await prisma.projectPhase.findUnique({
+        where: { id: existing.phaseId },
+        select: { name: true },
+      })
+    : null;
+
+  // Moving work in or out of a phase can open or shut a gate for the whole team — taking the last
+  // unfinished task out of a phase is a legitimate move AND a consequential one. The audit row names
+  // the gates it moved, worked out inside the same transaction so it can never be a guess.
+  const gatesBefore = await phaseStatesFor(existing.projectId);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.mainTask.update({
+      where: { id: existing.id },
+      data: { phaseId: phase?.id ?? null },
+    });
+
+    const changes = gateChangesBetween(gatesBefore, await phaseStatesFor(existing.projectId, tx));
+
+    await appendActivity(tx, {
+      actorId: actor.userId,
+      projectId: existing.projectId,
+      entityType: "MainTask",
+      entityId: existing.id,
+      action: ACTIVITY.MAIN_TASK_PHASE_CHANGED,
+      summary:
+        (phase
+          ? `${actor.name} moved "${existing.title}" into the phase "${phase.name}"`
+          : `${actor.name} took "${existing.title}" out of the phase "${before?.name ?? "it was in"}"`) +
+        gateChangeWords(changes),
+      metadata: {
+        before: { phaseId: existing.phaseId, phaseName: before?.name ?? null },
+        after: { phaseId: phase?.id ?? null, phaseName: phase?.name ?? null },
+        gateChanges: changes,
+      },
+    });
+  });
+
+  return buildMainTaskDTO(existing.id);
+}
+
+/**
  * The only legal way a main task's shown status leaves what its discipline tasks say.
  * Project managers and administrators only, always with a reason, always audited.
  */
@@ -343,11 +420,15 @@ export async function overrideMainTaskStatus(
   actor: ActorContext,
   input: OverrideStatusInput,
 ): Promise<MainTaskDTO> {
-  const existing = await loadMainTask(input.id);
-  assertCan(actor, "OVERRIDE_MAIN_TASK_STATUS", { projectId: existing.projectId });
+  const existing = await loadMainTask(actor, input.id);
+  assertCan(actor, "OVERRIDE_MAIN_TASK_STATUS", { projectId: existing.projectId, orgId: existing.project.orgId });
 
   const reason = input.reason.trim();
   if (reason.length < 5) throw new ServiceError("Give a short reason (at least 5 characters).");
+
+  // A status override inside a locked phase is refused: the phase's own override is the way past a
+  // stage gate, and using a task override instead would step around the gate without recording it.
+  await assertPhaseUnlocked(existing.projectId, existing.phaseId);
 
   await prisma.$transaction(async (tx) => {
     await tx.mainTask.update({
@@ -375,11 +456,10 @@ export async function overrideMainTaskStatus(
     });
   });
 
-  await notify(await projectAudience(existing.projectId, actor.userId), "OVERRIDE_APPLIED", {
+  await notify(actor, await projectAudience(existing.projectId, actor.userId), "OVERRIDE_APPLIED", {
     title: "A task status was overridden",
     body: `${actor.name} set "${existing.title}" to ${statusWords(input.status)}. Reason: ${reason}`,
     linkUrl: `/tasks/${existing.id}`,
-    actorId: actor.userId,
   });
 
   return buildMainTaskDTO(existing.id);
@@ -387,8 +467,8 @@ export async function overrideMainTaskStatus(
 
 /** Removes an override so the main task goes back to telling the truth of its discipline tasks. */
 export async function clearOverride(actor: ActorContext, input: { id: string }): Promise<MainTaskDTO> {
-  const existing = await loadMainTask(input.id);
-  assertCan(actor, "OVERRIDE_MAIN_TASK_STATUS", { projectId: existing.projectId });
+  const existing = await loadMainTask(actor, input.id);
+  assertCan(actor, "OVERRIDE_MAIN_TASK_STATUS", { projectId: existing.projectId, orgId: existing.project.orgId });
   if (!existing.statusOverride) throw new ServiceError("That task does not have an override to remove.");
 
   await prisma.$transaction(async (tx) => {
@@ -423,9 +503,10 @@ export async function createDisciplineTask(
   actor: ActorContext,
   input: CreateDisciplineTaskInput,
 ): Promise<DisciplineTaskDTO> {
-  const mainTask = await loadMainTask(input.mainTaskId);
+  const mainTask = await loadMainTask(actor, input.mainTaskId);
   assertCan(actor, "CREATE_DISCIPLINE_TASK", {
     projectId: mainTask.projectId,
+    orgId: mainTask.project.orgId,
     disciplineId: input.disciplineId,
   });
 
@@ -491,11 +572,10 @@ export async function createDisciplineTask(
   });
 
   if (input.assigneeId && input.assigneeId !== actor.userId) {
-    await notify([input.assigneeId], "ASSIGNED", {
+    await notify(actor, [input.assigneeId], "ASSIGNED", {
       title: "New work assigned to you",
       body: `${actor.name} assigned you "${input.title}".`,
       linkUrl: `/discipline-tasks/${taskId}`,
-      actorId: actor.userId,
     });
   }
 
@@ -507,8 +587,9 @@ export async function updateDisciplineTask(
   actor: ActorContext,
   input: UpdateDisciplineTaskInput,
 ): Promise<DisciplineTaskDTO> {
-  const existing = await loadDisciplineTask(input.id);
+  const existing = await loadDisciplineTask(actor, input.id);
   const projectId = existing.mainTask.projectId;
+  const orgId = existing.mainTask.project.orgId;
 
   const reassigning = input.assigneeId !== undefined && (input.assigneeId ?? null) !== existing.assigneeId;
   const editingAnythingElse = Object.keys(input).some((key) => key !== "id" && key !== "assigneeId");
@@ -516,13 +597,14 @@ export async function updateDisciplineTask(
   if (reassigning) {
     assertCan(actor, "ASSIGN_DISCIPLINE_TASK", {
       projectId,
+      orgId,
       disciplineId: existing.disciplineId,
       assigneeId: existing.assigneeId,
     });
     if (input.assigneeId) await assertOnProject(projectId, input.assigneeId, "assignee");
   }
   if (editingAnythingElse) {
-    assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, disciplineId: existing.disciplineId });
+    assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, orgId, disciplineId: existing.disciplineId });
   }
   const nextStart = utcMidnightOrNull(input.startDate);
   const nextDeadline = input.deadline === undefined ? undefined : utcMidnight(input.deadline);
@@ -586,11 +668,10 @@ export async function updateDisciplineTask(
   });
 
   if (reassigning && input.assigneeId && input.assigneeId !== actor.userId) {
-    await notify([input.assigneeId], "ASSIGNED", {
+    await notify(actor, [input.assigneeId], "ASSIGNED", {
       title: "Work handed to you",
       body: `${actor.name} assigned you "${input.title ?? existing.title}".`,
       linkUrl: `/discipline-tasks/${existing.id}`,
-      actorId: actor.userId,
     });
   }
 
@@ -602,16 +683,23 @@ export async function updateDisciplineTaskStatus(
   actor: ActorContext,
   input: UpdateTaskStatusInput,
 ): Promise<DisciplineTaskDTO> {
-  const existing = await loadDisciplineTask(input.id);
+  const existing = await loadDisciplineTask(actor, input.id);
   const projectId = existing.mainTask.projectId;
+  const orgId = existing.mainTask.project.orgId;
 
   assertCan(actor, "UPDATE_DISCIPLINE_TASK_STATUS", {
     projectId,
+    orgId,
     disciplineId: existing.disciplineId,
     assigneeId: existing.assigneeId,
   });
 
   if (input.status === existing.status) return buildDisciplineTaskDTO(existing.id);
+
+  // THE STAGE GATE, as a precondition — checked before any transition is attempted, exactly like
+  // the completion gate below it. Nothing about the derivation changes: this only decides whether
+  // the discipline task may move at all.
+  await assertPhaseUnlocked(projectId, existing.mainTask.phaseId);
 
   if (existing.status === "COMPLETED") {
     throw new ServiceError(
@@ -653,11 +741,10 @@ export async function updateDisciplineTaskStatus(
     await recomputeMainTask(tx, existing.mainTaskId, actor, projectId);
   });
 
-  await notify(await taskAudience(existing.id, actor.userId), "STATUS_CHANGED", {
+  await notify(actor, await taskAudience(existing.id, actor.userId), "STATUS_CHANGED", {
     title: "A task moved",
     body: `${actor.name} moved "${existing.title}" to ${statusWords(input.status)}.`,
     linkUrl: `/discipline-tasks/${existing.id}`,
-    actorId: actor.userId,
   });
 
   return buildDisciplineTaskDTO(existing.id);
@@ -672,16 +759,21 @@ export async function completeDisciplineTask(
   input: { id: string },
   note?: string,
 ): Promise<DisciplineTaskDTO> {
-  const existing = await loadDisciplineTask(input.id);
+  const existing = await loadDisciplineTask(actor, input.id);
   const projectId = existing.mainTask.projectId;
+  const orgId = existing.mainTask.project.orgId;
 
   assertCan(actor, "COMPLETE_DISCIPLINE_TASK", {
     projectId,
+    orgId,
     disciplineId: existing.disciplineId,
     assigneeId: existing.assigneeId,
   });
 
   if (existing.status === "COMPLETED") return buildDisciplineTaskDTO(existing.id);
+
+  // The stage gate comes before the completion gate: a locked phase refuses the attempt outright.
+  await assertPhaseUnlocked(projectId, existing.mainTask.phaseId);
 
   const completedNow = await prisma.$transaction(async (tx) => {
     // The gate is judged INSIDE the transaction, after the parent lock, so a document
@@ -735,11 +827,10 @@ export async function completeDisciplineTask(
 
   // A lost race (someone else completed it first) writes nothing, so it must announce nothing.
   if (completedNow) {
-    await notify(await taskAudience(existing.id, actor.userId), "STATUS_CHANGED", {
+    await notify(actor, await taskAudience(existing.id, actor.userId), "STATUS_CHANGED", {
       title: "A task was completed",
       body: `${actor.name} marked "${existing.title}" complete.`,
       linkUrl: `/discipline-tasks/${existing.id}`,
-      actorId: actor.userId,
     });
   }
 
@@ -751,11 +842,13 @@ export async function reopenDisciplineTask(
   actor: ActorContext,
   input: { id: string; reason: string },
 ): Promise<DisciplineTaskDTO> {
-  const existing = await loadDisciplineTask(input.id);
+  const existing = await loadDisciplineTask(actor, input.id);
   const projectId = existing.mainTask.projectId;
+  const orgId = existing.mainTask.project.orgId;
 
   assertCan(actor, "UPDATE_DISCIPLINE_TASK_STATUS", {
     projectId,
+    orgId,
     disciplineId: existing.disciplineId,
     assigneeId: existing.assigneeId,
   });
@@ -763,6 +856,9 @@ export async function reopenDisciplineTask(
   const reason = input.reason.trim();
   if (reason.length < 5) throw new ServiceError("Give a short reason (at least 5 characters).");
   if (existing.status !== "COMPLETED") throw new ServiceError("That task is not complete, so it cannot be reopened.");
+
+  // Reopening is a status transition too, so a locked phase refuses it like any other.
+  await assertPhaseUnlocked(projectId, existing.mainTask.phaseId);
 
   await prisma.$transaction(async (tx) => {
     await lockMainTask(tx, existing.mainTaskId);
@@ -784,11 +880,10 @@ export async function reopenDisciplineTask(
     await recomputeMainTask(tx, existing.mainTaskId, actor, projectId);
   });
 
-  await notify(await taskAudience(existing.id, actor.userId), "STATUS_CHANGED", {
+  await notify(actor, await taskAudience(existing.id, actor.userId), "STATUS_CHANGED", {
     title: "A completed task was reopened",
     body: `${actor.name} reopened "${existing.title}". Reason: ${reason}`,
     linkUrl: `/discipline-tasks/${existing.id}`,
-    actorId: actor.userId,
   });
 
   return buildDisciplineTaskDTO(existing.id);
@@ -796,11 +891,12 @@ export async function reopenDisciplineTask(
 
 /** Says "this task waits on that one". Both must sit under the same main task, and loops are refused. */
 export async function addDependency(actor: ActorContext, input: AddDependencyInput): Promise<DisciplineTaskDTO> {
-  const successor = await loadDisciplineTask(input.successorId);
-  const predecessor = await loadDisciplineTask(input.predecessorId);
+  const successor = await loadDisciplineTask(actor, input.successorId);
+  const predecessor = await loadDisciplineTask(actor, input.predecessorId);
   const projectId = successor.mainTask.projectId;
+  const orgId = successor.mainTask.project.orgId;
 
-  assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, disciplineId: successor.disciplineId });
+  assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, orgId, disciplineId: successor.disciplineId });
 
   if (predecessor.id === successor.id) throw new ServiceError("A task cannot wait on itself.");
   if (predecessor.mainTaskId !== successor.mainTaskId) {
@@ -846,9 +942,10 @@ export async function removeDependency(
   actor: ActorContext,
   input: AddDependencyInput,
 ): Promise<DisciplineTaskDTO> {
-  const successor = await loadDisciplineTask(input.successorId);
+  const successor = await loadDisciplineTask(actor, input.successorId);
   const projectId = successor.mainTask.projectId;
-  assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, disciplineId: successor.disciplineId });
+  const orgId = successor.mainTask.project.orgId;
+  assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, orgId, disciplineId: successor.disciplineId });
 
   const edge = await prisma.taskDependency.findUnique({
     where: { predecessorId_successorId: { predecessorId: input.predecessorId, successorId: successor.id } },
@@ -880,8 +977,8 @@ export async function updateTaskDates(
   input: UpdateTaskDatesInput,
 ): Promise<MainTaskDTO | DisciplineTaskDTO> {
   if (input.kind === "MAIN") {
-    const existing = await loadMainTask(input.id);
-    assertCan(actor, "EDIT_MAIN_TASK", { projectId: existing.projectId });
+    const existing = await loadMainTask(actor, input.id);
+    assertCan(actor, "EDIT_MAIN_TASK", { projectId: existing.projectId, orgId: existing.project.orgId });
     const nextStart =
       utcMidnightOrNull(input.startDate === undefined ? existing.startDate : input.startDate) ?? null;
     const deadline = utcMidnight(input.deadline);
@@ -909,9 +1006,10 @@ export async function updateTaskDates(
     return buildMainTaskDTO(existing.id);
   }
 
-  const existing = await loadDisciplineTask(input.id);
+  const existing = await loadDisciplineTask(actor, input.id);
   const projectId = existing.mainTask.projectId;
-  assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, disciplineId: existing.disciplineId });
+  const orgId = existing.mainTask.project.orgId;
+  assertCan(actor, "EDIT_DISCIPLINE_TASK", { projectId, orgId, disciplineId: existing.disciplineId });
   const nextStart =
     utcMidnightOrNull(input.startDate === undefined ? existing.startDate : input.startDate) ?? null;
   const deadline = utcMidnight(input.deadline);
@@ -1006,17 +1104,34 @@ export async function recomputeMainTask(
 /* Loaders, serializers and small helpers                              */
 /* ------------------------------------------------------------------ */
 
-async function loadMainTask(id: string) {
-  const task = await prisma.mainTask.findFirst({ where: { id, ...notDeleted } });
+/**
+ * The tenant gate for every main task in this file: a task in another company's project is not
+ * refused, it does not exist. The project's own orgId comes back with it so the permission check
+ * below is made against the row's organisation, never against an assumption.
+ */
+async function loadMainTask(actor: ActorContext, id: string) {
+  const task = await prisma.mainTask.findFirst({
+    where: { id, ...notDeleted, project: { orgId: actor.orgId } },
+    include: { project: { select: { orgId: true } } },
+  });
   if (!task) throw new NotFoundError("We could not find that task.");
   return task;
 }
 
-async function loadDisciplineTask(id: string) {
+/** The same gate for a discipline task, reached through its main task's project. */
+async function loadDisciplineTask(actor: ActorContext, id: string) {
   const task = await prisma.disciplineTask.findFirst({
-    where: { id, ...notDeleted },
+    where: { id, ...notDeleted, mainTask: { project: { orgId: actor.orgId } } },
     include: {
-      mainTask: { select: { id: true, projectId: true, title: true } },
+      mainTask: {
+        select: {
+          id: true,
+          projectId: true,
+          phaseId: true,
+          title: true,
+          project: { select: { orgId: true } },
+        },
+      },
       requiredDocuments: true,
     },
   });
@@ -1138,6 +1253,7 @@ function buildListItem(
   task: {
     id: string;
     projectId: string;
+    phaseId: string | null;
     title: string;
     priority: PriorityName;
     deadline: Date;
@@ -1155,6 +1271,7 @@ function buildListItem(
     id: task.id,
     projectId: task.projectId,
     projectCode,
+    phaseId: task.phaseId,
     title: task.title,
     priority: task.priority,
     deadline: task.deadline,
@@ -1176,6 +1293,7 @@ export async function buildMainTaskDTO(mainTaskId: string): Promise<MainTaskDTO>
     where: { id: mainTaskId, ...notDeleted },
     include: {
       project: { select: { code: true } },
+      phase: { select: { name: true } },
       createdBy: { select: { name: true } },
       owner: { select: { name: true } },
       overriddenBy: { select: { name: true } },
@@ -1210,6 +1328,8 @@ export async function buildMainTaskDTO(mainTaskId: string): Promise<MainTaskDTO>
     id: task.id,
     projectId: task.projectId,
     projectCode: task.project.code,
+    phaseId: task.phaseId,
+    phaseName: task.phase?.name ?? null,
     title: task.title,
     description: task.description,
     priority: task.priority,
@@ -1320,6 +1440,19 @@ export async function buildDisciplineTaskDTO(disciplineTaskId: string): Promise<
 async function enabledDisciplines(projectId: string): Promise<Set<string>> {
   const rows = await prisma.projectDiscipline.findMany({ where: { projectId }, select: { disciplineId: true } });
   return new Set(rows.map((row) => row.disciplineId));
+}
+
+/** A phase named for a task must belong to that task's own project — another project's is "gone". */
+async function assertPhaseOnProject(
+  projectId: string,
+  phaseId: string,
+): Promise<{ id: string; name: string }> {
+  const phase = await prisma.projectPhase.findFirst({
+    where: { id: phaseId, projectId },
+    select: { id: true, name: true },
+  });
+  if (!phase) throw new NotFoundError("We could not find that phase on this project.");
+  return phase;
 }
 
 async function assertOnProject(projectId: string, userId: string, what: "owner" | "assignee"): Promise<void> {

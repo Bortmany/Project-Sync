@@ -21,7 +21,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    return ok(await listUsers(parsed.data.q));
+    return ok(await listUsers(guard.actor, parsed.data.q));
   } catch (error) {
     return failFrom(error, { route: "GET /api/users" });
   }

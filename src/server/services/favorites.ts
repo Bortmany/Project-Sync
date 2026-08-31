@@ -38,13 +38,14 @@ function targetColumns(targetType: FavoriteTargetName, targetId: string): Target
 }
 
 /**
- * The project a target belongs to — and proof that the target is still live.
- * A soft-deleted target, or one whose parents are soft-deleted, is simply "not found".
+ * The project a target belongs to — and proof that the target is still live AND this person's
+ * company owns it. A soft-deleted target, one whose parents are soft-deleted, or one belonging to
+ * another organisation is simply "not found": you cannot star what you cannot see.
  */
-async function projectIdForTarget(input: ToggleFavoriteInput): Promise<string> {
+async function projectIdForTarget(actor: ActorContext, input: ToggleFavoriteInput): Promise<string> {
   if (input.targetType === "PROJECT") {
     const project = await prisma.project.findFirst({
-      where: { id: input.targetId, ...notDeleted },
+      where: { id: input.targetId, orgId: actor.orgId, ...notDeleted },
       select: { id: true },
     });
     if (!project) throw new NotFoundError(NOT_FOUND);
@@ -53,7 +54,7 @@ async function projectIdForTarget(input: ToggleFavoriteInput): Promise<string> {
 
   if (input.targetType === "MAIN_TASK") {
     const mainTask = await prisma.mainTask.findFirst({
-      where: { id: input.targetId, ...notDeleted, project: notDeleted },
+      where: { id: input.targetId, ...notDeleted, project: { ...notDeleted, orgId: actor.orgId } },
       select: { projectId: true },
     });
     if (!mainTask) throw new NotFoundError(NOT_FOUND);
@@ -64,7 +65,7 @@ async function projectIdForTarget(input: ToggleFavoriteInput): Promise<string> {
     where: {
       id: input.targetId,
       ...notDeleted,
-      mainTask: { ...notDeleted, project: notDeleted },
+      mainTask: { ...notDeleted, project: { ...notDeleted, orgId: actor.orgId } },
     },
     select: { mainTask: { select: { projectId: true } } },
   });
@@ -80,7 +81,7 @@ export async function toggleFavorite(
   actor: ActorContext,
   input: ToggleFavoriteInput,
 ): Promise<{ favorited: boolean }> {
-  const projectId = await projectIdForTarget(input);
+  const projectId = await projectIdForTarget(actor, input);
   await assertCanViewProject(actor, projectId);
 
   const target = targetColumns(input.targetType, input.targetId);

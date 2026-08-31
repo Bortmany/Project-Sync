@@ -16,6 +16,7 @@ export async function currentActor(): Promise<ActorContext | null> {
 
   return {
     userId: user.id,
+    orgId: user.orgId,
     role: user.role,
     name: user.name,
     email: user.email,

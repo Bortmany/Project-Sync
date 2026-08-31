@@ -8,7 +8,7 @@
 import { Client } from "pg";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
-import { ForbiddenError } from "@/lib/permissions";
+import { NotFoundError } from "@/server/errors";
 import {
   listNotifications,
   markAllNotificationsRead,
@@ -75,13 +75,13 @@ describe("notify", () => {
     const other = await makeUser({ name: "Sara al-Hinai", role: "ENGINEER" });
 
     await notify(
+      fixture.pmActor,
       [fixture.engineerActor.userId, other.id, other.id, fixture.pmActor.userId],
       "ASSIGNED",
       {
         title: "New work assigned to you",
         body: "You were added to a task.",
         linkUrl: "/tasks/abc",
-        actorId: fixture.pmActor.userId,
       },
     );
 
@@ -96,11 +96,10 @@ describe("notify", () => {
     const leaver = await makeUser({ name: "Omar al-Saidi", role: "ENGINEER" });
     await prisma.user.update({ where: { id: leaver.id }, data: { isActive: false } });
 
-    await notify([leaver.id], "STATUS_CHANGED", {
+    await notify(fixture.adminActor, [leaver.id], "STATUS_CHANGED", {
       title: "A task changed",
       body: "Something moved.",
       linkUrl: "/tasks/abc",
-      actorId: fixture.adminActor.userId,
     });
 
     expect(await prisma.notification.count()).toBe(0);
@@ -130,17 +129,17 @@ describe("the service seams", () => {
 });
 
 describe("reading and clearing", () => {
-  it("refuses to mark someone else's notification read", async () => {
-    await notify([fixture.engineerActor.userId], "ASSIGNED", {
+  it("says someone else's notification does not exist, rather than that it is theirs", async () => {
+    await notify(fixture.adminActor, [fixture.engineerActor.userId], "ASSIGNED", {
       title: "New work assigned to you",
       body: "You were added to a task.",
       linkUrl: "/tasks/abc",
-      actorId: fixture.adminActor.userId,
     });
     const mine = await prisma.notification.findFirstOrThrow();
 
+    // Not "forbidden": that would confirm the id is real to anyone who guessed it.
     await expect(markNotificationRead(fixture.pmActor, { id: mine.id })).rejects.toBeInstanceOf(
-      ForbiddenError,
+      NotFoundError,
     );
     expect(await prisma.notification.findUniqueOrThrow({ where: { id: mine.id } })).toMatchObject({
       readAt: null,
@@ -151,11 +150,10 @@ describe("reading and clearing", () => {
   });
 
   it("clears everything unread for one person only, and lists only their own", async () => {
-    await notify([fixture.engineerActor.userId, fixture.pmActor.userId], "COMMENT_ADDED", {
+    await notify(fixture.adminActor, [fixture.engineerActor.userId, fixture.pmActor.userId], "COMMENT_ADDED", {
       title: "New comment",
       body: "Someone commented.",
       linkUrl: "/tasks/abc",
-      actorId: fixture.adminActor.userId,
     });
 
     expect(await unreadCount(fixture.engineerActor)).toBe(1);
