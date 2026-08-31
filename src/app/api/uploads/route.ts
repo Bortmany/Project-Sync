@@ -15,6 +15,7 @@ import {
 import { UploadMeta, toFieldErrors } from "@/lib/zod-schemas";
 import { fail, failFrom, failWithFields, ok } from "@/server/http";
 import { SIGNED_OUT_MESSAGE, currentActor } from "@/server/session";
+import { assertStorageRoom } from "@/server/services/billing";
 import { uploadDocumentVersion } from "@/server/services/documents";
 
 // Route handlers stream their own body, so Next applies no size limit here — the 25 MB ceiling is
@@ -72,6 +73,17 @@ export async function POST(request: Request) {
   });
   if (!parsed.success) {
     return failWithFields("Please check the highlighted fields.", toFieldErrors(parsed.error));
+  }
+
+  // THE PLAN'S STORAGE CAP, BEFORE A BYTE IS WRITTEN. The service checks it again as the backstop,
+  // but by then storeFile() has already put the file on disk — and a refused upload must not leave
+  // an orphan file behind that no row points at and nothing cleans up. The browser's own size is
+  // enough to decide: it is the same number the 25 MB ceiling above is judged on, and the real
+  // byte count is checked again inside the service.
+  try {
+    await assertStorageRoom(actor, file.size);
+  } catch (error) {
+    return failFrom(error, { route: "POST /api/uploads", projectId: parsed.data.projectId });
   }
 
   const originalName = safeOriginalName(file.name);

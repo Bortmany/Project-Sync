@@ -185,7 +185,10 @@ export function NewProjectDialog({
       }
     >
       <div className="space-y-4">
-        {error ? <ErrorBanner message="Couldn't create the project. Try again." /> : null}
+        {/* The server writes its refusals in plain English — a duplicate code, a plan limit — so
+            they are shown exactly as they arrive, the way every other dialog in this app does.
+            A hardcoded sentence here used to hide what the server actually said. */}
+        {error ? <ErrorBanner message={error} /> : null}
 
         {confirmDiscard ? (
           <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--page-bg)] p-3">

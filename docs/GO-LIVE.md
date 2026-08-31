@@ -79,6 +79,10 @@ Set these in the Railway service's Variables tab — never in the repo, never in
 | `MS_GRAPH_CLIENT_ID` | Optional | The Application (client) ID of the Azure app registration (section 6). Not a secret, but the feature stays completely dormant until it and the secret below are both set: no card, no tab, and every Microsoft route answers "not set up". `/api/health` reports `"microsoft": {"status": "dormant", "connectedOrgs": 0}` until then. |
 | `MS_GRAPH_CLIENT_SECRET` | Optional | **A real secret.** The client secret Value from the same Azure app registration, shown once when it is created. Client secrets expire — set a calendar reminder before the date you chose, because when it expires every company's attachments stop working until it is replaced. |
 | `MS_GRAPH_REDIRECT_PATH` | Optional | Defaults to `/api/integrations/microsoft/callback`, which is the path to register in Azure. Only change it if something in front of the app rewrites that path. |
+| `PADDLE_API_KEY` | Optional | **A real secret.** The server-side API key from the Paddle dashboard (section 8). Sandbox and live have separate keys and one does not work against the other's host. Leave it unset and payments stay completely dormant: no buttons on Admin → Billing, both billing actions refuse plainly, `/api/billing/webhook` answers "not set up", and `/api/health` reports `"billing": "dormant"`. Plans and limits carry on working exactly as they do today. |
+| `PADDLE_WEBHOOK_SECRET` | Optional | **A real secret.** The notification destination's own secret (`pdl_ntfset_…`), copied from Dashboard → Developer tools → Notifications → your destination. It is what proves a webhook really came from Paddle; without it nothing is trusted and the webhook answers 503. Each destination has its own — the sandbox one and the live one are different. |
+| `PADDLE_PRICE_ID_PRO` | Optional | The price id (`pri_…`) of the Pro subscription price. Not a secret. Sandbox and live have different ids. |
+| `PADDLE_ENV` | Optional | `sandbox` (the default, and what anything unrecognised reads as) or `live`. It chooses `sandbox-api.paddle.com` or `api.paddle.com`. Sandbox is deliberately the default: a sandbox key cannot charge anybody. |
 | `DB_POOL_MAX` | Optional | How many database connections **each copy of the app** keeps open. Defaults to `10`, which is right for one instance on Railway's Postgres. If the app is ever run on several instances, set this so `instances × DB_POOL_MAX` stays comfortably under the database's own `max_connections` (Railway's default is 100) — or point `DATABASE_URL` at the pooled connection string instead. |
 | `SWEEP_DISABLED` | Optional | `1` switches off the hourly "due soon / overdue" notification sweep. Safe: nothing depends on the sweep having run, because overdue is always worked out fresh when a page is read. Useful as a kill switch, or on extra instances. |
 | `DATABASE_URL_TEST` | No | Local and CI only. Never set it in production — the tests empty that database. |
@@ -339,12 +343,199 @@ workspace's name).
 
 ---
 
-## 8. What is deliberately not built
+## 8. Billing — plans and limits
+
+**All built, and switched off until you set four variables.** The plan model and the limits are in
+and working; taking a payment is built on top of them and is completely dormant until the keys are
+set — see "Switching payments on" below.
+
+**What is live now**
+
+- Every company is on **FREE** until something changes it, and FREE is what an unrecognised plan
+  value reads as, so nothing can accidentally hand a company more than it paid for.
+- The three limits — **projects, people, storage** — are enforced server-side at three points only:
+  creating a project, adding a person (a first password or an emailed invitation alike) and any
+  upload (the browser's and Microsoft 365's both). Everything else is untouched.
+- **Nothing already there is ever blocked.** A company over a limit reads, opens, downloads and
+  works exactly as before; only adding more is refused, in plain English, with an administrator
+  pointed at Admin → Billing and everybody else told to ask their administrator.
+- **Admin → Billing** shows the plan, what it includes, and three live usage meters. Over a limit,
+  that one meter turns amber and says so — it is the only place in the app that mentions it.
+- **Until the provider's keys are set, the page draws no buttons at all** and says upgrading is not
+  turned on yet. With them set, a Free company gets "Upgrade to Pro" and a Pro company gets
+  "Manage billing", and nothing else on the screen changes.
+
+**Before launch — the owner's decisions, still open**
+
+- [ ] **The real numbers.** The FREE limits (1 project, 10 people, 500 MB) and the PRO storage cap
+      (10 GB) are placeholders in `src/lib/plan-limits.ts`. Setting the real ones is an edit to that
+      one file — no migration, no re-wording, no test rewrite.
+- [ ] **The real price.** `$29/month` is a placeholder in `admin-billing-view.tsx`, and the screen
+      says so in a footnote under the plans table. Set the price, then remove the asterisk and the
+      footnote.
+- [ ] Whether Pro ever gets an annual option (out of scope so far), and whether "Plans" ever becomes
+      a public pricing page (out of scope so far).
+
+**Taking the money is built, and it is switched off**
+
+The payment provider is **Paddle**, and it is completely dormant until you set four variables
+(section 2). Until then the Billing page draws no buttons at all, both billing actions refuse in
+plain English, `/api/billing/webhook` answers "not set up", and `/api/health` reports
+`"billing": "dormant"`. Nothing about plans, limits or any existing company changes in the meantime.
+
+Everything the app knows about Paddle is in ONE file, `src/server/services/paddle.ts`. That is what
+makes the fallback at the end of this section a small job rather than a rebuild.
+
+**Why Paddle:** it is the **merchant of record**. That means Paddle, not you, is the legal seller to
+each customer worldwide: it works out and charges the right VAT / GST / sales tax for the buyer's
+country, issues the compliant invoice, handles the currency conversion and card rules, and pays you
+the net amount. You do not register for VAT in every buyer's country. **It does not remove your own
+Omani tax obligations on the money you receive** — talk to a local accountant about how Paddle
+payouts should be treated in your own filings.
+
+### Switching payments on (your one-off setup)
+
+1. **Open a Paddle account** at paddle.com and choose **Oman** as your country.
+   **⚠️ VERIFY AT ACTIVATION — caveat 1 of 3.** Paddle publishes a list of *unsupported* seller
+   countries rather than an allow-list, and Oman is not on it, so a sole proprietor in Oman should
+   be able to sell. That was read from search results rather than from Paddle's own page, so
+   **confirm it before spending any more time**: start the signup, pick Oman, and see whether it
+   goes through. If it is refused, jump to the Lemon Squeezy fallback below.
+   - As a sole trader you go through **identity verification** (a personal ID check, usually a few
+     minutes; a manual review takes 2–4 working days), not the business check a registered company
+     gets.
+   - Separately, **domain review**: your site must be live, on HTTPS, and show Terms, a Privacy
+     policy and a Refund policy before Paddle approves it for live checkout. Tielora has `/terms`
+     and `/privacy` already — **a refund policy is the one thing you may still need to write**
+     (gate 1 above). Most submissions auto-approve; a manual review takes 5–7 working days.
+2. **Work in the sandbox first.** Paddle's sandbox is a completely separate account with its own
+   dashboard, its own keys and its own product and price ids. Nothing there is a real charge.
+3. **Create the product and the price.** Dashboard → Catalog → Products → a "Tielora Pro" product,
+   then a recurring monthly price on it. Copy the price id (`pri_…`) — that is
+   `PADDLE_PRICE_ID_PRO`. Set the real number first: the `$29/month` on the Billing page is a
+   placeholder (see the checklist above).
+4. **Create the API key.** Dashboard → Developer tools → Authentication → new API key. That is
+   `PADDLE_API_KEY`. It is a real secret and is shown once.
+5. **Register the webhook.** Dashboard → Developer tools → Notifications → new destination, pointed
+   at `https://<your domain>/api/billing/webhook`. Subscribe it to `subscription.activated`,
+   `subscription.created`, `subscription.updated`, `subscription.canceled`, `subscription.expired`,
+   `subscription.paused`, `transaction.completed` and `transaction.payment_failed`. **Subscribe to
+   all of them** — the app acts on each one, and `subscription.expired` in particular is how a
+   subscription that simply lapsed drops the company back to Free. Leaving it off would keep a
+   company on Pro forever after it stopped paying. Then **Edit destination → copy the
+   secret** (`pdl_ntfset_…`) — that is `PADDLE_WEBHOOK_SECRET`. The sandbox destination and the live
+   one have **different** secrets.
+6. **Turn on local currencies** (Business account → Currencies → select all) so buyers see their own
+   currency while you price once in USD. Nothing in Tielora has to change for it.
+7. **Set the four variables in Railway** — `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`,
+   `PADDLE_PRICE_ID_PRO` and `PADDLE_ENV=sandbox` — plus `APP_BASE_URL` if it is not already set,
+   because checkout needs somewhere to send people back to. Redeploy, then check
+   `https://<domain>/api/health` reads `"billing": "configured"`.
+8. **Walk it through in the sandbox, as a real administrator would.** Sign in as a company
+   administrator, open **Admin → Billing**, press **Upgrade to Pro**, pay with one of Paddle's test
+   cards, and watch: you come back to `/admin/billing?billing=success`, the strip says the payment
+   is received and it is waiting for confirmation, and within about a minute the card flips to PRO
+   on its own. Then press **Manage billing** and check it opens your subscription at Paddle. Then
+   cancel it there and watch the company drop back to Free.
+9. **Only then go live**: repeat steps 3–5 in the live account (new product, new price id, new API
+   key, new webhook destination and secret), swap all three values in Railway, set
+   `PADDLE_ENV=live`, redeploy, and check `/api/health` again.
+
+### ⚠️ The two things to re-check on activation day
+
+These were flagged by the research because they could not be read first-hand — the sources were
+search results, not the pages themselves. Both are handled defensively in the code, so a surprise
+ends in a plain refusal rather than a broken screen, but both are worth five minutes.
+
+- **Caveat 2 — will Paddle actually hand us a hosted checkout?** Tielora sends the administrator to
+  Paddle by an ordinary redirect and loads **no Paddle JavaScript at all**, which is why the strict
+  Content-Security-Policy in `next.config.ts` needed nothing added. The research says Paddle's
+  fully hosted checkout is available on **all sandbox accounts**, but on **live** accounts is
+  "limited to approved mobile app companies" and has to be requested from support. So: the sandbox
+  walkthrough will work; before going live, **email Paddle support and ask for hosted-checkout
+  approval for Tielora**.
+  The code already refuses safely if it is not granted: it checks that the address Paddle hands back
+  is on a `paddle.com` host, and if it is not, the administrator sees "Checkout isn't ready on this
+  Tielora yet" instead of being dropped somewhere that needs Paddle's JavaScript.
+  **If approval is refused**, the alternative is Paddle's **overlay checkout**, and it is not built
+  on purpose. It would cost: loading `https://cdn.paddle.com/paddle/v2/paddle.js` on the Billing
+  page, and three additions to the CSP — `script-src https://cdn.paddle.com`, a `frame-src` entry
+  for the checkout iframe host (**likely `buy.paddle.com` / `sandbox-buy.paddle.com`, but read the
+  real hostname off the browser's network tab rather than guessing**, since `frame-src` is currently
+  `'none'`), and a `connect-src` entry for the calls the script makes. Everything else — the
+  webhook, the plan flips, the audit rows, the screens — would be unchanged, and the "waiting for
+  confirmation" strip works identically for an overlay. The other alternative is Lemon Squeezy,
+  below, whose hosted link genuinely needs no CSP change at all.
+- **Caveat 3 — does `subscription.created` ever arrive before the money does?** Tielora treats both
+  `subscription.activated` and `subscription.created` as "this company is on Pro now". The research
+  notes that for some flows `created` can arrive before the first payment. During the sandbox
+  walkthrough, watch the order the two events arrive in (Dashboard → Developer tools →
+  Notifications shows every delivery). **If `created` can land before payment, delete that one
+  string** from `ACTIVATING_EVENTS` in `src/server/services/paddle.ts` — that is the whole fix.
+- A smaller one, safe either way: the exact field names in Paddle's responses are read defensively
+  (several plausible names are tried, and an answer we cannot read ends in a plain refusal rather
+  than a guess). If either button refuses with "we couldn't reach the payment page" while Paddle's
+  own dashboard shows the request succeeding, the response shape is the thing to look at.
+
+### What a company sees, and what we keep
+
+- **No payment credential is stored anywhere in this app.** No card, no token, no price, no invoice,
+  no amount. Three columns hold the whole footprint: the plan, and the company's customer and
+  subscription **ids at Paddle** — identifiers and nothing more. The API key and both minted
+  addresses (checkout and portal) never appear in a log line, an audit row or any API answer.
+- **Checkout:** "Upgrade to Pro" sends the administrator to Paddle, carrying the company's id so the
+  webhook knows who paid. They come back to `/admin/billing?billing=success`.
+- **The plan flip lags the redirect by seconds, and the page is honest about it**: it says the
+  payment is received and it is waiting for the final confirmation, updates itself when the webhook
+  lands, and after two minutes says "still confirming" rather than spinning for ever. It never
+  claims Pro before the database says Pro.
+- **A cancelled or abandoned checkout shows nothing at all** — the Free card is simply still there.
+- **A failed payment does not downgrade anybody.** Paddle retries (dunning) and the company keeps
+  Pro throughout; the Billing page says "your last payment didn't go through, we're trying again
+  automatically" and points at Manage billing. That note comes from the last webhook we were sent,
+  so it is only ever as fresh as that.
+- **A cancelled or lapsed subscription drops the company to Free** when Paddle says so, and
+  **nothing is taken away**: every project, person and file is still there, readable and workable —
+  only adding more is refused. That is the grandfathering rule the limits already follow.
+- **We cannot show a renewal date**, because we do not store one, so the screen does not pretend to:
+  it says the next payment date, the invoices and the card live at the provider, and Manage billing
+  is the way to them. Manage billing mints a fresh single-use link on every press.
+- **Refunds, disputes and dunning all happen at Paddle**, in Paddle's dashboard. Tielora has no
+  screen for them and is not meant to.
+
+### If Paddle does not work out: the Lemon Squeezy fallback
+
+Lemon Squeezy is also a merchant of record, also lists Oman as an eligible seller country, also
+supports sole traders, and — unlike Paddle — its hosted checkout link is **genuinely just a link**,
+so the redirect road needs no approval and no CSP change ever.
+
+Switching to it is **a rewrite of `src/server/services/paddle.ts` and nothing else**: the plan
+flips, the webhook order of operations, the audit rows, the actions and every screen stay exactly as
+they are, because none of them knows a Paddle field name. Four environment variables would replace
+the four above — `LEMONSQUEEZY_API_KEY`, `LEMONSQUEEZY_STORE_ID`, `LEMONSQUEEZY_WEBHOOK_SECRET`,
+`LEMONSQUEEZY_VARIANT_ID_PRO` (plus its per-store "test mode" toggle instead of a separate sandbox
+host). Inside that one file, four things differ: the signature is an `X-Signature` header holding a
+plain HMAC-SHA256 of the raw body with no timestamp; the event name arrives in `meta.event_name` and
+the company id in `meta.custom_data`; there is **no single event id**, so the replay key would be
+built from the subscription id plus the event name plus the record's `updated_at`; and the customer
+portal is a pre-signed URL already sitting on the subscription record rather than something you mint
+per press.
+
+---
+
+## 9. What is deliberately not built
 
 Named here so nobody assumes otherwise:
 
 - **A legal review of the privacy and terms pages** — gate 1 above is written and linked, but it is a
   template. Have a lawyer review the actual wording before relying on it.
+- **Overlay checkout** — the Billing page loads no payment JavaScript at all and never has. Paying
+  is a plain redirect to the provider's own page and back, which is why the Content-Security-Policy
+  needed nothing added for it. What the overlay would cost, and when you would need it, is in
+  section 8, caveat 2.
+- **Anything about money on our screens** — no price beyond the one placeholder on the plans table,
+  no invoice, no receipt, no refund button, no renewal date, no card. All of it lives at the payment
+  provider, and "Manage billing" is the door to it.
 - **Browser-side error reporting** — off unless `NEXT_PUBLIC_SENTRY_DSN` is set at build time. Server
   errors are always logged, and go to Sentry when `SENTRY_DSN` is set. `/api/health` reports the two
   channels separately, so neither can be mistaken for the other.

@@ -46,6 +46,8 @@ export type Action =
   | "EXPORT_ORG"
   /** Asking for the whole workspace to be deleted, and calling that request off again. */
   | "DELETE_ORG"
+  /** Seeing the company's plan and its usage, and changing plan (Admin → Billing). */
+  | "MANAGE_BILLING"
   | "POST_ANNOUNCEMENT"
   | "POST_BOARD"
   | "VIEW_PROJECT";
@@ -93,6 +95,7 @@ const ADMIN_ONLY: Action[] = [
   "MANAGE_INTEGRATIONS",
   "EXPORT_ORG",
   "DELETE_ORG",
+  "MANAGE_BILLING",
 ];
 
 /** Actions a discipline lead may perform inside their own discipline on a project they belong to. */
@@ -294,6 +297,7 @@ export const PERMISSION_MATRIX: Record<RoleValue, { always: Action[]; conditiona
       "MANAGE_INTEGRATIONS",
       "EXPORT_ORG",
       "DELETE_ORG",
+      "MANAGE_BILLING",
       "POST_ANNOUNCEMENT",
       "POST_BOARD",
       "VIEW_PROJECT",

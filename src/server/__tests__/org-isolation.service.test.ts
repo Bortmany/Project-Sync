@@ -8,6 +8,7 @@
 // A cross-company read is "not found", never "forbidden": telling an outsider that an id is real is
 // itself a leak.
 
+import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -24,6 +25,7 @@ import { readZip } from "@/lib/zip";
 import { actorForUser, type ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
 import { createUser, deactivateUser, listAllUsers, updateUser } from "@/server/services/admin";
+import { billingStatus, processBillingWebhook } from "@/server/services/billing";
 import { createComment, listComments } from "@/server/services/comments";
 import { listUsers } from "@/server/services/directory";
 import {
@@ -76,7 +78,7 @@ import {
   replyToPost,
   setBroadcastPolicy,
 } from "@/server/services/posts";
-import { getProjectForActor, listProjectsForActor } from "@/server/services/projects";
+import { createProject, getProjectForActor, listProjectsForActor } from "@/server/services/projects";
 import {
   completeDisciplineTask,
   createMainTask,
@@ -1114,5 +1116,186 @@ describe("deleting an account and deleting a workspace", () => {
     // there is nothing pending in their own workspace, so there is nothing to cancel.
     await expect(cancelWorkspaceDeletion(rival.admin)).rejects.toBeInstanceOf(ServiceError);
     expect((await workspaceDeletionStatus(acme.admin)).pending).toBe(true);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Plans and limits                                                    */
+/* ------------------------------------------------------------------ */
+
+describe("a company's plan usage is counted from its own rows and nobody else's", () => {
+  it("never counts the other company's projects, people or files", async () => {
+    // The other company is given plenty of everything. None of it may show up next door.
+    await prisma.project.create({
+      data: {
+        orgId: rival.admin.orgId,
+        name: "Their second project",
+        code: "THEIRS-2",
+        description: "A second project for the other company.",
+        createdById: rival.admin.userId,
+      },
+    });
+    const theirDocument = await prisma.document.create({
+      data: {
+        projectId: rival.projectId,
+        title: "Their big drawing set",
+        uploadedById: rival.admin.userId,
+      },
+    });
+    await prisma.documentVersion.create({
+      data: {
+        documentId: theirDocument.id,
+        revisionNumber: 0,
+        storedFilename: `fake-${theirDocument.id}.bin`,
+        originalFilename: "Their big drawing set.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 400 * 1024 * 1024,
+        checksumSha256: "0".repeat(64),
+        uploadedById: rival.admin.userId,
+      },
+    });
+
+    await prisma.user.create({
+      data: {
+        orgId: rival.admin.orgId,
+        email: `their.extra.${Date.now()}@test.example`,
+        name: "Their extra engineer",
+        passwordHash: "not-a-real-hash",
+        role: "ENGINEER",
+      },
+    });
+
+    const mine = await billingStatus(acme.admin);
+    const theirs = await billingStatus(rival.admin);
+
+    expect(mine.usage.projects).toBe(1);
+    expect(theirs.usage.projects).toBe(2);
+    expect(theirs.usage.users).toBe(mine.usage.users + 1);
+    expect(mine.usage.documentBytes).toBeLessThan(theirs.usage.documentBytes);
+    expect(theirs.usage.documentBytes - mine.usage.documentBytes).toBeGreaterThanOrEqual(
+      400 * 1024 * 1024,
+    );
+  });
+
+  it("does not let one company's usage spend another company's plan limit", async () => {
+    // Both companies drop to FREE, which allows one project each. The other company is already
+    // over — and that must not stop this one adding its first extra project.
+    await prisma.organization.updateMany({ data: { plan: "FREE" } });
+    await prisma.project.create({
+      data: {
+        orgId: rival.admin.orgId,
+        name: "Their second project",
+        code: "THEIRS-2",
+        description: "A second project for the other company.",
+        createdById: rival.admin.userId,
+      },
+    });
+
+    // This company has one project, so it is at its own limit — refused on its own count, never
+    // on the neighbour's.
+    await expect(
+      createProject(acme.admin, {
+        name: "One too many",
+        code: "MINE-2",
+        description: "A project this company has no room for.",
+        disciplineIds: [],
+        members: [],
+      }),
+    ).rejects.toBeInstanceOf(ServiceError);
+
+    // Soft-delete this company's only project and the room comes back — the neighbour's two
+    // projects were never part of the sum.
+    await prisma.project.update({
+      where: { id: acme.projectId },
+      data: { deletedAt: new Date() },
+    });
+    const created = await createProject(acme.admin, {
+      name: "Room again",
+      code: "MINE-3",
+      description: "The neighbour's projects were never counted here.",
+      disciplineIds: [],
+      members: [],
+    });
+    expect(created.id).toBeTruthy();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The payment provider's webhook                                      */
+/* ------------------------------------------------------------------ */
+//
+// The one door into this app that nobody signs in for. Its signature is what stands in for
+// authentication, and the company it acts on comes from the payload rather than a session — so the
+// tenant rule has to be proved here directly: a verified webhook about one company must never touch
+// another, and a webhook naming a company that does not exist must be indistinguishable from one
+// that does.
+
+describe("a webhook only ever moves the company it names", () => {
+  const WEBHOOK_SECRET = "pdl_ntfset_isolation_test_secret";
+  const PROVIDER_KEYS = [
+    "PADDLE_API_KEY",
+    "PADDLE_WEBHOOK_SECRET",
+    "PADDLE_PRICE_ID_PRO",
+    "APP_BASE_URL",
+  ] as const;
+  const before = new Map<string, string | undefined>();
+
+  beforeEach(() => {
+    for (const key of PROVIDER_KEYS) before.set(key, process.env[key]);
+    process.env.PADDLE_API_KEY = "pdl_sdbx_isolation_test";
+    process.env.PADDLE_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    process.env.PADDLE_PRICE_ID_PRO = "pri_isolation";
+    process.env.APP_BASE_URL = "https://tielora.example";
+  });
+
+  afterEach(() => {
+    for (const [key, value] of before) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    before.clear();
+  });
+
+  function signedFor(orgId: string, eventId: string) {
+    const raw = JSON.stringify({
+      event_id: eventId,
+      event_type: "subscription.activated",
+      data: { id: "sub_iso", customer_id: "ctm_iso", custom_data: { org_id: orgId } },
+    });
+    const ts = String(Math.floor(Date.now() / 1000));
+    const h1 = createHmac("sha256", WEBHOOK_SECRET).update(`${ts}:${raw}`).digest("hex");
+    return { raw, header: `ts=${ts};h1=${h1}` };
+  }
+
+  const planOf = async (orgId: string) =>
+    (await prisma.organization.findUnique({ where: { id: orgId }, select: { plan: true } }))?.plan;
+
+  it("upgrades the company in the payload and leaves the neighbour exactly as it was", async () => {
+    await prisma.organization.updateMany({ data: { plan: "FREE" } });
+
+    const mine = signedFor(acme.admin.orgId, "evt_iso_1");
+    const outcome = await processBillingWebhook(mine.raw, mine.header);
+
+    expect(outcome.httpStatus).toBe(200);
+    expect(await planOf(acme.admin.orgId)).toBe("PRO");
+    expect(await planOf(rival.admin.orgId)).toBe("FREE");
+
+    // And nothing about the neighbour was recorded either.
+    const theirEvents = await prisma.billingEvent.count({ where: { orgId: rival.admin.orgId } });
+    expect(theirEvents).toBe(0);
+  });
+
+  it("answers a company id that does not exist exactly as it answers one that does", async () => {
+    await prisma.organization.updateMany({ data: { plan: "FREE" } });
+
+    const real = signedFor(acme.admin.orgId, "evt_iso_real");
+    const invented = signedFor("clnotarealcompanyid00000", "evt_iso_invented");
+
+    const realOutcome = await processBillingWebhook(real.raw, real.header);
+    const inventedOutcome = await processBillingWebhook(invented.raw, invented.header);
+
+    // Same status, so nobody outside can tell a real company id from an invented one.
+    expect(inventedOutcome.httpStatus).toBe(realOutcome.httpStatus);
+    expect(await planOf(rival.admin.orgId)).toBe("FREE");
   });
 });

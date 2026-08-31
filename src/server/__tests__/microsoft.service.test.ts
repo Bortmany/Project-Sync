@@ -22,6 +22,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 process.env.DATA_DIR = path.join(os.tmpdir(), "tielora-test-data");
 
 import { prisma } from "@/lib/db";
+import { PLANS } from "@/lib/plan-limits";
 import { logger } from "@/lib/logger";
 import { ForbiddenError } from "@/lib/permissions";
 
@@ -65,6 +66,7 @@ import {
   makeProjectFixture,
   makeUser,
   resetDatabase,
+  setPlan,
   type Fixture,
 } from "@/server/__tests__/harness";
 
@@ -695,6 +697,53 @@ describe("attaching a file", () => {
 
     expect(downloads).toBe(0);
     expect(await prisma.documentVersion.count()).toBe(0);
+  });
+
+  it("refuses a file that would pass the plan's storage cap, before downloading a single byte", async () => {
+    await connectDirectly(fixture.orgId);
+    await setPlan(fixture.orgId, "FREE");
+
+    // The company is already at its cap. Nothing about the file matters after that.
+    const document = await prisma.document.create({
+      data: {
+        projectId: fixture.projectId,
+        title: "Big drawing set",
+        uploadedById: fixture.adminActor.userId,
+      },
+    });
+    await prisma.documentVersion.create({
+      data: {
+        documentId: document.id,
+        revisionNumber: 0,
+        storedFilename: `fake-${document.id}.bin`,
+        originalFilename: "Big drawing set.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: PLANS.FREE.documentBytes as number,
+        checksumSha256: "0".repeat(64),
+        uploadedById: fixture.adminActor.userId,
+      },
+    });
+
+    let downloads = 0;
+    mockNetwork((url) => {
+      if (url.includes("/content")) {
+        downloads += 1;
+        return new Response(PDF_BYTES, { status: 200 });
+      }
+      return json(itemMetadata());
+    });
+
+    await expect(
+      attachMicrosoftFile(fixture.adminActor, {
+        ...target(),
+        driveId: DRIVE_ID,
+        itemId: ITEM_ID,
+      }),
+    ).rejects.toThrow(/Your plan has room for/);
+
+    // Not a byte fetched, and no second revision — so nothing was written to disk either.
+    expect(downloads).toBe(0);
+    expect(await prisma.documentVersion.count()).toBe(1);
   });
 
   it("refuses a program renamed as a PDF — the bytes decide, not the name Microsoft gave us", async () => {

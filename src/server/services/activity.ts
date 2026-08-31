@@ -106,12 +106,29 @@ export const ACTIVITY = {
   WORKSPACE_DELETION_REQUESTED: "WORKSPACE_DELETION_REQUESTED",
   /** An administrator called that off, inside the grace period. */
   WORKSPACE_DELETION_CANCELLED: "WORKSPACE_DELETION_CANCELLED",
+  // Billing. None of these rows ever carries a checkout address, a portal address, an API key or
+  // anything the payment provider sent us beyond the id of the event itself.
+  /** An administrator pressed "Upgrade to Pro" and was sent to the provider's checkout. */
+  BILLING_CHECKOUT_STARTED: "BILLING_CHECKOUT_STARTED",
+  /** An administrator opened the provider's own billing page to manage the subscription. */
+  BILLING_PORTAL_OPENED: "BILLING_PORTAL_OPENED",
+  /**
+   * A company's plan actually moved, because a verified webhook said so. Written with NO actor —
+   * nobody in this app pressed anything — and it names the old plan, the new plan and the
+   * provider's event id, which is exactly enough to trace it back without copying a payload.
+   */
+  BILLING_PLAN_CHANGED: "BILLING_PLAN_CHANGED",
 } as const;
 
 export type ActivityAction = (typeof ACTIVITY)[keyof typeof ACTIVITY];
 
 export type AppendActivityInput = {
-  actorId: string;
+  /**
+   * Who did it. NULL only where nothing in this app was pressed — today that is the payment
+   * provider's webhook changing a company's plan, which is a fact about the company rather than
+   * somebody's act. The column has always been nullable; every other caller passes a real person.
+   */
+  actorId: string | null;
   projectId: string | null;
   entityType:
     // The organisation itself — the very first audit row a company ever has, written at signup.

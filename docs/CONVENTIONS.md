@@ -214,6 +214,13 @@ In practice:
       and `EMAIL_FROM`, plus `APP_BASE_URL`, which email needs the way Microsoft needs it. Unset
       means **no email is ever sent and nothing else changes**; `/api/health` reports
       `"email": "dormant"`. See "Transactional email" below.
+    - **Payments are per deployment and nothing else**: `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`
+      and `PADDLE_PRICE_ID_PRO` (the first two are real secrets), plus `APP_BASE_URL`, which
+      checkout needs the way email needs it, and the optional `PADDLE_ENV`. With any of the four
+      unset there are **no buttons at all** on Admin → Billing, both billing actions refuse in plain
+      English, `/api/billing/webhook` answers "not set up", and `/api/health` reports
+      `"billing": "dormant"`. Plans and limits carry on working exactly as they do today. See
+      "Billing provider" below.
     - **Delivery is best-effort and per-process**, the same accepted limitation rate limiting
       carries: one attempt, one retry on 429 respecting `Retry-After` (capped at ten seconds), then
       the message is dropped with a logged line. There is no queue table. In-app Notifications
@@ -388,6 +395,41 @@ In practice:
     migration. The generated migration's five trigram `DropIndex` lines were deleted by hand, and
     `pg_indexes` was checked on both databases afterwards — five rows each.)
 
+  - `20260831204831_organization_plan_billing` (plans, limits and the payment provider's landing
+    place — **ONE migration for the whole phase**, the same way `external_access_and_posts` and
+    `posts_ack_attachments_externals` each carried two builds at once, so the provider half needs no
+    second migration. **Additive only**: nothing is dropped, renamed or made stricter, every new
+    column has a default or is nullable, and the new table starts empty, so it is safe on a
+    populated database and no existing company changes in any way. THREE columns on `Organization`
+    — `plan` (default `"FREE"`, which is what every existing company means; **a plain string
+    validated by zod**, not a Prisma enum, the same choice `broadcastPolicy`, `OrgIntegration.kind`
+    and `Post.kind` made, so a third plan needs no migration, and `planOf()` in
+    `src/lib/plan-limits.ts` reads an unrecognised value as FREE — the safe direction, the same
+    defensiveness `broadcastPolicyOf()` carries) and the nullable `billingCustomerId` /
+    `billingSubscriptionId`, which are the company's identifiers at the payment provider and
+    **never a key, a token or anything about a card** — no payment credential is stored anywhere in
+    this app. One new model, `BillingEvent` — one webhook the provider has sent us: `provider`,
+    `eventId`, `eventType`, a nullable `orgId` (`onDelete: SetNull`, **the same shape
+    `OrgIntegration.createdById` and `Organization.deleteRequestedById` use**, so the delivery
+    history outlives the company it was about), `processedAt`, and `@@unique([provider, eventId])`,
+    which **is** the replay rule: a provider retries a webhook until it is acknowledged, so an
+    event already recorded is recognised and ignored rather than upgrading or downgrading a company
+    twice. **No limit and no usage figure is stored anywhere**: the three limits live in one file
+    and every count is worked out at read time, exactly as OVERDUE and a locked phase are. The
+    generated migration's five trigram `DropIndex` lines were deleted by hand, and `pg_indexes` was
+    checked on both databases afterwards — five rows each.)
+
+  - `20260831214639_billing_event_occurred_at` (putting out-of-order webhooks back in order. ONE
+    nullable column, `BillingEvent.occurredAt` — **the provider's own `occurred_at`, which is not
+    the same fact as `processedAt`**: one is when it happened, the other is when it reached us, and
+    only the first can be compared with another event's without misfiring on two changes made
+    seconds apart (see "Billing provider" below). Plus `@@index([orgId, occurredAt])`, which is the
+    lookup every webhook now makes. Additive only: no existing model, field, enum value or index
+    was changed, and null — which is what every row written before it means, and what an event
+    whose payload carries no timestamp means — reads as "we cannot tell", which reorders nothing.
+    The generated migration's five trigram `DropIndex` lines were deleted by hand, and `pg_indexes`
+    was checked on both databases afterwards — five rows each.)
+
 - **Careful with `prisma migrate dev`:** the trigram search indexes are hand-written raw SQL that the
   Prisma schema does not know about, so the generated migration will try to DROP them. Delete those
   `DropIndex` lines from the generated `migration.sql` before it goes anywhere near a real database.
@@ -423,7 +465,7 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/notifications/unread-count` | GET | — | `{ unread: number }` (the bell's badge — its own tiny route so the topbar can poll it every 60 seconds without pulling the list) |
 | `/api/search?q=` | GET | `q` | `SearchResultsDTO` |
 | `/api/dashboard` | GET | — | `DashboardDTO` (adds `awaitingMySignoff` — the contractor work THIS person may sign off, empty for everybody who reviews nothing and always empty for a contractor) |
-| `/api/uploads` | POST | multipart: `file`, `projectId`, `mainTaskId?` \| `disciplineTaskId?`, `documentId?`, `requiredDocumentId?`, `title?`, `category?`, `note?` (validated by `UploadMeta`) | `DocumentVersionDTO` |
+| `/api/uploads` | POST | multipart: `file`, `projectId`, `mainTaskId?` \| `disciplineTaskId?`, `documentId?`, `requiredDocumentId?`, `title?`, `category?`, `note?` (validated by `UploadMeta`) | `DocumentVersionDTO` — refused with the plan's plain-English storage message when the company's stored bytes plus this file would go past its cap. The Microsoft attach route is refused the same way, in the same place |
 | `/api/documents/versions/[versionId]/download` | GET | — | file stream |
 | `/api/auth/signup` | POST | `SignupInput` | `SignupResultDTO` + session cookie (public; `byIp` limited to 5 an hour) |
 | `/api/auth/login` | POST | `LoginInput` | session cookie |
@@ -432,7 +474,8 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/auth/set-password` | POST | `SetPasswordInput` | `PasswordChangedDTO` — accepting an invitation; also marks the address verified. **No session, no cookie** (public; `byIp` limited to 10 an hour) |
 | `/api/auth/logout` | POST | — | `{ signedOut: true }` |
 | `/api/auth/me` | GET | — | signed-in user |
-| `/api/health` | GET | — | health JSON (adds `integrations` — how many companies have each chat kind switched on, numbers only: `{"slack": 0, "teams": 0}` when nobody has — `microsoft`: `{"status": "dormant"\|"configured", "connectedOrgs": n}`, and `email`: `"dormant"` or `"configured"`, a word and nothing else. `"configured"` means all three of `RESEND_API_KEY`, `EMAIL_FROM` and `APP_BASE_URL` are set, because an email with no link is no use) |
+| `/api/health` | GET | — | health JSON (adds `integrations` — how many companies have each chat kind switched on, numbers only: `{"slack": 0, "teams": 0}` when nobody has — `microsoft`: `{"status": "dormant"\|"configured", "connectedOrgs": n}`, and `email`: `"dormant"` or `"configured"`, a word and nothing else. `"configured"` means all three of `RESEND_API_KEY`, `EMAIL_FROM` and `APP_BASE_URL` are set, because an email with no link is no use — and `billing`: `"dormant"` or `"configured"`, a word about this deployment's own set-up and nothing about anybody's money, plan or balance) |
+| `/api/billing/webhook` | POST | the provider's raw JSON body, with a `Paddle-Signature` header | `{ received: true }` — **public, and nobody signs in for it**: the signature IS the authentication, checked over the raw body before anything is parsed and before any database read. 200 for anything handled, recorded or already seen (an unknown company included — never a 404); 400 for a signature that is missing, wrong or stale; 503 while the provider is not set up; 500 on anything unexpected, so the provider retries. `byIp` limited generously (600 a minute) because webhooks arrive in bursts |
 | `/api/integrations/microsoft/connect` | GET | — | 302 to Microsoft's sign-in (ADMIN; signed `state` binds the attempt to this person and company) |
 | `/api/integrations/microsoft/callback` | GET | query: `code`, `state` (or `error`) | 302 back to `/admin/integrations?microsoft=connected\|denied\|failed\|setup` |
 | `/api/integrations/microsoft/status` | GET | — | `MicrosoftConnectionDTO` (404 "not set up" while dormant, which is how the upload tab stays hidden) |
@@ -457,7 +500,7 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 
 | Action | Input | Output |
 |---|---|---|
-| `createProject` | `CreateProjectInput` | `ActionResult<ProjectDTO>` |
+| `createProject` (refused in plain English once the company's plan has no room for another live project — see "Plans and limits") | `CreateProjectInput` | `ActionResult<ProjectDTO>` |
 | `updateProject` | `UpdateProjectInput` | `ActionResult<ProjectDTO>` |
 | `setExternalSignoffRequired` (EDIT_PROJECT; audited like any other project setting) | `SetExternalSignoffInput` | `ActionResult<ProjectDTO>` |
 | `upsertMember` | `UpsertMemberInput` | `ActionResult<ProjectMemberDTO>` |
@@ -489,7 +532,7 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `softDeleteDocument` (ADMIN / PM; never deletes a revision) | `{ id }` | `ActionResult<{ deleted: true }>` |
 | `markNotificationRead` (own notification only — someone else's is refused) | `{ id }` | `ActionResult<NotificationDTO>` |
 | `markAllNotificationsRead` (the signed-in person's unread only) | — | `ActionResult<{ count: number }>` |
-| `createUser` (always into the actor's own organisation; `CreateUserInput` and `UpdateUserInput` both now carry an optional, nullable `accessExpiresAt`, which zod refuses on any role but EXTERNAL and the service clears for one. `CreateUserInput` also carries an optional `mode` — `"PASSWORD"` (left out means this, and it is the only path while email is dormant) or `"INVITE"`, which creates the account with an unusable random password hash, mints an INVITE link in the same transaction and emails it after the commit. Zod refuses a password sent with `"INVITE"` and refuses `"PASSWORD"` with none) | `CreateUserInput` | `ActionResult<UserDTO>` |
+| `createUser` (always into the actor's own organisation; `CreateUserInput` and `UpdateUserInput` both now carry an optional, nullable `accessExpiresAt`, which zod refuses on any role but EXTERNAL and the service clears for one. `CreateUserInput` also carries an optional `mode` — `"PASSWORD"` (left out means this, and it is the only path while email is dormant) or `"INVITE"`, which creates the account with an unusable random password hash, mints an INVITE link in the same transaction and emails it after the commit. Zod refuses a password sent with `"INVITE"` and refuses `"PASSWORD"` with none. **Both paths are refused once the plan's people limit is reached** — an invitation and a first password both end in one more account that can sign in; deactivated accounts are not counted) | `CreateUserInput` | `ActionResult<UserDTO>` |
 | `updateUser` (an access end date sent for somebody who is no longer a contractor is cleared, exactly as `companyName` is; the audit row names "access end date" as a field that moved, never the date itself) | `UpdateUserInput` | `ActionResult<UserDTO>` |
 | `deactivateUser` | `{ id }` | `ActionResult<UserDTO>` |
 | `resendInvite` (ADMIN in their own company; only for somebody who has never signed in — `lastLoginAt` null — and only while email is configured. Re-issuing retires the link already in their inbox; audited with a second `EMAIL_SENT` row. Three a minute per person) | `ResendInviteInput` | `ActionResult<EmailSentDTO>` |
@@ -517,6 +560,9 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `startWorkspaceExport` (ADMIN, `EXPORT_ORG`; five presses a minute per person **and** one export per company per 24 hours, the second enforced in the service against the last `EXPORT_STARTED` audit row. Writes `EXPORT_STARTED`, then fires the build off and returns immediately) | — | `ActionResult<WorkspaceExportStatusDTO>` |
 | `deleteMyAccount` (any signed-in person, contractors included; **no id and no `assertCan`** — the only account it can reach is the session's. Typed confirmation `"DELETE"`. Anonymises in one transaction, ends every session, writes one name-free `ACCOUNT_DELETED` row. Refused for an ADMIN who is their company's last active one. Three presses a minute) | `DeleteMyAccountInput` | `ActionResult<AccountDeletedDTO>` |
 | `requestWorkspaceDeletion` (ADMIN, `DELETE_ORG`; the workspace's own name typed exactly. Sets `deleteRequestedAt` / `deleteRequestedById`, writes `WORKSPACE_DELETION_REQUESTED` and notifies every other administrator in-app) | `RequestWorkspaceDeletionInput` | `ActionResult<WorkspaceDeletionDTO>` |
+| `billingStatus` (a READ rather than an action, called by `/admin/billing` the way `workspaceExportStatus` is: ADMIN of their own company, `MANAGE_BILLING`. Plan, usage and limits — every number counted at read time — plus `provider`: whether the four environment variables are set, whether we hold a subscription id, and whether the last payment signal we were sent was a failure. No price, no card, no invoice, no renewal date: none of that is stored here) | — | `BillingStatusDTO` |
+| `startUpgrade` (ADMIN, `MANAGE_BILLING`; no input at all. Asks the provider for a checkout, audits `BILLING_CHECKOUT_STARTED` **without the address**, and returns the address for the browser to navigate to. Refused in plain English while the provider is dormant, when the company is already on Pro, and when the provider hands back an address it does not host itself. Ten presses a minute per person) | — | `ActionResult<BillingRedirectDTO>` |
+| `openBillingPortal` (ADMIN, `MANAGE_BILLING`; no input. Mints a FRESH single-use portal address every press — never cached, never stored — audits `BILLING_PORTAL_OPENED` without it, and returns it. Refused plainly while dormant and while no subscription is on file. Ten presses a minute per person) | — | `ActionResult<BillingRedirectDTO>` |
 | `cancelWorkspaceDeletion` (ANY ADMIN of that company during the grace period; no typed confirmation — undoing a dangerous thing should be the easiest press on the screen. Clears both columns, writes `WORKSPACE_DELETION_CANCELLED`, notifies the administrators) | — | `ActionResult<WorkspaceDeletionDTO>` |
 
 ## Notifications and the deadline sweep
@@ -1277,6 +1323,215 @@ Both live on the two screens part 1 built, in a red-tinted danger section under 
 `org-isolation.service.test.ts`. The critical one is already there: a workspace is deleted with a
 second company sitting beside it, every table is asserted empty for the first and unchanged for the
 second, and the second company's files are still on disk.
+
+## Plans and limits
+
+> A plan decides how much MORE a company may add, and nothing else. Nothing already there is ever
+> hidden, locked or taken away — a company over its limit reads, opens, downloads and works exactly
+> as it did the day before.
+
+- **ONE FILE HOLDS THE NUMBERS.** `src/lib/plan-limits.ts` carries `PLANS` (the three ceilings per
+  plan), `planOf()`, the plain-English helpers and the refusal wording. There is no second copy in a
+  component, a message, a route or a database column — changing a limit is an edit to that one file,
+  and the screens and the services both change with it. **The numbers there are the roadmap's
+  placeholders, and so is the `$29/month` on the Billing page (`PRO_PRICE` in
+  `admin-billing-view.tsx`): the owner sets the real numbers and the real price at the pause point
+  before launch.** The screen says so under the plans table until they do.
+- **`null` means unlimited** — never 0 and never a very large number, so "no ceiling" can never be
+  confused with "a ceiling nobody has reached yet".
+- **An unrecognised plan reads as FREE.** `planOf()` is the same defensiveness `broadcastPolicyOf()`
+  carries, pointed in the safe direction: a value from a newer build, a typo or a blank can never
+  hand a company limits nobody paid for.
+- **Three choke points, and nowhere else** (`src/server/services/billing.ts`, called before the
+  mutation in each case): `createProject`, `createUser` — **both the password and the invite path,
+  because both end in one more account that can sign in** — and `uploadDocumentVersion`, which every
+  upload in the app walks through, the browser's dropzone and a Microsoft 365 attachment alike. No
+  other service has to know that plans exist.
+- **What is counted.** Live projects (a soft-deleted project frees its place). People who can still
+  sign in — **a deactivated account does not count**, deliberately: an administrator who deactivated
+  somebody has given the seat back, and the account, its work and its audit trail all stay where
+  they are. **Nor does a contractor whose access has run out**: `getSessionUser()` and the sign-in
+  route turn them away exactly as they turn away a deactivated account, so charging a company for
+  that seat would be charging for a door nobody can open. The count uses the same rule
+  `isAccessExpired()` uses, written as an OR (not a contractor, or no end date, or an end date still
+  inside its one-day grace) — a NULL end date under a negated comparison would quietly drop
+  everybody who has none. And **every stored byte, including the revisions of soft-deleted
+  documents**: nothing in
+  this app ever deletes a revision or its file, so counting only the live ones would let a company
+  remove a document, upload it again and use the same disk twice.
+- **GIVING A SEAT BACK IS TAKING A SEAT.** `updateUser` asks for room whenever somebody who was not
+  counted will be afterwards — reactivating a deactivated account, or extending an expired
+  contractor's access. Without it, deactivating ten people, adding ten more and switching the first
+  ten back on would leave a ten-seat company with twenty people who can sign in. The question is
+  asked with the same definition of "counts" that the count itself uses, so the two can never drift.
+- **Nothing about usage is stored.** Every number is counted at read time from the rows themselves,
+  exactly as OVERDUE and a locked phase are. There is no usage column and there must not be one.
+- **The storage cap is checked BEFORE the bytes reach disk, and again in the service.** The upload
+  route judges it on the browser's own `file.size` before `storeFile()`, and `attachMicrosoftFile`
+  judges it on Microsoft's declared size before a byte is fetched — the same place each already
+  refuses an oversized file. `uploadDocumentVersion` checks it again on what actually arrived, as
+  the backstop that no upload path can go around. Checking only in the service would still refuse
+  the upload, but the file would already be on disk with no revision pointing at it: nothing in this
+  app deletes an orphan, so every refused attempt would cost real space.
+- **The storage sum is one aggregate query per upload, and that cost is accepted rather than
+  cached.** Uploads are already rate limited (30 a minute per person), and the alternative is a
+  stored total that can drift from the truth — the precise thing this app keeps refusing to add.
+- **A LIMIT CHECK IS A READ FOLLOWED BY A WRITE, and here is exactly how far that is trusted.**
+  Projects are checked twice: once cheaply, so an obvious refusal is instant, and **again inside
+  `createProject`'s own transaction behind `SELECT id FROM "Organization" … FOR UPDATE`** — the same
+  transaction-scoped lock the sole-administrator rule takes, for the same reason, so two people
+  pressing "Create project" in the same second cannot both get through. **People and storage are
+  deliberately left as read-then-write**: two simultaneous requests can overshoot by exactly one
+  seat or one file, which is a rounding error against a ceiling, self-corrects the moment anything
+  else is added, and is not worth serialising every upload in the app for. Projects get the lock
+  because their ceiling is the smallest — one, on a free plan — so an overshoot is the one anybody
+  would actually see.
+- **GRANDFATHERING is the rule, not an exception.** Reads are never blocked. A company already over
+  a limit — after a future downgrade, say — is refused only from adding MORE. Three projects on a
+  free plan means three readable projects and a refused fourth, and that exact case is a test.
+- **The refusal is written server-side, in full, and shown exactly as it arrives.** It is
+  role-branched by the server the way everything else is decided by the server: an ADMIN is pointed
+  at Admin → Billing, everybody else is told to ask their administrator. The pointer is words rather
+  than a link because a refusal travels as a plain string from the service to `ErrorBanner` — the
+  moment a component turned part of it into a link it would be re-wording the server.
+  `new-project-dialog.tsx` used to hardcode its own banner sentence and now renders `{error}` like
+  every other dialog in the app.
+- **A limit refusal writes NO `ActivityLog` row.** It is an ordinary validation failure, like a
+  duplicate project code or a missing password, and those have never been audited: the trail records
+  work that happened, and nothing happened. Reading the Billing page is a read and audits nothing
+  either.
+- **The Billing page is `/admin/billing`**, the fifth ADMIN_NAV row, gated by its own
+  `MANAGE_BILLING` permission (ADMIN-only, beside `EXPORT_ORG` and `DELETE_ORG`). `billingStatus()`
+  supplies plan, usage and limits; the meters turn `var(--status-blocked)` when a company is over
+  one, and that single amber meter is **the only place in the app that says so** — no badge on the
+  project list, the directory or the documents table.
+- **No provider is set up yet, so there are no buttons at all** — not greyed out, not disabled with
+  a tooltip, simply absent, the same discipline `AdminMicrosoftCard` follows. The dormant line says
+  upgrading is not turned on and that nothing else about the plan changes meanwhile.
+- **Test companies are on PRO** (`makeOrg` in the test harness), deliberately: a plan limit must
+  never quietly decide the result of a test about phases, comments or documents. The billing tests
+  set the plan they mean with `setPlan()`.
+
+**Any change touching this area adds or extends a test in
+`src/server/__tests__/billing-limits.service.test.ts` in the same change** — and the tenant half in
+`org-isolation.service.test.ts`, which proves one company's projects, people and files never count
+towards another company's limits.
+
+## Billing provider (taking the money)
+
+> Every fact about the payment provider lives in ONE file. Nothing happens at all until four
+> environment variables are set. No payment credential is stored anywhere in this app, ever.
+
+- **ONE MODULE HOLDS THE PROVIDER.** `src/server/services/paddle.ts` carries everything this app
+  knows about Paddle: `billingConfigured()` / `paddleConfig()`, the two hosts, the plain `fetch`
+  with `Authorization: Bearer` (no SDK, no new dependency), minting a checkout, minting a portal
+  link, the webhook signature check, reading a payload, and which event names mean what. Every
+  other file — `billing.ts`, the route, the screens — only ever hears "there is a provider", "here
+  is one address to navigate to" and "this webhook means ACTIVATE, DEACTIVATE or NONE". Swapping to
+  the Lemon Squeezy fallback (docs/GO-LIVE.md, section 8) is a rewrite of that one file.
+- **Dormant until configured** (house rule 11), and it takes all four: `PADDLE_API_KEY`,
+  `PADDLE_WEBHOOK_SECRET`, `PADDLE_PRICE_ID_PRO` and `APP_BASE_URL`. `PADDLE_ENV` chooses
+  `sandbox-api.paddle.com` (the default, and what anything unrecognised reads as — the safe
+  direction) or `api.paddle.com`. Unset means: **no buttons at all** on Admin → Billing, both
+  actions refuse in plain English, the webhook answers 503 "not set up", and `/api/health` reports
+  `"billing": "dormant"`. Setting the four variables is the whole activation — no migration, no code
+  change, no schema change.
+- **The API key never leaves the server.** It is read in that one module, sent in one header, and
+  never returned by a read, put in an error message, written to an audit row or logged. **A checkout
+  address and a portal address are treated the same way**: minted for one press, handed to the one
+  administrator who pressed the button, never stored, never logged, never in an `ActivityLog` row.
+  A portal link is single-use and short-lived at the provider, so it is minted fresh on every press.
+- **THE CHECKOUT IS A REDIRECT, AND NO THIRD-PARTY JAVASCRIPT IS LOADED ANYWHERE.** `startUpgrade`
+  asks the provider to create a checkout server-side and hands back the address; the browser makes
+  an ordinary top-level navigation to it. **The Content-Security-Policy in `next.config.ts` needs
+  nothing added for this** — `script-src`, `frame-src` (still `'none'`) and `connect-src` are all
+  untouched, because no CSP directive governs navigating away to another site. The overlay
+  alternative, and the CSP entries it would cost, is written up in GO-LIVE section 8 for activation
+  day; it is deliberately not built.
+  - The address the provider returns is **checked to be a Paddle-hosted one** before anybody is sent
+    there. If it is not — which is what a live account without hosted-checkout approval looks like —
+    the administrator is refused in plain English rather than dropped on a page that would need
+    Paddle's JavaScript.
+- **THE WEBHOOK'S ORDER OF OPERATIONS IS THE SECURITY**, and it never changes
+  (`processBillingWebhook` in `src/server/services/billing.ts`, behind `POST /api/billing/webhook`):
+  1. **Configured?** No secret means nothing to verify against: 503, and nothing is touched.
+  2. **Signature, over the RAW body, before anything is parsed and before any database read.**
+     HMAC-SHA256 of `` `${ts}:${rawBody}` `` against the `h1` in `Paddle-Signature`, compared in
+     constant time, then a timestamp inside five minutes. The route reads `request.text()` and
+     nothing re-serialises anything — re-serialised JSON is different bytes and a different
+     signature. **A request that fails this leaves no row in any table**, which is what the test
+     asserts rather than trusting the reading order.
+  3. **Idempotency.** The event's own id goes into `BillingEvent` **inside the same transaction as
+     the plan change**. `@@unique([provider, eventId])` IS the replay rule: the provider retries
+     until it is acknowledged, and a second delivery loses the race, rolls back and is answered 200.
+  4. **The company** comes from `custom_data`, and one we do not recognise is **recorded and
+     answered 200** — never 404, which would turn the endpoint into a way of asking whether a
+     company id is real. The same status, the same body, for a real company and an invented one.
+  5. **The plan moves**, and the move is audited in the same transaction.
+  Anything unexpected throws, the route answers 500, and the provider retries — which is exactly
+  what the idempotency key is for. While dormant the 503s are retried and eventually marked failed
+  at the provider, which is the honest outcome: nothing is set up here.
+- **A DELIVERY THAT OVERTOOK A NEWER ONE CHANGES NOTHING.** Webhooks do not arrive in order, and a
+  delayed `subscription.updated: active` landing after a cancellation would put a cancelled company
+  back on Pro and leave it there. So every event carries the provider's own `occurred_at` into
+  `BillingEvent.occurredAt`, and one stamped earlier than the newest thing that company has already
+  been told about is **recorded and acted on in no other way** — the delivery history is still the
+  record that it arrived.
+  - **The comparison is provider clock against provider clock, and it has to be.** `processedAt` is
+    OUR clock — when the delivery reached us — so comparing an event's `occurred_at` against it
+    would throw away a perfectly good event whenever a company changed something twice in quick
+    succession: the second event genuinely happened before the first one finished arriving. That is
+    why the column exists at all rather than reusing the one already there.
+  - **Undatable events are never reordered.** A payload with no `occurred_at`, or a company with no
+    dated event yet, behaves exactly as it did before the rule existed. The check runs inside the
+    same transaction as the claim and ignores the row it just wrote.
+  - **"Is there a payment problem right now?" is answered by the same clock.** `providerStatusFor()`
+    picks the newest of the payment-signal events (`transaction.payment_failed`,
+    `transaction.completed`, `subscription.activated`) by `occurredAt`, nulls last, falling back to
+    `processedAt` only among rows that carry no provider timestamp. Ordering by arrival would let a
+    delayed failure that happened BEFORE a successful payment land afterwards and show an
+    administrator a warning that was already out of date — the plan half and the payment half of
+    this page must agree about what "newest" means.
+- **What each event means** is a list in the one module: `subscription.activated` /
+  `subscription.created` → PRO; `subscription.canceled` / `expired` / `paused` → FREE;
+  `subscription.updated` reconciles on the status it carries (`active`/`trialing` → PRO,
+  `canceled`/`expired`/`paused` → FREE); **`past_due` and `transaction.payment_failed` move
+  nothing** — the provider is still trying and the company keeps Pro through the dunning. An event
+  type this build does not recognise is recorded and changes nothing.
+- **The `BillingEvent` row is the record that a delivery ARRIVED; the `ActivityLog` row
+  (`BILLING_PLAN_CHANGED`) is the record that the company MOVED.** A webhook that changes nothing
+  writes only the first — the same reasoning that keeps a limit refusal out of the audit trail.
+  The audit row carries the old plan, the new plan and the provider's event id and **nothing from
+  the payload**, and it is the one row in this app written with **no actor**: nobody here pressed
+  anything. `startUpgrade` and `openBillingPortal` write `BILLING_CHECKOUT_STARTED` and
+  `BILLING_PORTAL_OPENED`, both without any address.
+- **WHAT IS DELIBERATELY NOT STORED.** No card, no token, no API key, no price, no invoice, no
+  amount, no renewal date, no subscription status column and no "past due" flag. The three columns
+  the plan migration added — `plan`, `billingCustomerId`, `billingSubscriptionId` — are the whole
+  footprint, and the two ids are identifiers at the provider and nothing more. They are **kept after
+  a cancellation** on purpose: that is how "Manage billing" still works and how a resubscription is
+  recognised as the same customer.
+  - Which means **the screen cannot honestly show a renewal date, and does not**. It says the
+    provider holds the next payment date, the invoices and the card, and points at Manage billing.
+  - **"A payment did not go through" is derived, not stored**: the newest `BillingEvent` for that
+    company among the payment-signal events, exactly as OVERDUE and a locked phase are derived. It
+    is only ever as good as the last webhook that arrived, and the copy says nothing more than that.
+  - **A cancelled-but-still-inside-the-paid-period state is not modelled**, because nothing we store
+    could know the period end. A cancellation drops the company to FREE when the webhook says so.
+- **The Billing page stays a server component**; the only client code on it is
+  `admin-billing-actions.tsx` — the two buttons and the strip shown on returning from checkout. That
+  strip is honest about the lag: the plan flip arrives by webhook a moment after the browser does,
+  so while the company still reads FREE it says "payment received, waiting for the final
+  confirmation", asks the page to re-render itself every five seconds (the page is already a server
+  read, so refreshing it keeps one source of truth rather than adding a second), and after two
+  minutes stops and softens the wording. **It never says "you're on Pro" before the database does.**
+  A cancelled or abandoned checkout shows nothing at all.
+
+**Any change touching this area adds or extends a test in
+`src/server/__tests__/billing-provider.service.test.ts` in the same change** — `global.fetch` is
+stubbed and every webhook body is crafted and signed with a test secret, so no test ever reaches a
+real payment provider — and the tenant half in `org-isolation.service.test.ts`, which proves a
+verified webhook only ever moves the company its payload names.
 
 ## Verify recipe (run in this order, all must pass)
 

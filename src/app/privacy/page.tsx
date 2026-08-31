@@ -164,6 +164,26 @@ export default function PrivacyPage() {
       </section>
 
       <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
+        <h2 className="text-base font-semibold text-[var(--brand-ink)]">
+          Paying for a plan, if your company does
+        </h2>
+        <p>
+          Payments are handled entirely by Paddle, which is the seller of record: you buy from
+          Paddle, they take the payment, they work out and charge the right tax for your country,
+          and they issue the receipt. When your administrator upgrades, they are taken to Paddle&apos;s
+          own page to pay and come straight back here afterwards.
+        </p>
+        <p>
+          <strong>No card details ever reach this app.</strong> We store which plan your company is
+          on and two identifiers Paddle gives us for your company&apos;s customer and subscription
+          records — nothing else. No card number, no billing address, no invoice and no amount is
+          held here. &quot;Manage billing&quot; opens your own page at Paddle, where those things
+          live, and what you do there is covered by Paddle&apos;s own privacy policy rather than
+          this one.
+        </p>
+      </section>
+
+      <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
         <h2 className="text-base font-semibold text-[var(--brand-ink)]">The emails we send you</h2>
         <p>
           There are only three, and each is about your account rather than your work: an invitation
@@ -187,8 +207,9 @@ export default function PrivacyPage() {
           are in: assigning and tracking work, gating task completion on required documents, keeping
           a dependable audit trail, and notifying people about work relevant to them. Nothing here is
           used for advertising and nothing is ever sold. The only information that leaves this app is
-          the chat copy described above, while your administrator has that switched on, and the
-          account emails described below.
+          the chat copy described above, while your administrator has that switched on, the account
+          emails described below, and — if your company pays for a plan — your company&apos;s own
+          identifier passed to the payment provider, so they can tell us which company paid.
         </p>
       </section>
 

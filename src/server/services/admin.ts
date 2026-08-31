@@ -5,6 +5,7 @@
 // Every mutation: assertCan → transaction → audit row in the same transaction → typed DTO.
 // Passwords are hashed before they reach the database and never appear in an audit row or a log.
 
+import { isAccessExpired } from "@/lib/access-expiry";
 import { hashPassword } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { DISCIPLINE_PALETTE, isPaletteColor } from "@/lib/discipline-colors";
@@ -29,6 +30,7 @@ import {
   unusablePasswordHash,
 } from "@/server/services/account";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
+import { assertUserRoom } from "@/server/services/billing";
 import { emailAvailable } from "@/server/services/email";
 
 /** The roles whose work always belongs to one discipline. */
@@ -182,6 +184,11 @@ function accessExpiresFor(role: RoleName, accessExpiresAt: Date | null | undefin
 export async function createUser(actor: ActorContext, input: CreateUserInput): Promise<UserDTO> {
   assertCan(actor, "MANAGE_USERS");
 
+  // The plan's ceiling, before anything is written, and the same ceiling whichever way somebody is
+  // being added: a first password or an emailed invitation both end in one more account that can
+  // sign in. Deactivated accounts are not counted — see countUsers().
+  await assertUserRoom(actor);
+
   const invited = input.mode === "INVITE";
   // Dormant is not a half-state: with no mail provider the invite path does not exist at all, and
   // the dialog never offers it. This is the server saying the same thing.
@@ -320,6 +327,18 @@ export async function updateUser(actor: ActorContext, input: UpdateUserInput): P
       );
     }
   }
+
+  // GIVING A SEAT BACK IS TAKING A SEAT. Somebody who was not counted against the plan and will be
+  // afterwards needs room for exactly the same reason a brand-new account does — otherwise
+  // deactivating ten people, adding ten more and switching the first ten back on would leave a
+  // ten-seat company with twenty people who can sign in. Extending an expired contractor's access
+  // is the same move by another route, so both are asked the same question, using the same
+  // definition of "counts" that countUsers() uses.
+  const countedBefore =
+    existing.isActive && !isAccessExpired({ role: existing.role, accessExpiresAt: existing.accessExpiresAt });
+  const countsAfter =
+    nextIsActive && !isAccessExpired({ role: nextRole, accessExpiresAt: nextAccessExpiresAt });
+  if (!countedBefore && countsAfter) await assertUserRoom(actor);
 
   const passwordHash = input.password ? await hashPassword(input.password) : undefined;
 
