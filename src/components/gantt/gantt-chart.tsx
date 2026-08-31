@@ -39,7 +39,8 @@ import {
   statusColor,
   useToast,
 } from "@/components/ui";
-import type { GanttDTO, ProjectDTO, TaskStatusName } from "@/lib/zod-schemas";
+import { LockIcon } from "@/components/shell/icons";
+import type { GanttDTO, PhaseDTO, ProjectDTO, TaskStatusName } from "@/lib/zod-schemas";
 
 const TREE_WIDTH = 320;
 const BAR_HEIGHT = 16;
@@ -49,7 +50,8 @@ const HANDLE_WIDTH = 8;
 type Row = {
   key: string;
   id: string;
-  kind: "MAIN" | "DISCIPLINE";
+  /** A PHASE row is a band header: a label across the schedule, never a bar and never draggable. */
+  kind: "MAIN" | "DISCIPLINE" | "PHASE";
   title: string;
   startDate: Date | null;
   deadline: Date;
@@ -62,6 +64,10 @@ type Row = {
   editable: boolean;
   href: string;
   mainTaskId: string;
+  /** True for a band header and for every bar inside a locked phase — drawn muted, with a padlock. */
+  locked: boolean;
+  /** Only on a band header: how much of that phase is finished. */
+  phaseCounts: { completedCount: number; taskCount: number } | null;
 };
 
 type Drag = { rowKey: string; mode: "move" | "resize"; startX: number; days: number };
@@ -96,11 +102,18 @@ export function GanttChart({
   gantt,
   project,
   me,
+  phases,
   queryKey,
 }: {
   gantt: GanttDTO;
   project: ProjectDTO | undefined;
   me: MeDTO | undefined;
+  /**
+   * The project's stage gates, in gate order. Given them, the chart draws phase bands: a labelled
+   * header row per phase with its tasks beneath it, and a muted, padlocked treatment on a locked
+   * one. Left out (My tasks, a single main task), the schedule is drawn flat as before.
+   */
+  phases?: PhaseDTO[];
   /** The query key holding this schedule — it is patched first and refreshed after. */
   queryKey: readonly unknown[];
 }) {
@@ -133,7 +146,9 @@ export function GanttChart({
   const rows = useMemo<Row[]>(() => {
     const canEditMain = isManagerOn(me, project);
     const out: Row[] = [];
-    for (const task of gantt.mainTasks) {
+
+    /** One main task and, unless it is collapsed, its discipline work beneath it. */
+    function pushTask(task: GanttDTO["mainTasks"][number], locked: boolean, depth: number) {
       out.push({
         key: `main-${task.id}`,
         id: task.id,
@@ -146,12 +161,14 @@ export function GanttChart({
         colorHex: null,
         disciplineCode: null,
         assigneeName: null,
-        depth: 0,
+        depth,
         editable: canEditMain,
         href: `/tasks/${task.id}`,
         mainTaskId: task.id,
+        locked,
+        phaseCounts: null,
       });
-      if (collapsed.has(task.id)) continue;
+      if (collapsed.has(task.id)) return;
       for (const subtask of task.disciplineTasks) {
         out.push({
           key: `discipline-${subtask.id}`,
@@ -165,15 +182,62 @@ export function GanttChart({
           colorHex: subtask.disciplineColorHex,
           disciplineCode: subtask.disciplineCode,
           assigneeName: subtask.assigneeName,
-          depth: 1,
+          depth: depth + 1,
           editable: isLeadOrAboveOn(me, project, disciplineIdFor.get(subtask.disciplineCode)),
           href: `/discipline-tasks/${subtask.id}`,
           mainTaskId: task.id,
+          locked,
+          phaseCounts: null,
         });
       }
     }
+
+    /** A band header row. It carries no dates: the deadline is only there to satisfy the shape. */
+    function pushBand(phase: PhaseDTO | null, first: Date) {
+      out.push({
+        key: phase ? `phase-${phase.id}` : "phase-unphased",
+        id: phase?.id ?? "unphased",
+        kind: "PHASE",
+        title: phase?.name ?? "Unphased",
+        startDate: null,
+        deadline: first,
+        status: "NOT_STARTED",
+        progressPct: null,
+        colorHex: null,
+        disciplineCode: null,
+        assigneeName: null,
+        depth: 0,
+        editable: false,
+        href: "",
+        mainTaskId: "",
+        locked: phase?.locked ?? false,
+        phaseCounts: phase
+          ? { completedCount: phase.completedCount, taskCount: phase.taskCount }
+          : null,
+      });
+    }
+
+    const banded = (phases ?? []).length > 0;
+    if (!banded) {
+      for (const task of gantt.mainTasks) pushTask(task, false, 0);
+      return out;
+    }
+
+    for (const phase of phases ?? []) {
+      const tasks = gantt.mainTasks.filter((task) => task.phaseId === phase.id);
+      if (tasks.length === 0) continue;
+      pushBand(phase, tasks[0].deadline);
+      for (const task of tasks) pushTask(task, phase.locked, 1);
+    }
+
+    const unphased = gantt.mainTasks.filter((task) => !task.phaseId);
+    if (unphased.length > 0) {
+      pushBand(null, unphased[0].deadline);
+      for (const task of unphased) pushTask(task, false, 1);
+    }
+
     return out;
-  }, [gantt, collapsed, me, project, disciplineIdFor]);
+  }, [gantt, collapsed, me, project, phases, disciplineIdFor]);
 
   /** The dates a row is drawn with right now — the dragged or nudged row moves before it saves. */
   function shownDates(row: Row): { startDate: Date | null; deadline: Date } {
@@ -198,6 +262,10 @@ export function GanttChart({
   }
 
   async function save(row: Row, startDate: Date | null, deadline: Date) {
+    // A band header has no dates of its own, so it can never be saved. Nothing offers to drag one;
+    // this is the type-level proof that nothing ever will.
+    if (row.kind === "PHASE") return;
+
     const previous = queryClient.getQueryData<GanttDTO>(queryKey);
     queryClient.setQueryData<GanttDTO>(queryKey, (current) =>
       patchDates(current, row, startDate, deadline),
@@ -386,6 +454,31 @@ export function GanttChart({
           </div>
           {rows.map((row) => {
             const dates = shownDates(row);
+
+            // A phase band: the gate's name, how far it has got, and a padlock when it is shut.
+            if (row.kind === "PHASE") {
+              return (
+                <div
+                  key={row.key}
+                  className="flex items-center gap-2 border-b border-[var(--border)] bg-[var(--page-bg)] px-2 text-xs font-semibold uppercase tracking-wide"
+                  style={{
+                    height: ROW_HEIGHT,
+                    color: row.locked ? "var(--brand-gray)" : "var(--brand-ink)",
+                  }}
+                >
+                  {row.locked ? <LockIcon size={12} /> : null}
+                  <span className="min-w-0 flex-1 truncate" title={row.title}>
+                    {row.title}
+                  </span>
+                  {row.phaseCounts ? (
+                    <span className="shrink-0 font-normal normal-case text-[var(--brand-gray)]">
+                      {row.phaseCounts.completedCount}/{row.phaseCounts.taskCount}
+                    </span>
+                  ) : null}
+                </div>
+              );
+            }
+
             return (
               <div
                 key={row.key}
@@ -426,7 +519,7 @@ export function GanttChart({
                 <Link
                   href={row.href}
                   className={`min-w-0 flex-1 truncate hover:underline ${
-                    row.depth === 0
+                    row.kind === "MAIN"
                       ? "font-semibold text-[var(--brand-ink)]"
                       : "text-[var(--brand-text)]"
                   }`}
@@ -537,6 +630,31 @@ export function GanttChart({
             />
 
             {rows.map((row, index) => {
+              // A phase band is drawn as a quiet stripe across the whole schedule — a stage gate is
+              // a period, not a bar, and a locked one is muted further still.
+              if (row.kind === "PHASE") {
+                return (
+                  <g key={row.key}>
+                    <rect
+                      x={0}
+                      y={index * ROW_HEIGHT}
+                      width={width}
+                      height={ROW_HEIGHT}
+                      fill="var(--page-bg)"
+                      opacity={row.locked ? 0.9 : 0.6}
+                    />
+                    <text
+                      x={6}
+                      y={index * ROW_HEIGHT + ROW_HEIGHT / 2 + 3}
+                      fontSize={10}
+                      fill="var(--brand-gray)"
+                    >
+                      {row.locked ? `${row.title} — locked` : row.title}
+                    </text>
+                  </g>
+                );
+              }
+
               const dates = shownDates(row);
               const y = index * ROW_HEIGHT + BAR_TOP;
               const label = `${row.title}, ${
@@ -571,7 +689,9 @@ export function GanttChart({
                   event.preventDefault();
                   setDrag({ rowKey: row.key, mode: "move", startX: event.clientX, days: 0 });
                 },
-                style: { cursor: row.editable ? "grab" : "not-allowed" },
+                // Work inside a locked phase is still shown and still moves in time — it simply
+                // cannot be completed, so it is drawn quieter than the rest.
+                style: { cursor: row.editable ? "grab" : "not-allowed", opacity: row.locked ? 0.5 : 1 },
               };
 
               // A task with no start date is a single moment: draw it as a diamond on its deadline.

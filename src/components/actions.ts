@@ -18,6 +18,16 @@ export {
   updateTaskDates,
 } from "@/server/actions/main-tasks";
 
+// The stage gates: phases, their order, and the recorded override that opens a locked one.
+export {
+  createPhase,
+  renamePhase,
+  reorderPhases,
+  deletePhase,
+  overridePhaseLock,
+  setMainTaskPhase,
+} from "@/server/actions/phases";
+
 export {
   createUser,
   updateUser,

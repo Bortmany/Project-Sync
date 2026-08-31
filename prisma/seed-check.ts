@@ -3,6 +3,7 @@
 
 import "dotenv/config";
 import { prisma } from "@/lib/db";
+import { phaseLockedFor } from "@/lib/phase-lock";
 import { effectiveStatus, isOverdue } from "@/lib/progress";
 
 const PROJECT_CODE = "SUR-EXP";
@@ -64,6 +65,43 @@ async function main() {
     where: { projectId: project.id, entityId: hazop.id, action: "OVERRIDE_APPLIED" },
   });
   check(overrideRows >= 1, "The override wrote an OVERRIDE_APPLIED audit row");
+
+  // The stage gates. Locked is derived here exactly as the app derives it — if it were ever stored,
+  // this check would be reading the app's own opinion back to itself instead of testing it.
+  const phases = await prisma.projectPhase.findMany({ where: { projectId: project.id } });
+  const phased = await prisma.mainTask.findMany({
+    where: { projectId: project.id, phaseId: { not: null }, deletedAt: null },
+    select: { phaseId: true, status: true, statusOverride: true },
+  });
+  const gates = phaseLockedFor(
+    phases.map((phase) => {
+      const own = phased.filter((task) => task.phaseId === phase.id);
+      return {
+        id: phase.id,
+        name: phase.name,
+        sortOrder: phase.sortOrder,
+        overridden: phase.overriddenById !== null,
+        taskCount: own.length,
+        completedCount: own.filter(
+          (task) => effectiveStatus(task.status, task.statusOverride) === "COMPLETED",
+        ).length,
+      };
+    }),
+  );
+  const gate = (name: string) => [...gates.values()].find((row) => row.name === name);
+
+  check(phases.length === 5, "The demo project has its five oil and gas phases", `saw ${phases.length}`);
+  check(gate("FEED")?.locked === false, "FEED, the first phase, is never locked");
+  check(
+    gate("Detail design")?.locked === true &&
+      gate("Detail design")?.lockedByPhaseName === "FEED",
+    "Detail design is locked until FEED is complete",
+    `saw ${gate("Detail design")?.lockedByPhaseName ?? "no lock"}`,
+  );
+  check(
+    inspection.phaseId === null,
+    "The inspection close-out sits outside every phase, so it is never gated",
+  );
 
   const activity = await prisma.activityLog.count({ where: { projectId: project.id } });
   check(activity > 30, "The demo project has a real audit trail (more than 30 entries)", `saw ${activity}`);

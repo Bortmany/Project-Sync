@@ -8,7 +8,9 @@ import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { createMainTask } from "@/components/actions";
 import { fieldError, useAction } from "@/components/hooks/use-action";
+import { usePhases } from "@/components/hooks/use-api";
 import { toDateInputValue } from "@/components/format";
+import { defaultPhaseForNewWork } from "@/lib/phase-lock";
 import {
   Button,
   DateInput,
@@ -53,7 +55,14 @@ export function NewMainTaskDialog({
   const router = useRouter();
   const queryClient = useQueryClient();
   const { run, pending, error, fieldErrors } = useAction();
+  const phases = usePhases(project.id);
 
+  // New work lands where the team is actually working — NOT simply in the first unlocked phase,
+  // which is always phase one and would drag every new task back to the start of the project once
+  // that phase was finished. The rule lives in src/lib/phase-lock.ts.
+  const defaultPhaseId = defaultPhaseForNewWork(phases.data ?? []);
+
+  const [phaseId, setPhaseId] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<PriorityName>("MEDIUM");
@@ -66,6 +75,10 @@ export function NewMainTaskDialog({
     startDate && deadline && deadline < startDate
       ? "Deadline can't be before the start date."
       : undefined;
+
+  // "" means "not chosen yet", so the default follows the phases as soon as they arrive; the
+  // explicit "No phase" option is a separate value, and a task in no phase is never gated.
+  const selectedPhase = phaseId || defaultPhaseId || "";
 
   const selected = Object.entries(rows);
   const everyoneAssigned = selected.every(([, row]) => row.assigneeId.length > 0);
@@ -100,6 +113,7 @@ export function NewMainTaskDialog({
   }
 
   function reset() {
+    setPhaseId("");
     setTitle("");
     setDescription("");
     setPriority("MEDIUM");
@@ -129,6 +143,7 @@ export function NewMainTaskDialog({
       () =>
         createMainTask({
           projectId: project.id,
+          phaseId: selectedPhase === "NONE" || !selectedPhase ? null : selectedPhase,
           title: title.trim(),
           description: description.trim(),
           priority,
@@ -222,6 +237,25 @@ export function NewMainTaskDialog({
               />
             </Field>
           </div>
+          {(phases.data ?? []).length > 0 ? (
+            <Field
+              label="Phase"
+              hint="A phase stays locked until the phase before it is complete. Work can be planned into a locked phase; it just can't be completed there yet."
+            >
+              <Select
+                value={selectedPhase}
+                onChange={(event) => setPhaseId(event.target.value)}
+              >
+                {(phases.data ?? []).map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                    {item.locked ? " (locked)" : ""}
+                  </option>
+                ))}
+                <option value="NONE">No phase</option>
+              </Select>
+            </Field>
+          ) : null}
           <Field label="Owner">
             <Select value={ownerId} onChange={(event) => setOwnerId(event.target.value)}>
               <option value="">No owner yet</option>

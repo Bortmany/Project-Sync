@@ -10,6 +10,7 @@ import {
   clearOverride,
   createDisciplineTask,
   overrideMainTaskStatus,
+  setMainTaskPhase,
   updateMainTask,
 } from "@/components/actions";
 import { MainTaskActivity } from "@/components/activity/activity-feeds";
@@ -21,6 +22,7 @@ import {
   isManagerOn,
   useMainTask,
   useMe,
+  usePhases,
   useProject,
 } from "@/components/hooks/use-api";
 import { FavoriteStar } from "@/components/shell/favorite-star";
@@ -69,12 +71,14 @@ function EditDetailsDialog({
 }) {
   const queryClient = useQueryClient();
   const { run, pending, error, fieldErrors } = useAction();
+  const phases = usePhases(task.projectId);
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
   const [priority, setPriority] = useState<PriorityName>(task.priority);
   const [startDate, setStartDate] = useState(toDateInputValue(task.startDate));
   const [deadline, setDeadline] = useState(toDateInputValue(task.deadline));
   const [ownerId, setOwnerId] = useState(task.ownerId ?? "");
+  const [phaseId, setPhaseId] = useState(task.phaseId ?? "NONE");
 
   const dateOrderError =
     startDate && deadline && deadline < startDate
@@ -96,8 +100,8 @@ function EditDetailsDialog({
             disabled={!title.trim() || !deadline || Boolean(dateOrderError)}
             onClick={() =>
               run(
-                () =>
-                  updateMainTask({
+                async () => {
+                  const saved = await updateMainTask({
                     id: task.id,
                     title: title.trim(),
                     description: description.trim(),
@@ -105,13 +109,37 @@ function EditDetailsDialog({
                     startDate: startDate ? new Date(startDate) : null,
                     deadline: new Date(deadline),
                     ownerId: ownerId || null,
-                  }),
+                  });
+                  if (!saved.ok) return saved;
+
+                  // Moving between phases is its own recorded change (setMainTaskPhase), so it is
+                  // sent separately and only when the choice actually changed. Its answer is the
+                  // one that decides how this save reports: a refused move is not a saved task.
+                  const next = phaseId === "NONE" ? null : phaseId;
+                  if (next === (task.phaseId ?? null)) return saved;
+
+                  const moved = await setMainTaskPhase({ id: task.id, phaseId: next });
+                  if (!moved.ok) {
+                    // The details did save, so the page behind the dialog is refreshed even though
+                    // this save is reported as a failure.
+                    void queryClient.invalidateQueries({ queryKey: ["task", task.id] });
+                    return {
+                      ok: false as const,
+                      error: `The details were saved, but the phase could not be changed. ${moved.error}`,
+                      fieldErrors: moved.fieldErrors,
+                    };
+                  }
+                  return moved;
+                },
                 {
                   success: "Task updated.",
                   failure: "Couldn't save these changes. Try again.",
                   onSuccess: () => {
                     void queryClient.invalidateQueries({ queryKey: ["task", task.id] });
                     void queryClient.invalidateQueries({ queryKey: ["project", task.projectId] });
+                    void queryClient.invalidateQueries({
+                      queryKey: ["project", task.projectId, "phases"],
+                    });
                     onClose();
                   },
                 },
@@ -155,6 +183,22 @@ function EditDetailsDialog({
             />
           </Field>
         </div>
+        {(phases.data ?? []).length > 0 ? (
+          <Field
+            label="Phase"
+            hint="Work can be moved into a locked phase at any time. It just can't be completed there until the gate opens."
+          >
+            <Select value={phaseId} onChange={(event) => setPhaseId(event.target.value)}>
+              {(phases.data ?? []).map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                  {item.locked ? " (locked)" : ""}
+                </option>
+              ))}
+              <option value="NONE">No phase</option>
+            </Select>
+          </Field>
+        ) : null}
         <Field label="Owner">
           <Select value={ownerId} onChange={(event) => setOwnerId(event.target.value)}>
             <option value="">No owner</option>
@@ -603,6 +647,14 @@ export function MainTaskView({ taskId }: { taskId: string }) {
                     </>
                   ) : (
                     <span className="text-[var(--brand-gray)]">No owner</span>
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-[var(--brand-gray)]">Phase</dt>
+                <dd className="mt-1 text-[var(--brand-ink)]">
+                  {data.phaseName ?? (
+                    <span className="text-[var(--brand-gray)]">No phase — never gated</span>
                   )}
                 </dd>
               </div>

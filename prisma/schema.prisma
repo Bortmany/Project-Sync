@@ -93,6 +93,7 @@ model User {
   createdMainTasks      MainTask[]          @relation("MainTaskCreatedBy")
   ownedMainTasks        MainTask[]          @relation("MainTaskOwner")
   overriddenMainTasks   MainTask[]          @relation("MainTaskOverriddenBy")
+  overriddenPhases      ProjectPhase[]      @relation("ProjectPhaseOverriddenBy")
   assignedTasks         DisciplineTask[]    @relation("DisciplineTaskAssignee")
   tasksAssignedByMe     DisciplineTask[]    @relation("DisciplineTaskAssignedBy")
   tasksCompletedByMe    DisciplineTask[]    @relation("DisciplineTaskCompletedBy")
@@ -166,6 +167,7 @@ model Project {
 
   disciplines ProjectDiscipline[]
   members     ProjectMember[]
+  phases      ProjectPhase[]
   mainTasks   MainTask[]
   documents   Document[]
   activity    ActivityLog[]
@@ -210,9 +212,34 @@ model ProjectMember {
   @@index([userId])
 }
 
+/// A stage gate on a project. A phase is LOCKED while any phase before it (lower sortOrder) still
+/// has a main task that is not complete — and "locked" is DERIVED at read time, never stored, in
+/// exactly the way OVERDUE is. The only legal way past a gate is the recorded override below:
+/// who, why (5 characters minimum) and when, with a PHASE_OVERRIDE_APPLIED audit row beside it.
+model ProjectPhase {
+  id             String    @id @default(cuid())
+  projectId      String
+  name           String
+  sortOrder      Int
+  overriddenById String?
+  overrideReason String?
+  overriddenAt   DateTime?
+  createdAt      DateTime  @default(now())
+
+  project      Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  overriddenBy User?   @relation("ProjectPhaseOverriddenBy", fields: [overriddenById], references: [id])
+
+  mainTasks MainTask[]
+
+  @@unique([projectId, name])
+  @@index([projectId, sortOrder])
+}
+
 model MainTask {
   id             String      @id @default(cuid())
   projectId      String
+  /// Which stage gate this task sits behind. Null means unphased — never gated.
+  phaseId        String?
   title          String
   description    String
   priority       Priority    @default(MEDIUM)
@@ -233,6 +260,9 @@ model MainTask {
   updatedAt      DateTime    @updatedAt
 
   project      Project @relation(fields: [projectId], references: [id])
+  // Restrict, not SetNull: a phase may only be deleted once no main task references it, and the
+  // service says so in plain English rather than silently unphasing somebody's work.
+  phase        ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: Restrict)
   createdBy    User    @relation("MainTaskCreatedBy", fields: [createdById], references: [id])
   owner        User?   @relation("MainTaskOwner", fields: [ownerId], references: [id])
   overriddenBy User?   @relation("MainTaskOverriddenBy", fields: [overriddenById], references: [id])

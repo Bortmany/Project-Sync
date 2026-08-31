@@ -19,6 +19,13 @@ export const ACTIVITY = {
   DISCIPLINE_REMOVED: "DISCIPLINE_REMOVED",
   MAIN_TASK_CREATED: "MAIN_TASK_CREATED",
   MAIN_TASK_UPDATED: "MAIN_TASK_UPDATED",
+  MAIN_TASK_PHASE_CHANGED: "MAIN_TASK_PHASE_CHANGED",
+  PHASE_CREATED: "PHASE_CREATED",
+  PHASE_RENAMED: "PHASE_RENAMED",
+  PHASES_REORDERED: "PHASES_REORDERED",
+  PHASE_DELETED: "PHASE_DELETED",
+  /** The recorded, authorised way past a stage gate — the phase-level twin of OVERRIDE_APPLIED. */
+  PHASE_OVERRIDE_APPLIED: "PHASE_OVERRIDE_APPLIED",
   OVERRIDE_APPLIED: "OVERRIDE_APPLIED",
   OVERRIDE_CLEARED: "OVERRIDE_CLEARED",
   TASK_CREATED: "TASK_CREATED",
@@ -54,6 +61,7 @@ export type AppendActivityInput = {
     | "Project"
     | "ProjectMember"
     | "ProjectDiscipline"
+    | "ProjectPhase"
     | "MainTask"
     | "DisciplineTask"
     | "Document"

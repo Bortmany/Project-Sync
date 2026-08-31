@@ -9,6 +9,7 @@
 import "dotenv/config";
 import argon2 from "argon2";
 import { prisma } from "@/lib/db";
+import { phaseLockedFor, sortPhases } from "@/lib/phase-lock";
 import { effectiveStatus, isOverdue } from "@/lib/progress";
 import type { RoleName, TaskStatusName } from "@/lib/zod-schemas";
 import { actorForUser, type ActorContext } from "@/server/actor";
@@ -20,6 +21,7 @@ import {
   completeDisciplineTask,
   createMainTask,
   overrideMainTaskStatus,
+  setMainTaskPhase,
   updateDisciplineTaskStatus,
 } from "@/server/services/tasks";
 
@@ -99,6 +101,12 @@ type SeedMainTask = {
   startDate: string;
   deadline: string;
   owner: string;
+  /**
+   * Which stage gate this work sits behind, by phase name. Left out, the task is unphased and is
+   * never gated — the demo shows both. Phases are assigned AFTER the work has been driven to its
+   * end state, because a locked phase would (rightly) refuse those very completions.
+   */
+  phase?: string;
   subtasks: SeedSubtask[];
   /** PROC → MECH → INSP style chains, by subtask title. */
   chain?: string[];
@@ -114,6 +122,7 @@ const WORK: SeedMainTask[] = [
     startDate: "2026-03-15",
     deadline: "2026-09-30",
     owner: "layla.alriyami@tielora.example",
+    phase: "FEED",
     subtasks: [
       {
         discipline: "MECH",
@@ -165,6 +174,7 @@ const WORK: SeedMainTask[] = [
     startDate: "2026-06-01",
     deadline: "2026-11-15",
     owner: "omar.alhabsi@tielora.example",
+    phase: "Detail design",
     subtasks: [
       { discipline: "MECH", title: "Mechanical datasheets compiled", assignee: "john.carter@tielora.example", deadline: "2026-10-20", end: "IN_PROGRESS" },
       { discipline: "ELEC", title: "Electrical load list finalised", assignee: "fatma.alzadjali@tielora.example", deadline: "2026-10-22", end: "IN_PROGRESS" },
@@ -204,6 +214,7 @@ const WORK: SeedMainTask[] = [
     startDate: "2026-06-15",
     deadline: "2026-08-01",
     owner: "omar.alhabsi@tielora.example",
+    phase: "Procurement",
     subtasks: [
       { discipline: "MECH", title: "Compressor general arrangement reviewed", assignee: "khalid.alfarsi@tielora.example", deadline: "2026-07-20", end: "COMPLETED" },
       { discipline: "ELEC", title: "Motor data sheets reviewed", assignee: "ahmed.albalushi@tielora.example", deadline: "2026-07-22", end: "IN_PROGRESS" },
@@ -218,6 +229,7 @@ const WORK: SeedMainTask[] = [
     startDate: "2026-04-10",
     deadline: "2026-10-15",
     owner: "layla.alriyami@tielora.example",
+    phase: "FEED",
     subtasks: [
       { discipline: "HSE", title: "Safety-critical actions closed", assignee: "salim.alhinai@tielora.example", deadline: "2026-09-10", end: "COMPLETED" },
       { discipline: "PROC", title: "Relief scenario recalculated", assignee: "maria.santos@tielora.example", deadline: "2026-09-15", end: "COMPLETED" },
@@ -244,6 +256,7 @@ const WORK: SeedMainTask[] = [
     startDate: "2026-12-01",
     deadline: "2027-02-15",
     owner: "omar.alhabsi@tielora.example",
+    phase: "Commissioning",
     subtasks: [
       { discipline: "PROC", title: "Process line walkdown", assignee: "maria.santos@tielora.example", deadline: "2027-01-10" },
       { discipline: "MECH", title: "Mechanical completion walkdown", assignee: "khalid.alfarsi@tielora.example", deadline: "2027-01-25" },
@@ -384,6 +397,29 @@ async function main() {
     }
   }
 
+  // The stage gates. createProject already made the five OIL_AND_GAS phases; the work is put behind
+  // them LAST, once every completion above has happened, because a locked phase refuses exactly
+  // those transitions. The result is a realistic mid-project picture: FEED is still open (the civil
+  // load check is unfinished), so Detail design, Procurement, Construction and Commissioning are all
+  // locked, and the inspection close-out sits outside the gates entirely.
+  const phaseIdByName = new Map(
+    (await prisma.projectPhase.findMany({ where: { projectId: project.id } })).map((phase) => [
+      phase.name,
+      phase.id,
+    ]),
+  );
+  for (const work of WORK) {
+    if (!work.phase) continue;
+    const mainTask = await prisma.mainTask.findFirstOrThrow({
+      where: { projectId: project.id, title: work.title },
+      select: { id: true },
+    });
+    await setMainTaskPhase(adminActor, {
+      id: mainTask.id,
+      phaseId: phaseIdByName.get(work.phase) as string,
+    });
+  }
+
   await seedDocuments({ projectId: project.id, userIdByEmail });
   await seedComments({ projectId: project.id, userIdByEmail, actorFor });
 
@@ -477,6 +513,8 @@ async function resetDemoProject(projectId: string): Promise<void> {
   await prisma.document.deleteMany({ where: { projectId } });
   await prisma.disciplineTask.deleteMany({ where: { id: { in: subtaskIds } } });
   await prisma.mainTask.deleteMany({ where: { projectId } });
+  // Phases go after the main tasks that point at them — the same order the Restrict rule requires.
+  await prisma.projectPhase.deleteMany({ where: { projectId } });
   await prisma.projectMember.deleteMany({ where: { projectId } });
   await prisma.projectDiscipline.deleteMany({ where: { projectId } });
   await prisma.activityLog.deleteMany({ where: { projectId } });
@@ -528,6 +566,37 @@ async function report(): Promise<void> {
   out(line(headers));
   out(widths.map((width) => "-".repeat(width)).join("  "));
   for (const row of rows) out(line(row));
+  // The stage gates, with the lock state derived exactly the way the app derives it.
+  const phases = await prisma.projectPhase.findMany({ where: { projectId: project.id } });
+  const phaseTasks = await prisma.mainTask.findMany({
+    where: { projectId: project.id, phaseId: { not: null }, deletedAt: null },
+    select: { phaseId: true, status: true, statusOverride: true },
+  });
+  const gates = phaseLockedFor(
+    phases.map((phase) => {
+      const own = phaseTasks.filter((task) => task.phaseId === phase.id);
+      return {
+        id: phase.id,
+        name: phase.name,
+        sortOrder: phase.sortOrder,
+        overridden: phase.overriddenById !== null,
+        taskCount: own.length,
+        completedCount: own.filter(
+          (task) => effectiveStatus(task.status, task.statusOverride) === "COMPLETED",
+        ).length,
+      };
+    }),
+  );
+
+  out("");
+  out("Phases (locked is derived, never stored):");
+  for (const gate of sortPhases([...gates.values()])) {
+    out(
+      `  ${gate.name.padEnd(16)} ${gate.completedCount}/${gate.taskCount} complete` +
+        (gate.locked ? `  — locked until ${gate.lockedByPhaseName} is complete` : ""),
+    );
+  }
+
   out("");
   out(`${users} people, ${mainTasks.length} main tasks, ${activity} audit entries on this project.`);
   out("");

@@ -20,8 +20,10 @@ import {
   ProjectMemberDTO as ProjectMemberSchema,
   ProjectDisciplineDTO as ProjectDisciplineSchema,
 } from "@/lib/zod-schemas";
+import type { Prisma } from "@/generated/prisma/client";
 import type { ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
+import { phasesForTemplate, templateNameOf } from "@/server/industry-templates";
 import { checkDto, checkDtoList } from "@/server/serialize";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
 
@@ -203,14 +205,25 @@ export async function createProject(actor: ActorContext, input: CreateProjectInp
       },
     });
 
+    // The stage gates a project starts with, from the company's industry template. They arrive in
+    // the same transaction as the project, so a project is never briefly ungated.
+    const phases = await createDefaultPhases(tx, project.id, actor.orgId);
+
     await appendActivity(tx, {
       actorId: actor.userId,
       projectId: project.id,
       entityType: "Project",
       entityId: project.id,
       action: ACTIVITY.PROJECT_CREATED,
-      summary: `${actor.name} created the project ${project.name}`,
-      metadata: { code: project.code, disciplines: disciplineIds.length, members: members.length },
+      summary:
+        `${actor.name} created the project ${project.name}` +
+        (phases.length > 0 ? ` with ${phases.length} phases: ${phases.join(" → ")}` : ""),
+      metadata: {
+        code: project.code,
+        disciplines: disciplineIds.length,
+        members: members.length,
+        phases,
+      },
     });
 
     return project.id;
@@ -576,6 +589,29 @@ async function buildProjectDisciplineDTO(rowId: string): Promise<ProjectDiscipli
     },
     "ProjectDisciplineDTO",
   );
+}
+
+/**
+ * The stage gates a brand-new project starts with, from its company's industry template
+ * (src/server/industry-templates.ts). Written inside createProject's own transaction, so a project
+ * and its gates arrive together. Projects created before phases existed have none, everything in
+ * them is unphased, and nothing is gated — there is nothing to backfill.
+ */
+async function createDefaultPhases(
+  tx: Prisma.TransactionClient,
+  projectId: string,
+  orgId: string,
+): Promise<string[]> {
+  const org = await tx.organization.findUnique({
+    where: { id: orgId },
+    select: { industryTemplate: true },
+  });
+  const names = phasesForTemplate(templateNameOf(org?.industryTemplate ?? "GENERIC"));
+
+  for (const [index, name] of names.entries()) {
+    await tx.projectPhase.create({ data: { projectId, name, sortOrder: index } });
+  }
+  return names;
 }
 
 /** A project's headline percentage: the average of its main tasks' own derived progress. */

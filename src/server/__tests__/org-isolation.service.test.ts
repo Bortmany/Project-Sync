@@ -32,6 +32,14 @@ import {
   uploadDocumentVersion,
 } from "@/server/services/documents";
 import { toggleFavorite } from "@/server/services/favorites";
+import {
+  createPhase,
+  deletePhase,
+  listPhasesForProject,
+  overridePhaseLock,
+  renamePhase,
+  reorderPhases,
+} from "@/server/services/phases";
 import { getProjectForActor, listProjectsForActor } from "@/server/services/projects";
 import {
   completeDisciplineTask,
@@ -39,6 +47,7 @@ import {
   getDisciplineTaskForActor,
   getMainTaskForActor,
   listMainTasksForProject,
+  setMainTaskPhase,
   updateDisciplineTaskStatus,
 } from "@/server/services/tasks";
 import { runSweepOnce } from "@/server/sweep";
@@ -232,6 +241,53 @@ describe("an administrator of one company cannot reach another company's work", 
     expect(
       await toggleFavorite(acme.admin, { targetType: "MAIN_TASK", targetId: acme.mainTaskId }),
     ).toEqual({ favorited: true });
+  });
+});
+
+describe("the stage gates belong to one company too", () => {
+  it("cannot list, rename, reorder, delete or override another company's phases", async () => {
+    const theirs = await createPhase(rival.admin, {
+      projectId: rival.projectId,
+      name: "Construction",
+    });
+
+    await expect(listPhasesForProject(acme.admin, rival.projectId)).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+    await expect(
+      createPhase(acme.admin, { projectId: rival.projectId, name: "Ours now" }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      renamePhase(acme.admin, { id: theirs.id, name: "Renamed by a stranger" }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      reorderPhases(acme.admin, { projectId: rival.projectId, phaseIds: [theirs.id] }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(deletePhase(acme.admin, { id: theirs.id })).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      overridePhaseLock(acme.admin, { id: theirs.id, reason: "Opening someone else's gate" }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    // Nothing of theirs moved, and no override was recorded on it.
+    const untouched = await prisma.projectPhase.findUniqueOrThrow({ where: { id: theirs.id } });
+    expect(untouched.name).toBe("Construction");
+    expect(untouched.overriddenById).toBeNull();
+    expect(await prisma.projectPhase.count({ where: { projectId: acme.projectId } })).toBe(0);
+  });
+
+  it("cannot move their work into a phase, or their phase onto their work", async () => {
+    const theirs = await createPhase(rival.admin, { projectId: rival.projectId, name: "FEED" });
+
+    await expect(
+      setMainTaskPhase(acme.admin, { id: rival.mainTaskId, phaseId: theirs.id }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    // Their phase is not found even for a task of their own company's neighbour.
+    await expect(
+      setMainTaskPhase(acme.admin, { id: acme.mainTaskId, phaseId: theirs.id }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    const untouched = await prisma.mainTask.findUniqueOrThrow({ where: { id: acme.mainTaskId } });
+    expect(untouched.phaseId).toBeNull();
   });
 });
 

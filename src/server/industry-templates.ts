@@ -57,6 +57,31 @@ export function disciplinesForTemplate(template: IndustryTemplateName): Discipli
   return INDUSTRY_TEMPLATES[template];
 }
 
+/**
+ * The stage gates a NEW PROJECT starts with, one set per industry template — the standard delivery
+ * sequence each industry works in. Order is the gate order: a phase is locked until every main task
+ * in the phases before it is complete. A project manager renames, reorders, adds and removes them
+ * afterwards; projects created before phases existed simply have none, and nothing is gated.
+ */
+export const PHASE_TEMPLATES: Record<IndustryTemplateName, string[]> = {
+  OIL_AND_GAS: ["FEED", "Detail design", "Procurement", "Construction", "Commissioning"],
+  CONSTRUCTION: ["Design", "Approvals", "Foundations", "Structure", "Fit-out", "Handover"],
+  GENERIC: ["Plan", "Execute", "Close"],
+};
+
+/** The phases a project started inside a company on this template gets, in gate order. */
+export function phasesForTemplate(template: IndustryTemplateName): string[] {
+  return PHASE_TEMPLATES[template];
+}
+
+/**
+ * The template a company is on, read back from the string stored on the Organization row.
+ * Anything unrecognised falls back to GENERIC rather than leaving a project with no phases at all.
+ */
+export function templateNameOf(stored: string): IndustryTemplateName {
+  return stored === "OIL_AND_GAS" || stored === "CONSTRUCTION" ? stored : "GENERIC";
+}
+
 /** True when every template only uses brand palette colours — proved by the signup tests. */
 export function templatesUsePaletteColorsOnly(): boolean {
   return Object.values(INDUSTRY_TEMPLATES)

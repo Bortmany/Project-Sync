@@ -261,6 +261,68 @@ export const UpsertProjectDisciplineInput = z.object({
 export type UpsertProjectDisciplineInput = z.infer<typeof UpsertProjectDisciplineInput>;
 
 /* ------------------------------------------------------------------ */
+/* Phases (the stage gates)                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One stage gate on a project. `locked` and `lockedByPhaseName` are DERIVED at read time from the
+ * phases before this one (src/lib/phase-lock.ts) — neither is ever stored, in the same way OVERDUE
+ * is never stored on a task.
+ */
+export const PhaseDTO = z.object({
+  id: id,
+  projectId: id,
+  name: z.string(),
+  sortOrder: z.number().int(),
+  locked: z.boolean(),
+  /** The phase this one is waiting for, or null when nothing is holding it. */
+  lockedByPhaseName: z.string().nullable(),
+  overridden: z.boolean(),
+  overrideReason: z.string().nullable(),
+  overriddenByName: z.string().nullable(),
+  overriddenAt: dateOut.nullable(),
+  taskCount: z.number().int(),
+  completedCount: z.number().int(),
+});
+export type PhaseDTO = z.infer<typeof PhaseDTO>;
+
+export const CreatePhaseInput = z.object({
+  projectId: id,
+  name: z.string().trim().min(1, "Give the phase a name.").max(60),
+});
+export type CreatePhaseInput = z.infer<typeof CreatePhaseInput>;
+
+export const RenamePhaseInput = z.object({
+  id: id,
+  name: z.string().trim().min(1, "Give the phase a name.").max(60),
+});
+export type RenamePhaseInput = z.infer<typeof RenamePhaseInput>;
+
+/** The full ordered list of the project's phase ids — nothing may be left out or invented. */
+export const ReorderPhasesInput = z.object({
+  projectId: id,
+  phaseIds: z.array(id).min(1).max(50),
+});
+export type ReorderPhasesInput = z.infer<typeof ReorderPhasesInput>;
+
+export const DeletePhaseInput = z.object({ id: id });
+export type DeletePhaseInput = z.infer<typeof DeletePhaseInput>;
+
+/** The recorded, authorised way past a stage gate. Same rule as a main-task status override. */
+export const OverridePhaseLockInput = z.object({
+  id: id,
+  reason: z.string().trim().min(5, "Give a short reason (at least 5 characters).").max(500),
+});
+export type OverridePhaseLockInput = z.infer<typeof OverridePhaseLockInput>;
+
+/** Moving a main task into a phase, or out of every phase. Allowed even into a locked phase. */
+export const SetMainTaskPhaseInput = z.object({
+  id: id,
+  phaseId: id.nullable(),
+});
+export type SetMainTaskPhaseInput = z.infer<typeof SetMainTaskPhaseInput>;
+
+/* ------------------------------------------------------------------ */
 /* Main tasks                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -287,6 +349,9 @@ export const MainTaskDTO = z.object({
   id: id,
   projectId: id,
   projectCode: z.string(),
+  /** The stage gate this task sits behind. Null means unphased — never gated. */
+  phaseId: id.nullable(),
+  phaseName: z.string().nullable(),
   title: z.string(),
   description: z.string(),
   priority: PrioritySchema,
@@ -319,6 +384,8 @@ export const MainTaskListItemDTO = z.object({
   id: id,
   projectId: id,
   projectCode: z.string(),
+  /** The stage gate this task sits behind, so a listing can be grouped by phase. */
+  phaseId: id.nullable(),
   title: z.string(),
   priority: PrioritySchema,
   deadline: dateOut,
@@ -333,6 +400,8 @@ export type MainTaskListItemDTO = z.infer<typeof MainTaskListItemDTO>;
 
 export const CreateMainTaskInput = z.object({
   projectId: id,
+  /** Optional: the stage gate the task belongs to. Left out, the task is unphased. */
+  phaseId: id.nullable().optional(),
   title: shortText,
   description: longText,
   priority: PrioritySchema.default("MEDIUM"),
@@ -670,6 +739,11 @@ export const GanttDTO = z.object({
     z.object({
       id: id,
       title: z.string(),
+      /**
+       * The stage gate this bar sits behind, so the project timeline can draw phase bands.
+       * Left out entirely by the schedules that have no project to band (My tasks).
+       */
+      phaseId: id.nullable().optional(),
       startDate: dateOut.nullable(),
       deadline: dateOut,
       status: TaskStatusSchema,

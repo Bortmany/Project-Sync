@@ -63,6 +63,36 @@ In practice:
 **Any change touching this area adds or extends a test in `src/lib/__tests__/progress.test.ts`
 (or the service-level equivalent) in the same change.** A guarantee without a test is a hope.
 
+## THE STAGE GATE (the golden rule, one level up)
+
+> A project's phases run in order. A phase is locked while any phase before it still has a main task
+> that is not complete, and work under a locked phase cannot be completed — except by a recorded,
+> authorized override.
+
+- **Locked is never stored.** It is derived at read time by `phaseLockedFor()` in
+  `src/lib/phase-lock.ts` from one grouped query per project (`phaseStatesFor()` in
+  `src/server/services/phases.ts`) — the same rule `OVERDUE` follows. There is no `locked` column and
+  there must never be one.
+- The **first phase is never locked**, an empty earlier phase gates nothing, and a **main task with
+  no phase (`phaseId` null) is never gated**. Projects created before phases existed have no phases
+  at all, so nothing about them changes.
+- A main task counted as complete includes one completed by an authorised `statusOverride`: the
+  effective status is the truth everywhere.
+- **What a locked phase refuses, server-side in the services**: any discipline-task status
+  transition under its main tasks (moving, completing, reopening) and a main-task `statusOverride`.
+  **What it still allows**: creating and editing tasks, assigning people, moving work into or out of
+  the phase, comments and document uploads. Teams prepare the next stage while the gate is shut.
+- The refusal is a precondition, checked **before** any transition is attempted — exactly like
+  `canCompleteDisciplineTask()`. `deriveMainTask()` remains the only writer of a main task's status.
+- The only way through is `overridePhaseLock()`: ADMIN / PROJECT_MANAGER, a reason of at least 5
+  characters, who / why / when written on the phase and a `PHASE_OVERRIDE_APPLIED` activity row in
+  the same transaction. An overridden phase stays open permanently.
+- Default phases come from the company's industry template (`PHASE_TEMPLATES` in
+  `src/server/industry-templates.ts`) and are created inside `createProject`'s own transaction.
+
+**Any change touching this area adds or extends a test in `src/lib/__tests__/phase-lock.test.ts` and
+`src/server/__tests__/phases.service.test.ts` in the same change.**
+
 ## House rules
 
 1. **Every mutation follows the same chain**, in this order:
@@ -138,6 +168,17 @@ In practice:
     and `PersonalTask` — a person's private to-do list. Both are personal preference data, owned by
     one person and read by nobody else. Additive only: no existing model, field, enum value or index
     was changed. The generated migration's five trigram `DropIndex` lines were deleted by hand.)
+  - `20260831000716_project_phases_stage_gates` (the stage gates. New `ProjectPhase` model — a
+    project's phases in `sortOrder`, cascading from `Project`, with the same three override columns a
+    main task carries (`overriddenById`, `overrideReason`, `overriddenAt`), `@@unique([projectId,
+    name])` and `@@index([projectId, sortOrder])`; plus one nullable `MainTask.phaseId` with an
+    `onDelete: Restrict` relation. Restrict, not SetNull, on purpose: a phase may only be deleted
+    once nothing references it, and the service says so in plain English before the database has to.
+    **Locked is never a column** — it is derived at read time in `src/lib/phase-lock.ts`, exactly as
+    `OVERDUE` is. Additive only: no existing model, field, enum value or index was changed, and on a
+    populated install every existing main task simply stays unphased and ungated. The generated
+    migration's five trigram `DropIndex` lines were deleted by hand.)
+
 - **Careful with `prisma migrate dev`:** the trigram search indexes are hand-written raw SQL that the
   Prisma schema does not know about, so the generated migration will try to DROP them. Delete those
   `DropIndex` lines from the generated `migration.sql` before it goes anywhere near a real database.
@@ -152,7 +193,8 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/projects` | GET | — | `ProjectListItemDTO[]` |
 | `/api/projects/[id]` | GET | — | `ProjectDTO` |
 | `/api/projects/[id]/main-tasks` | GET | query: `status`, `disciplineId`, `assigneeId`, `priority`, `q` | `MainTaskListItemDTO[]` |
-| `/api/projects/[id]/gantt` | GET | — | `GanttDTO` |
+| `/api/projects/[id]/phases` | GET | — | `PhaseDTO[]` (gate order; `locked` and `lockedByPhaseName` derived at read time, never stored) |
+| `/api/projects/[id]/gantt` | GET | — | `GanttDTO` (each main task carries its `phaseId`, so the project timeline can band the rows) |
 | `/api/tasks/[id]` | GET | — | `MainTaskDTO` |
 | `/api/tasks/[id]/gantt` | GET | — | `GanttDTO` |
 | `/api/tasks/[id]/documents` | GET | — | `DocumentDTO[]` |
@@ -194,6 +236,12 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `removeMember` | `{ projectId, userId }` | `ActionResult<{ removed: true }>` |
 | `upsertProjectDiscipline` | `UpsertProjectDisciplineInput` | `ActionResult<ProjectDisciplineDTO>` |
 | `removeProjectDiscipline` | `{ projectId, disciplineId }` | `ActionResult<{ removed: true }>` |
+| `createPhase` (ADMIN / PM; goes at the end of the sequence) | `CreatePhaseInput` | `ActionResult<PhaseDTO>` |
+| `renamePhase` (ADMIN / PM) | `RenamePhaseInput` | `ActionResult<PhaseDTO>` |
+| `reorderPhases` (ADMIN / PM; the FULL ordered id list, never a partial one) | `ReorderPhasesInput` | `ActionResult<PhaseDTO[]>` |
+| `deletePhase` (ADMIN / PM; refused while any main task still references it) | `DeletePhaseInput` | `ActionResult<{ removed: true }>` |
+| `overridePhaseLock` (ADMIN / PM; reason 5 characters minimum, writes `PHASE_OVERRIDE_APPLIED`) | `OverridePhaseLockInput` | `ActionResult<PhaseDTO>` |
+| `setMainTaskPhase` (allowed even into a locked phase — only completing is refused) | `SetMainTaskPhaseInput` | `ActionResult<MainTaskDTO>` |
 | `createMainTask` | `CreateMainTaskInput` | `ActionResult<MainTaskDTO>` |
 | `updateMainTask` | `UpdateMainTaskInput` | `ActionResult<MainTaskDTO>` |
 | `overrideMainTaskStatus` | `OverrideStatusInput` | `ActionResult<MainTaskDTO>` |

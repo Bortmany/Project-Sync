@@ -25,6 +25,7 @@ import type {
   MainTaskListItemDTO,
   OverrideStatusInput,
   PriorityName,
+  SetMainTaskPhaseInput,
   TaskStatusName,
   UpdateDisciplineTaskInput,
   UpdateMainTaskInput,
@@ -42,6 +43,12 @@ import { NotFoundError, ServiceError } from "@/server/errors";
 import { checkDto, checkDtoList } from "@/server/serialize";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
 import { notify } from "@/server/services/notify";
+import {
+  assertPhaseUnlocked,
+  gateChangeWords,
+  gateChangesBetween,
+  phaseStatesFor,
+} from "@/server/services/phases";
 import { assertCanViewProject } from "@/server/services/projects";
 
 /** The filters the main-task list accepts. */
@@ -156,6 +163,8 @@ export async function ganttForMainTask(actor: ActorContext, mainTaskId: string):
 type GanttTaskRow = {
   id: string;
   title: string;
+  /** Left undefined by schedules with no project behind them; the chart then draws no bands. */
+  phaseId?: string | null;
   startDate: Date | null;
   deadline: Date;
   status: TaskStatusName;
@@ -171,6 +180,7 @@ async function buildGantt(tasks: GanttTaskRow[]): Promise<GanttDTO> {
   const mainTasks = tasks.map((task) => ({
     id: task.id,
     title: task.title,
+    phaseId: task.phaseId ?? null,
     startDate: task.startDate,
     deadline: task.deadline,
     status: effectiveStatus(task.status, task.statusOverride),
@@ -215,12 +225,16 @@ export async function createMainTask(actor: ActorContext, input: CreateMainTaskI
   for (const task of input.disciplineTasks) {
     if (task.assigneeId) await assertOnProject(project.id, task.assigneeId, "assignee");
   }
+  // A task may be created straight into a locked phase — teams prepare the next stage ahead of the
+  // gate. Only completing work under it is refused.
+  if (input.phaseId) await assertPhaseOnProject(project.id, input.phaseId);
 
   const deadline = utcMidnight(input.deadline);
   const mainTaskId = await prisma.$transaction(async (tx) => {
     const mainTask = await tx.mainTask.create({
       data: {
         projectId: project.id,
+        phaseId: input.phaseId ?? null,
         title: input.title,
         description: input.description,
         priority: input.priority,
@@ -337,6 +351,68 @@ export async function updateMainTask(actor: ActorContext, input: UpdateMainTaskI
 }
 
 /**
+ * Moves a main task into a phase, or out of every phase ("No phase" — never gated).
+ *
+ * Allowed in both directions even when the target phase is locked: planning work into the next
+ * stage is exactly what a team does while a gate is shut. Only completion-type transitions are
+ * refused, and those are judged when they are attempted.
+ */
+export async function setMainTaskPhase(
+  actor: ActorContext,
+  input: SetMainTaskPhaseInput,
+): Promise<MainTaskDTO> {
+  const existing = await loadMainTask(actor, input.id);
+  assertCan(actor, "EDIT_MAIN_TASK", {
+    projectId: existing.projectId,
+    orgId: existing.project.orgId,
+  });
+
+  const phase = input.phaseId ? await assertPhaseOnProject(existing.projectId, input.phaseId) : null;
+  if ((existing.phaseId ?? null) === (phase?.id ?? null)) return buildMainTaskDTO(existing.id);
+
+  const before = existing.phaseId
+    ? await prisma.projectPhase.findUnique({
+        where: { id: existing.phaseId },
+        select: { name: true },
+      })
+    : null;
+
+  // Moving work in or out of a phase can open or shut a gate for the whole team — taking the last
+  // unfinished task out of a phase is a legitimate move AND a consequential one. The audit row names
+  // the gates it moved, worked out inside the same transaction so it can never be a guess.
+  const gatesBefore = await phaseStatesFor(existing.projectId);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.mainTask.update({
+      where: { id: existing.id },
+      data: { phaseId: phase?.id ?? null },
+    });
+
+    const changes = gateChangesBetween(gatesBefore, await phaseStatesFor(existing.projectId, tx));
+
+    await appendActivity(tx, {
+      actorId: actor.userId,
+      projectId: existing.projectId,
+      entityType: "MainTask",
+      entityId: existing.id,
+      action: ACTIVITY.MAIN_TASK_PHASE_CHANGED,
+      summary:
+        (phase
+          ? `${actor.name} moved "${existing.title}" into the phase "${phase.name}"`
+          : `${actor.name} took "${existing.title}" out of the phase "${before?.name ?? "it was in"}"`) +
+        gateChangeWords(changes),
+      metadata: {
+        before: { phaseId: existing.phaseId, phaseName: before?.name ?? null },
+        after: { phaseId: phase?.id ?? null, phaseName: phase?.name ?? null },
+        gateChanges: changes,
+      },
+    });
+  });
+
+  return buildMainTaskDTO(existing.id);
+}
+
+/**
  * The only legal way a main task's shown status leaves what its discipline tasks say.
  * Project managers and administrators only, always with a reason, always audited.
  */
@@ -349,6 +425,10 @@ export async function overrideMainTaskStatus(
 
   const reason = input.reason.trim();
   if (reason.length < 5) throw new ServiceError("Give a short reason (at least 5 characters).");
+
+  // A status override inside a locked phase is refused: the phase's own override is the way past a
+  // stage gate, and using a task override instead would step around the gate without recording it.
+  await assertPhaseUnlocked(existing.projectId, existing.phaseId);
 
   await prisma.$transaction(async (tx) => {
     await tx.mainTask.update({
@@ -616,6 +696,11 @@ export async function updateDisciplineTaskStatus(
 
   if (input.status === existing.status) return buildDisciplineTaskDTO(existing.id);
 
+  // THE STAGE GATE, as a precondition — checked before any transition is attempted, exactly like
+  // the completion gate below it. Nothing about the derivation changes: this only decides whether
+  // the discipline task may move at all.
+  await assertPhaseUnlocked(projectId, existing.mainTask.phaseId);
+
   if (existing.status === "COMPLETED") {
     throw new ServiceError(
       "This task is already complete. Reopen it with a reason before changing its status.",
@@ -686,6 +771,9 @@ export async function completeDisciplineTask(
   });
 
   if (existing.status === "COMPLETED") return buildDisciplineTaskDTO(existing.id);
+
+  // The stage gate comes before the completion gate: a locked phase refuses the attempt outright.
+  await assertPhaseUnlocked(projectId, existing.mainTask.phaseId);
 
   const completedNow = await prisma.$transaction(async (tx) => {
     // The gate is judged INSIDE the transaction, after the parent lock, so a document
@@ -768,6 +856,9 @@ export async function reopenDisciplineTask(
   const reason = input.reason.trim();
   if (reason.length < 5) throw new ServiceError("Give a short reason (at least 5 characters).");
   if (existing.status !== "COMPLETED") throw new ServiceError("That task is not complete, so it cannot be reopened.");
+
+  // Reopening is a status transition too, so a locked phase refuses it like any other.
+  await assertPhaseUnlocked(projectId, existing.mainTask.phaseId);
 
   await prisma.$transaction(async (tx) => {
     await lockMainTask(tx, existing.mainTaskId);
@@ -1033,7 +1124,13 @@ async function loadDisciplineTask(actor: ActorContext, id: string) {
     where: { id, ...notDeleted, mainTask: { project: { orgId: actor.orgId } } },
     include: {
       mainTask: {
-        select: { id: true, projectId: true, title: true, project: { select: { orgId: true } } },
+        select: {
+          id: true,
+          projectId: true,
+          phaseId: true,
+          title: true,
+          project: { select: { orgId: true } },
+        },
       },
       requiredDocuments: true,
     },
@@ -1156,6 +1253,7 @@ function buildListItem(
   task: {
     id: string;
     projectId: string;
+    phaseId: string | null;
     title: string;
     priority: PriorityName;
     deadline: Date;
@@ -1173,6 +1271,7 @@ function buildListItem(
     id: task.id,
     projectId: task.projectId,
     projectCode,
+    phaseId: task.phaseId,
     title: task.title,
     priority: task.priority,
     deadline: task.deadline,
@@ -1194,6 +1293,7 @@ export async function buildMainTaskDTO(mainTaskId: string): Promise<MainTaskDTO>
     where: { id: mainTaskId, ...notDeleted },
     include: {
       project: { select: { code: true } },
+      phase: { select: { name: true } },
       createdBy: { select: { name: true } },
       owner: { select: { name: true } },
       overriddenBy: { select: { name: true } },
@@ -1228,6 +1328,8 @@ export async function buildMainTaskDTO(mainTaskId: string): Promise<MainTaskDTO>
     id: task.id,
     projectId: task.projectId,
     projectCode: task.project.code,
+    phaseId: task.phaseId,
+    phaseName: task.phase?.name ?? null,
     title: task.title,
     description: task.description,
     priority: task.priority,
@@ -1338,6 +1440,19 @@ export async function buildDisciplineTaskDTO(disciplineTaskId: string): Promise<
 async function enabledDisciplines(projectId: string): Promise<Set<string>> {
   const rows = await prisma.projectDiscipline.findMany({ where: { projectId }, select: { disciplineId: true } });
   return new Set(rows.map((row) => row.disciplineId));
+}
+
+/** A phase named for a task must belong to that task's own project — another project's is "gone". */
+async function assertPhaseOnProject(
+  projectId: string,
+  phaseId: string,
+): Promise<{ id: string; name: string }> {
+  const phase = await prisma.projectPhase.findFirst({
+    where: { id: phaseId, projectId },
+    select: { id: true, name: true },
+  });
+  if (!phase) throw new NotFoundError("We could not find that phase on this project.");
+  return phase;
 }
 
 async function assertOnProject(projectId: string, userId: string, what: "owner" | "assignee"): Promise<void> {

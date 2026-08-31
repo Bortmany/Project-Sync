@@ -17,6 +17,16 @@ function base(size: number, className?: string) {
   };
 }
 
+/** A closed padlock — the stage gate marker on a locked phase. */
+export function LockIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg {...base(size, className)}>
+      <rect x="4.5" y="8.5" width="11" height="8" rx="1.5" />
+      <path d="M7 8.5V6a3 3 0 0 1 6 0v2.5" />
+    </svg>
+  );
+}
+
 export function DashboardIcon({ size = 18, className }: IconProps) {
   return (
     <svg {...base(size, className)}>

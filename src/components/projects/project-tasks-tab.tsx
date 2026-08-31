@@ -4,6 +4,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { PhaseRail, UNPHASED } from "@/components/projects/phase-rail";
 import { NewMainTaskDialog } from "@/components/tasks/new-main-task-dialog";
 import { useProjectMainTasks, type MainTaskFilters } from "@/components/hooks/use-api";
 import { formatDate, isDueSoon } from "@/components/format";
@@ -27,6 +28,9 @@ import type { MainTaskListItemDTO, ProjectDTO } from "@/lib/zod-schemas";
 type SortKey = "deadline" | "priority" | "status" | "title";
 
 const PRIORITY_RANK: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+
+/** Module-level so the "every task" query keeps one stable key however often the tab re-renders. */
+const NO_FILTERS: MainTaskFilters = {};
 
 function sortTasks(tasks: MainTaskListItemDTO[], sort: SortKey): MainTaskListItemDTO[] {
   const copy = [...tasks];
@@ -52,6 +56,8 @@ export function ProjectTasksTab({
   const [active, setActive] = useState<ActiveFilters>({});
   const [sort, setSort] = useState<SortKey>("deadline");
   const [dialogOpen, setDialogOpen] = useState(false);
+  /** A phase id, the "unphased" bucket, or null for every task on the project. */
+  const [phase, setPhase] = useState<string | null>(null);
 
   const filters: MainTaskFilters = useMemo(
     () => ({
@@ -64,7 +70,17 @@ export function ProjectTasksTab({
   );
 
   const tasks = useProjectMainTasks(project.id, filters);
-  const rows = sortTasks(tasks.data ?? [], sort);
+  // The phase segments show the project's real counts, straight from the phases route, so the
+  // "Unphased" segment beside them has to be counted the same way — over every main task, not over
+  // whatever the chips have narrowed the table to.
+  const everyTask = useProjectMainTasks(project.id, NO_FILTERS);
+  const unphasedCount = (everyTask.data ?? []).filter((task) => task.phaseId === null).length;
+
+  const shown = tasks.data ?? [];
+  const inPhase = phase
+    ? shown.filter((task) => (phase === UNPHASED ? task.phaseId === null : task.phaseId === phase))
+    : shown;
+  const rows = sortTasks(inPhase, sort);
 
   const dimensions: FilterDimension[] = [
     {
@@ -113,6 +129,14 @@ export function ProjectTasksTab({
 
   return (
     <div className="space-y-4">
+      <PhaseRail
+        projectId={project.id}
+        canManage={canManage}
+        unphasedCount={unphasedCount}
+        selected={phase}
+        onSelect={setPhase}
+      />
+
       <div className="flex flex-wrap items-start justify-between gap-3">
         <FilterChips filters={dimensions} active={active} onChange={setActive} />
         <div className="flex items-center gap-2">
@@ -141,12 +165,15 @@ export function ProjectTasksTab({
         />
       ) : tasks.isPending ? (
         <SkeletonRows rows={8} />
-      ) : rows.length === 0 && hasActiveFilters(active) ? (
+      ) : rows.length === 0 && (hasActiveFilters(active) || phase !== null) ? (
         <div className="py-8 text-center text-sm text-[var(--brand-text)]">
           <p>No tasks match your filters.</p>
           <button
             type="button"
-            onClick={() => setActive({})}
+            onClick={() => {
+              setActive({});
+              setPhase(null);
+            }}
             className="mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
           >
             Clear filters

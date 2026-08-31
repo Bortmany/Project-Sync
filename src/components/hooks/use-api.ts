@@ -18,6 +18,7 @@ import {
   MainTaskListItemDTO,
   MyTasksDTO,
   PersonalTaskDTO,
+  PhaseDTO,
   ProjectDTO,
   ProjectListItemDTO,
   SearchResultsDTO,
@@ -224,6 +225,18 @@ export function useProject(projectId: string): UseQueryResult<ProjectDTO> {
   return useQuery({
     queryKey: ["project", projectId],
     queryFn: () => readRoute(`/api/projects/${projectId}`, ProjectDTO),
+    enabled: projectId.length > 0,
+  });
+}
+
+/**
+ * A project's stage gates. `locked` arrives derived from the server — the UI never works it out for
+ * itself, and hiding a control is a courtesy: the refusal that matters is the server's.
+ */
+export function usePhases(projectId: string): UseQueryResult<PhaseDTO[]> {
+  return useQuery({
+    queryKey: ["project", projectId, "phases"],
+    queryFn: () => readRoute(`/api/projects/${projectId}/phases`, z.array(PhaseDTO)),
     enabled: projectId.length > 0,
   });
 }
