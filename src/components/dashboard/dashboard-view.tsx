@@ -5,6 +5,7 @@
 
 import Link from "next/link";
 import { ActivityFeed, ActivitySkeleton } from "@/components/activity/activity-item";
+import { AnnouncementStrip } from "@/components/posts/announcement-strip";
 import { MyTaskGroups } from "@/components/tasks/my-task-rows";
 import { isManager, useDashboard, useMe } from "@/components/hooks/use-api";
 import { formatShortDate } from "@/components/format";
@@ -99,11 +100,24 @@ export function DashboardView() {
   // Who is signed in decides what the first-run panel says, so nothing is shown until that read
   // lands — otherwise an administrator sees the "your project manager will add you" wording flash.
   if (!loading && !failed && data && nothingToShow(data)) {
-    return me.isPending ? null : <FirstRun me={me.data} />;
+    // Even a workspace with no work in it yet can have company news waiting on it, so the strip
+    // stays above the first-run panel rather than disappearing with the rest of the page.
+    return me.isPending ? null : (
+      <div className="space-y-6">
+        <AnnouncementStrip />
+        <FirstRun me={me.data} />
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
+      {/*
+        Company news sits above somebody's own numbers: it is usually time-sensitive and somebody
+        else decided it mattered. It renders nothing at all when there is none, and fails silently.
+      */}
+      <AnnouncementStrip />
+
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         {TILES.map((tile) =>
           loading || !data ? (

@@ -67,9 +67,10 @@ const TOGGLE_FOR_TYPE: Record<NotificationTypeName, FanOutToggle | null> = {
   OVERRIDE_APPLIED: "gateOverride",
   DOCUMENT_UPLOADED: null,
   COMMENT_ADDED: null,
-  // A noticeboard announcement is already broadcast to everyone in the app; a chat copy of it is a
-  // separate decision with its own switch, not something this map should smuggle in.
-  ANNOUNCEMENT: null,
+  // A noticeboard announcement has its own switch, off by default: a chat copy of company news is a
+  // separate decision from the in-app notice, never something this map smuggles in with the rest.
+  // Board posts and replies are not here at all — a reply is a COMMENT_ADDED, which stays in the app.
+  ANNOUNCEMENT: "announcements",
 };
 
 export function toggleForType(type: NotificationTypeName): IntegrationEventName | null {
@@ -416,6 +417,8 @@ function sourceLabel(type: NotificationTypeName): string {
       return "Overdue reminder";
     case "OVERRIDE_APPLIED":
       return "Override applied";
+    case "ANNOUNCEMENT":
+      return "Announcement";
     default:
       return "Update";
   }

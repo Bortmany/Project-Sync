@@ -42,7 +42,16 @@ export type Action =
   | "MANAGE_USERS"
   | "MANAGE_DISCIPLINES"
   | "MANAGE_INTEGRATIONS"
+  | "POST_ANNOUNCEMENT"
+  | "POST_BOARD"
   | "VIEW_PROJECT";
+
+/**
+ * Who may start a post aimed at the WHOLE company. The company's own setting, mirrored from
+ * `BroadcastPolicySchema` in src/lib/zod-schemas.ts the same way `RoleValue` mirrors `RoleSchema` —
+ * this file imports nothing, so the rules stay pure and testable on their own.
+ */
+export type BroadcastPolicyValue = "ADMIN_ONLY" | "ADMIN_PM" | "ADMIN_PM_LEAD";
 
 /**
  * What is being acted on.
@@ -54,7 +63,13 @@ export type Action =
 export type PermissionContext = {
   disciplineId?: string | null;
   assigneeId?: string | null;
-} & ({ projectId?: undefined; orgId?: undefined } | { projectId: string; orgId: string });
+  /**
+   * The company's "who may post to Everyone" setting, read from the Organization row by the caller.
+   * It is passed IN rather than looked up so `can()` stays pure and touches no database. Absent
+   * reads as the default, "administrators and project managers".
+   */
+  broadcastPolicy?: BroadcastPolicyValue;
+} & ({ projectId?: undefined; orgId?: string } | { projectId: string; orgId: string });
 
 export class ForbiddenError extends Error {
   readonly action: Action;
@@ -101,6 +116,9 @@ const EXTERNAL_OWN_TASK_ACTIONS: Action[] = [
   "COMMENT",
 ];
 
+/** Starting a post (an announcement or a board post) aimed at one audience. */
+const POST_ACTIONS: Action[] = ["POST_ANNOUNCEMENT", "POST_BOARD"];
+
 function membershipFor(actor: Actor, projectId?: string): Membership | undefined {
   if (!projectId) return undefined;
   return actor.memberships.find((membership) => membership.projectId === projectId);
@@ -139,6 +157,47 @@ function canExternal(actor: Actor, action: Action, ctx: PermissionContext): bool
   return false;
 }
 
+/**
+ * May this person start a post aimed at this audience?
+ *
+ * Three audiences, three rules — and an audience is exactly one of them, so a context naming both a
+ * project and a discipline is refused rather than guessed at:
+ *
+ * - **The whole company** (no project, no discipline): the company's own `broadcastPolicy` decides.
+ *   Administrators always; project managers under ADMIN_PM or ADMIN_PM_LEAD; discipline leads only
+ *   under ADMIN_PM_LEAD. Nobody else, ever.
+ * - **One project**: its project managers. Belonging to the project is what makes somebody a manager
+ *   of it, so a manager elsewhere is refused here, exactly as every other project action works.
+ * - **One discipline**: its leads, read from their memberships — a person leads a discipline on a
+ *   project, and that is the only place the app records it.
+ *
+ * Reading is not gated here at all. Everybody in the company reads the company-wide board, and the
+ * service narrows project and discipline boards to the audiences a person belongs to.
+ */
+function canPostToAudience(actor: Actor, ctx: PermissionContext): boolean {
+  const disciplineId = ctx.disciplineId ?? null;
+
+  if (!ctx.projectId && !disciplineId) {
+    const policy: BroadcastPolicyValue = ctx.broadcastPolicy ?? "ADMIN_PM";
+    if (actor.role === "PROJECT_MANAGER") return policy === "ADMIN_PM" || policy === "ADMIN_PM_LEAD";
+    if (actor.role === "DISCIPLINE_LEAD") return policy === "ADMIN_PM_LEAD";
+    return false;
+  }
+
+  if (ctx.projectId) {
+    // One post, one audience. A project post is for the project, never "the project AND a discipline".
+    if (disciplineId) return false;
+    const membership = membershipFor(actor, ctx.projectId);
+    if (!membership) return false;
+    return effectiveRole(actor, membership) === "PROJECT_MANAGER";
+  }
+
+  return actor.memberships.some(
+    (membership) =>
+      membership.projectRole === "DISCIPLINE_LEAD" && membership.disciplineId === disciplineId,
+  );
+}
+
 /** Answers "may this person do this?" — the only place that question is answered. */
 export function can(actor: Actor, action: Action, ctx: PermissionContext = {}): boolean {
   // The organisation boundary comes first and applies to everybody, administrators included: being
@@ -149,8 +208,17 @@ export function can(actor: Actor, action: Action, ctx: PermissionContext = {}): 
   // membership and no admin flag can widen what an EXTERNAL may do.
   if (actor.role === "EXTERNAL") return canExternal(actor, action, ctx);
 
-  if (actor.role === "ADMIN") return true;
+  if (actor.role === "ADMIN") {
+    // An administrator may post to any audience in their OWN company — the organisation check above
+    // is what keeps "any" inside it. A post still has exactly one audience.
+    if (POST_ACTIONS.includes(action)) return !(ctx.projectId && ctx.disciplineId);
+    return true;
+  }
   if (ADMIN_ONLY.includes(action)) return false;
+
+  // A post is judged by its audience, not by a project membership, so it is answered before the
+  // membership gate below: a company-wide post names no project at all.
+  if (POST_ACTIONS.includes(action)) return canPostToAudience(actor, ctx);
 
   // Creating a project needs no project context — project managers may start one.
   if (action === "CREATE_PROJECT") return actor.role === "PROJECT_MANAGER";
@@ -214,6 +282,8 @@ export const PERMISSION_MATRIX: Record<RoleValue, { always: Action[]; conditiona
       "MANAGE_USERS",
       "MANAGE_DISCIPLINES",
       "MANAGE_INTEGRATIONS",
+      "POST_ANNOUNCEMENT",
+      "POST_BOARD",
       "VIEW_PROJECT",
     ],
     conditional: [],
@@ -237,6 +307,9 @@ export const PERMISSION_MATRIX: Record<RoleValue, { always: Action[]; conditiona
       "UPLOAD_DOCUMENT",
       "DELETE_DOCUMENT",
       "COMMENT",
+      // Their own projects always; the whole company only while the broadcast setting allows it.
+      "POST_ANNOUNCEMENT",
+      "POST_BOARD",
       "VIEW_PROJECT",
     ],
   },
@@ -249,6 +322,9 @@ export const PERMISSION_MATRIX: Record<RoleValue, { always: Action[]; conditiona
       "ASSIGN_DISCIPLINE_TASK",
       "UPDATE_DISCIPLINE_TASK_STATUS",
       "COMPLETE_DISCIPLINE_TASK",
+      // Their own discipline always; the whole company only under the widest broadcast setting.
+      "POST_ANNOUNCEMENT",
+      "POST_BOARD",
     ],
   },
   ENGINEER: {

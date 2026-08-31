@@ -39,8 +39,18 @@ const ALL_ACTIONS: Action[] = [
   "MANAGE_USERS",
   "MANAGE_DISCIPLINES",
   "MANAGE_INTEGRATIONS",
+  "POST_ANNOUNCEMENT",
+  "POST_BOARD",
   "VIEW_PROJECT",
 ];
+
+/**
+ * Starting a noticeboard post. Kept out of the big table's allowed sets on purpose: every case
+ * there names a project AND a discipline, and a post has exactly ONE audience — so the answer is
+ * always "no" to a context like that, whoever is asking. The audience rules have their own
+ * describe block at the bottom of this file.
+ */
+const POST_ACTIONS: Action[] = ["POST_ANNOUNCEMENT", "POST_BOARD"];
 
 const admin: Actor = { userId: "u-admin", orgId: ORG, role: "ADMIN", memberships: [] };
 
@@ -96,11 +106,14 @@ describe("admin", () => {
 });
 
 describe("project manager", () => {
+  // Posting is left out here for the same reason it is left out of the big table: `ownCtx` names a
+  // project AND a discipline, which is two audiences, and a post has one. See "the noticeboard".
   const allowedInOwnProject: Action[] = ALL_ACTIONS.filter(
     (action) =>
       action !== "MANAGE_USERS" &&
       action !== "MANAGE_DISCIPLINES" &&
-      action !== "MANAGE_INTEGRATIONS",
+      action !== "MANAGE_INTEGRATIONS" &&
+      !POST_ACTIONS.includes(action),
   );
 
   it("may run everything inside their own project", () => {
@@ -311,7 +324,8 @@ const EVERYTHING_BUT_ADMIN_ONLY: Action[] = ALL_ACTIONS.filter(
   (action) =>
     action !== "MANAGE_USERS" &&
     action !== "MANAGE_DISCIPLINES" &&
-    action !== "MANAGE_INTEGRATIONS",
+    action !== "MANAGE_INTEGRATIONS" &&
+    !POST_ACTIONS.includes(action),
 );
 const MEMBER_ONLY: Action[] = ["VIEW_PROJECT", "COMMENT"];
 const LEAD_IN_OWN_DISCIPLINE: Action[] = [
@@ -333,7 +347,9 @@ const MATRIX: MatrixCase[] = [
     who: "an administrator, on a project they are not even a member of",
     actor: admin,
     ctx: { projectId: OTHER_PROJECT, orgId: ORG, disciplineId: ELEC, assigneeId: "somebody-else" },
-    allowed: ALL_ACTIONS,
+    // Everything except starting a post: this context names a project and a discipline at once,
+    // which is two audiences, and a post has one. Even an administrator is told no to that.
+    allowed: ALL_ACTIONS.filter((action) => !POST_ACTIONS.includes(action)),
   },
   {
     who: "a project manager inside their own project",
@@ -540,6 +556,87 @@ describe("external contractor", () => {
   it("is refused across companies like everybody else", () => {
     expect(can(contractor, "VIEW_PROJECT", { projectId: PROJECT, orgId: OTHER_ORG })).toBe(false);
     expect(can(contractor, "COMMENT", { ...OWN, orgId: OTHER_ORG })).toBe(false);
+  });
+});
+
+/**
+ * The noticeboard, audience by audience. Three audiences (the whole company, one project, one
+ * department) × the roles that might reach for each × the company's own broadcast setting.
+ */
+describe("the noticeboard", () => {
+  const everyone = (policy?: "ADMIN_ONLY" | "ADMIN_PM" | "ADMIN_PM_LEAD"): PermissionContext =>
+    policy ? { orgId: ORG, broadcastPolicy: policy } : { orgId: ORG };
+  const ownProject: PermissionContext = { projectId: PROJECT, orgId: ORG };
+  const otherProject: PermissionContext = { projectId: OTHER_PROJECT, orgId: ORG };
+  const ownDiscipline: PermissionContext = { orgId: ORG, disciplineId: MECH };
+  const otherDiscipline: PermissionContext = { orgId: ORG, disciplineId: ELEC };
+
+  it("lets an administrator post to any single audience in their own company", () => {
+    for (const action of POST_ACTIONS) {
+      expect(can(admin, action, everyone())).toBe(true);
+      expect(can(admin, action, otherProject)).toBe(true);
+      expect(can(admin, action, otherDiscipline)).toBe(true);
+      // Another company's project, even for an administrator: no.
+      expect(can(admin, action, { projectId: PROJECT, orgId: OTHER_ORG })).toBe(false);
+    }
+  });
+
+  it("answers the company-wide audience from the company's own setting", () => {
+    for (const action of POST_ACTIONS) {
+      // Administrators, whatever the setting says.
+      expect(can(admin, action, everyone("ADMIN_ONLY"))).toBe(true);
+
+      expect(can(pm, action, everyone("ADMIN_ONLY"))).toBe(false);
+      expect(can(pm, action, everyone("ADMIN_PM"))).toBe(true);
+      expect(can(pm, action, everyone("ADMIN_PM_LEAD"))).toBe(true);
+
+      expect(can(lead, action, everyone("ADMIN_ONLY"))).toBe(false);
+      expect(can(lead, action, everyone("ADMIN_PM"))).toBe(false);
+      expect(can(lead, action, everyone("ADMIN_PM_LEAD"))).toBe(true);
+
+      // An engineer is in none of the three, ever.
+      expect(can(engineer, action, everyone("ADMIN_PM_LEAD"))).toBe(false);
+      // No setting passed reads as the default, "administrators and project managers".
+      expect(can(pm, action, everyone())).toBe(true);
+      expect(can(lead, action, everyone())).toBe(false);
+    }
+  });
+
+  it("gives a project's board to its own managers only", () => {
+    for (const action of POST_ACTIONS) {
+      expect(can(pm, action, ownProject)).toBe(true);
+      expect(can(pm, action, otherProject)).toBe(false);
+      expect(can(lead, action, ownProject)).toBe(false);
+      expect(can(engineer, action, ownProject)).toBe(false);
+    }
+  });
+
+  it("gives a department's board to its own lead only", () => {
+    for (const action of POST_ACTIONS) {
+      expect(can(lead, action, ownDiscipline)).toBe(true);
+      expect(can(lead, action, otherDiscipline)).toBe(false);
+      expect(can(engineer, action, ownDiscipline)).toBe(false);
+      expect(can(pm, action, ownDiscipline)).toBe(false);
+    }
+  });
+
+  it("refuses a contractor every audience, including the project they work on", () => {
+    for (const action of POST_ACTIONS) {
+      expect(can(contractor, action, everyone("ADMIN_PM_LEAD"))).toBe(false);
+      expect(can(contractor, action, ownProject)).toBe(false);
+      expect(can(contractor, action, ownDiscipline)).toBe(false);
+      // And a stale ProjectMember row saying PROJECT_MANAGER changes nothing.
+      expect(can(escalatedContractor, action, ownProject)).toBe(false);
+    }
+  });
+
+  it("refuses a post that names two audiences at once, whoever is asking", () => {
+    const both: PermissionContext = { projectId: PROJECT, orgId: ORG, disciplineId: MECH };
+    for (const action of POST_ACTIONS) {
+      expect(can(admin, action, both)).toBe(false);
+      expect(can(pm, action, both)).toBe(false);
+      expect(can(lead, action, both)).toBe(false);
+    }
   });
 });
 

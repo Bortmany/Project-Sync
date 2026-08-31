@@ -67,6 +67,16 @@ export {
   rejectDisciplineTaskReview,
 } from "@/server/actions/discipline-tasks";
 
+// The noticeboard: announcements, the department board, and the company setting behind them.
+export {
+  createPost,
+  replyToPost,
+  editPost,
+  deletePost,
+  dismissAnnouncement,
+  setBroadcastPolicy,
+} from "@/server/actions/posts";
+
 // The sidebar's personal corner: starred shortcuts and a private to-do list. Neither is audited.
 export { toggleFavorite } from "@/server/actions/favorites";
 

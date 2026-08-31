@@ -547,6 +547,8 @@ describe("the chat digest", () => {
           statusChange: true,
           overdueReminder: true,
           gateOverride: true,
+          announcements: false,
+
           dailyBrief: true,
         },
       });
@@ -679,6 +681,8 @@ describe("the chat digest", () => {
         statusChange: true,
         overdueReminder: true,
         gateOverride: true,
+        announcements: false,
+
         dailyBrief: true,
       },
     });

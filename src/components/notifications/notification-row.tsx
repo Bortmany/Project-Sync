@@ -18,6 +18,10 @@ function toneFor(type: NotificationDTO["type"]): string {
     case "COMMENT_ADDED":
     case "MENTIONED":
       return "var(--brand-gray)";
+    // Company news reads in the brand colour — the same as the default branch, said out loud so it
+    // is a decision rather than a fallthrough.
+    case "ANNOUNCEMENT":
+      return "var(--brand-primary)";
     default:
       return "var(--brand-primary)";
   }

@@ -63,6 +63,14 @@ export const ACTIVITY = {
   // Microsoft 365 files. These rows carry the tenant id and who connected — never a token.
   MICROSOFT_CONNECTED: "MICROSOFT_CONNECTED",
   MICROSOFT_DISCONNECTED: "MICROSOFT_DISCONNECTED",
+  // The noticeboard. A dismissal is deliberately absent: hiding a notice from your own dashboard is
+  // personal read state, not company work, so it writes no row here.
+  ANNOUNCEMENT_POSTED: "ANNOUNCEMENT_POSTED",
+  POST_CREATED: "POST_CREATED",
+  POST_REPLIED: "POST_REPLIED",
+  POST_EDITED: "POST_EDITED",
+  POST_DELETED: "POST_DELETED",
+  BROADCAST_POLICY_CHANGED: "BROADCAST_POLICY_CHANGED",
 } as const;
 
 export type ActivityAction = (typeof ACTIVITY)[keyof typeof ACTIVITY];
@@ -80,6 +88,9 @@ export type AppendActivityInput = {
     | "MainTask"
     | "DisciplineTask"
     | "Document"
+    // A noticeboard post carries its project when it has one, and nothing when it is aimed at the
+    // whole company or one department.
+    | "Post"
     // Admin-section rows carry no project — they are about the organisation, not one project.
     | "User"
     | "Discipline"

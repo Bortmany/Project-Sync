@@ -57,6 +57,16 @@ import {
   microsoftConnectionFor,
 } from "@/server/services/microsoft";
 import { orgDigest, personBrief, projectBrief } from "@/server/services/briefs";
+import {
+  createPost,
+  deletePost,
+  dismissAnnouncement,
+  editPost,
+  listAnnouncementsForUser,
+  listBoard,
+  replyToPost,
+  setBroadcastPolicy,
+} from "@/server/services/posts";
 import { getProjectForActor, listProjectsForActor } from "@/server/services/projects";
 import {
   completeDisciplineTask,
@@ -80,6 +90,8 @@ import {
 } from "@/server/__tests__/harness";
 
 /** Both companies name their work exactly the same, so nothing passes by accident. */
+const EVERYONE_AUDIENCE = { kind: "EVERYONE" as const, projectId: null, disciplineId: null };
+
 const SHARED_TITLE = "Flare tip replacement study";
 const SUBTASK_TITLE = "Mechanical tip inspection";
 
@@ -506,6 +518,8 @@ describe("one company's chat channel is not another company's", () => {
           statusChange: false,
           overdueReminder: false,
           gateOverride: false,
+          announcements: false,
+
           dailyBrief: false,
         },
       }),
@@ -685,6 +699,8 @@ describe("a brief never reaches across companies", () => {
         statusChange: true,
         overdueReminder: true,
         gateOverride: true,
+        announcements: false,
+
         dailyBrief: true,
       },
     });
@@ -750,5 +766,67 @@ describe("an external contractor is bound by the company door too", () => {
     expect((await listProjectsForActor(contractor)).map((project) => project.id)).toEqual([
       acme.projectId,
     ]);
+  });
+});
+
+describe("the noticeboard stops at the company door too", () => {
+  it("never shows, edits or removes another company's post", async () => {
+    const theirs = await createPost(rival.admin, {
+      kind: "ANNOUNCEMENT",
+      title: "Rival's shutdown plan",
+      body: "Only Rival Energy should ever read this.",
+    });
+    const ours = await createPost(acme.admin, {
+      kind: "ANNOUNCEMENT",
+      title: "Acme's shutdown plan",
+      body: "Only Acme Energy should ever read this.",
+    });
+
+    // Two company-wide announcements, one each — and each administrator sees exactly one.
+    expect((await listAnnouncementsForUser(acme.admin)).map((post) => post.id)).toEqual([ours.id]);
+    expect((await listAnnouncementsForUser(rival.admin)).map((post) => post.id)).toEqual([
+      theirs.id,
+    ]);
+    expect((await listBoard(acme.admin, EVERYONE_AUDIENCE)).map((post) => post.id)).toEqual([]);
+
+    // An administrator is refused across the boundary like everybody else, and told "not found"
+    // rather than "forbidden", so an id from the other company is never confirmed as real.
+    await expect(
+      editPost(acme.admin, { id: theirs.id, body: "Editing somebody else's company." }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(deletePost(acme.admin, { id: theirs.id })).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      dismissAnnouncement(acme.admin, { id: theirs.id }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      replyToPost(acme.admin, { parentId: theirs.id, body: "Hello over there." }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    // And their project's board is not a board this company has at all.
+    await expect(
+      listBoard(acme.admin, { kind: "PROJECT", projectId: rival.projectId, disciplineId: null }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("keeps an announcement's fan-out inside the company", async () => {
+    await createPost(acme.admin, { kind: "ANNOUNCEMENT", body: "Acme news." });
+
+    const rows = await prisma.notification.findMany({
+      where: { type: "ANNOUNCEMENT" },
+      select: { userId: true },
+    });
+    const rivalIds = new Set([rival.admin.userId, rival.engineer.userId]);
+    expect(rows.some((row) => rivalIds.has(row.userId))).toBe(false);
+    expect(rows.some((row) => row.userId === acme.engineer.userId)).toBe(true);
+  });
+
+  it("changes one company's broadcast setting and nobody else's", async () => {
+    await setBroadcastPolicy(acme.admin, { policy: "ADMIN_ONLY" });
+
+    const orgs = await prisma.organization.findMany({ select: { id: true, broadcastPolicy: true } });
+    const acmeOrg = orgs.find((org) => org.id === acme.admin.orgId);
+    const rivalOrg = orgs.find((org) => org.id === rival.admin.orgId);
+    expect(acmeOrg?.broadcastPolicy).toBe("ADMIN_ONLY");
+    expect(rivalOrg?.broadcastPolicy).toBe("ADMIN_PM");
   });
 });

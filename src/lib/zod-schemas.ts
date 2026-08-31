@@ -20,9 +20,28 @@ export type RoleName = z.infer<typeof RoleSchema>;
 export const PostKindSchema = z.enum(["ANNOUNCEMENT", "BOARD"]);
 export type PostKindName = z.infer<typeof PostKindSchema>;
 
-/** Who may post a company-wide announcement. A string column in the database, validated here. */
-export const BroadcastPolicySchema = z.enum(["ADMIN_PM", "ADMIN"]);
+/**
+ * Who may post to the whole company. A string column in the database, validated here — so a fourth
+ * policy later needs no migration, exactly like `OrgIntegration.kind`.
+ *
+ * Reading company-wide posts is never gated; this only decides who may START one.
+ */
+export const BroadcastPolicySchema = z.enum(["ADMIN_ONLY", "ADMIN_PM", "ADMIN_PM_LEAD"]);
 export type BroadcastPolicyName = z.infer<typeof BroadcastPolicySchema>;
+
+/** What a company gets before anybody changes it — the column's own default. */
+export const DEFAULT_BROADCAST_POLICY: BroadcastPolicyName = "ADMIN_PM";
+
+/**
+ * Reads the stored policy defensively, the same way `dailyBrief` carries a default: a value this
+ * build does not recognise reads as the default rather than breaking every screen that shows it.
+ * "ADMIN" is the one legacy spelling of "administrators only" and is mapped, not dropped.
+ */
+export function broadcastPolicyOf(value: unknown): BroadcastPolicyName {
+  if (value === "ADMIN") return "ADMIN_ONLY";
+  const parsed = BroadcastPolicySchema.safeParse(value);
+  return parsed.success ? parsed.data : DEFAULT_BROADCAST_POLICY;
+}
 
 export const TaskStatusSchema = z.enum([
   "NOT_STARTED",
@@ -990,6 +1009,13 @@ export const BriefDTO = z.object({
   newlyUnblocked: BriefSectionDTO,
   mentions: BriefSectionDTO,
   awaitingReview: BriefSectionDTO,
+  /**
+   * The announcements still running for the audiences this person belongs to. A brief line has no
+   * project of its own here, so `projectCode` carries the audience label ("Everyone", "PH-1",
+   * "Electrical") — the same chip the noticeboard shows — and `deadline` carries the expiry date.
+   * Dismissing one on the dashboard does not hide it here: this is a summary of what is running.
+   */
+  announcements: BriefSectionDTO,
 });
 export type BriefDTO = z.infer<typeof BriefDTO>;
 
@@ -1097,6 +1123,7 @@ export const IntegrationEventSchema = z.enum([
   "statusChange",
   "overdueReminder",
   "gateOverride",
+  "announcements",
   "dailyBrief",
 ]);
 export type IntegrationEventName = z.infer<typeof IntegrationEventSchema>;
@@ -1115,6 +1142,13 @@ export const IntegrationEventToggles = z.object({
   statusChange: z.boolean(),
   overdueReminder: z.boolean(),
   gateOverride: z.boolean(),
+  /**
+   * The noticeboard copy. It carries a default for exactly the reason `dailyBrief` does: rows saved
+   * before announcements existed have six keys or fewer, and without the default they would stop
+   * parsing — which would silently switch a company's whole chat delivery off. Default OFF, so a
+   * company only ever posts announcements into a channel because somebody asked for it.
+   */
+  announcements: z.boolean().default(false),
   dailyBrief: z.boolean().default(false),
 });
 export type IntegrationEventToggles = z.infer<typeof IntegrationEventToggles>;
@@ -1130,6 +1164,7 @@ export const DEFAULT_EVENT_TOGGLES: IntegrationEventToggles = {
   statusChange: true,
   overdueReminder: true,
   gateOverride: true,
+  announcements: false,
   dailyBrief: false,
 };
 
@@ -1351,3 +1386,109 @@ export const AttachMicrosoftFileInput = UploadMeta.extend({
   itemId: graphId,
 });
 export type AttachMicrosoftFileInput = z.infer<typeof AttachMicrosoftFileInput>;
+
+/* ------------------------------------------------------------------ */
+/* The noticeboard: announcements and the department board             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Who a post is aimed at. The three shapes are exactly the three the `Post` row can hold:
+ * neither id set (the whole company), a project, or a discipline. Never both ids at once.
+ */
+export const PostAudienceKindSchema = z.enum(["EVERYONE", "PROJECT", "DISCIPLINE"]);
+export type PostAudienceKindName = z.infer<typeof PostAudienceKindSchema>;
+
+/**
+ * One audience as a screen shows it: the tab, the chip on a card, and whether this person may post
+ * or moderate there. `key` is what the address bar carries (`/messages?tab=<key>`).
+ */
+export const PostAudienceDTO = z.object({
+  key: z.string(),
+  kind: PostAudienceKindSchema,
+  projectId: z.string().nullable(),
+  disciplineId: z.string().nullable(),
+  /** "Everyone", a project code ("PH-1"), or a discipline name ("Electrical"). */
+  label: z.string(),
+  /** The discipline's own colour, so a department chip matches its dot. Null elsewhere. */
+  colorHex: z.string().nullable(),
+  canPost: z.boolean(),
+  canModerate: z.boolean(),
+});
+export type PostAudienceDTO = z.infer<typeof PostAudienceDTO>;
+
+/** One post or one reply. A removed post keeps its place and loses its text, exactly like a comment. */
+export const PostDTO = z.object({
+  id: id,
+  kind: PostKindSchema,
+  audience: PostAudienceDTO.pick({
+    key: true,
+    kind: true,
+    projectId: true,
+    disciplineId: true,
+    label: true,
+    colorHex: true,
+  }),
+  title: z.string().nullable(),
+  body: z.string(),
+  authorId: z.string(),
+  authorName: z.string(),
+  authorCompanyName: z.string().nullable(),
+  parentId: z.string().nullable(),
+  expiresAt: dateOut.nullable(),
+  editedAt: dateOut.nullable(),
+  isDeleted: z.boolean(),
+  /** This person has hidden this announcement from their own dashboard. Their state, nobody else's. */
+  dismissed: z.boolean(),
+  /** What this person may do with this post, worked out on the server. */
+  canEdit: z.boolean(),
+  canDelete: z.boolean(),
+  createdAt: dateOut,
+});
+export type PostDTO = z.infer<typeof PostDTO>;
+
+/** A board post with its replies. Replies are one level deep, always, and never carry their own. */
+export const BoardPostDTO = PostDTO.extend({ replies: z.array(PostDTO) });
+export type BoardPostDTO = z.infer<typeof BoardPostDTO>;
+
+/**
+ * Starting a post. The audience is the pair of ids: neither set is the whole company, one set is
+ * that project or that discipline, and both set is refused.
+ */
+export const CreatePostInput = z.object({
+  kind: PostKindSchema,
+  projectId: id.nullish(),
+  disciplineId: id.nullish(),
+  title: z.string().trim().max(200).nullish(),
+  body: z.string().trim().min(1, "Write something first.").max(5000),
+  /** Announcements only: the day it stops being shown. */
+  expiresAt: dateIn.nullish(),
+});
+export type CreatePostInput = z.infer<typeof CreatePostInput>;
+
+/** Replying to a board post. One level only — a reply's parent is always a root post. */
+export const ReplyToPostInput = z.object({
+  parentId: id,
+  body: z.string().trim().min(1, "Write something first.").max(5000),
+});
+export type ReplyToPostInput = z.infer<typeof ReplyToPostInput>;
+
+export const EditPostInput = z.object({
+  id: id,
+  title: z.string().trim().max(200).nullish(),
+  body: z.string().trim().min(1, "Write something first.").max(5000),
+});
+export type EditPostInput = z.infer<typeof EditPostInput>;
+
+export const DeletePostInput = z.object({ id: id });
+export type DeletePostInput = z.infer<typeof DeletePostInput>;
+
+/** Hiding one announcement from your own dashboard. Personal state, never an audit row. */
+export const DismissAnnouncementInput = z.object({ id: id });
+export type DismissAnnouncementInput = z.infer<typeof DismissAnnouncementInput>;
+
+export const SetBroadcastPolicyInput = z.object({ policy: BroadcastPolicySchema });
+export type SetBroadcastPolicyInput = z.infer<typeof SetBroadcastPolicyInput>;
+
+/** The company's noticeboard setting, as the Admin screen sees it. */
+export const BroadcastSettingDTO = z.object({ policy: BroadcastPolicySchema });
+export type BroadcastSettingDTO = z.infer<typeof BroadcastSettingDTO>;

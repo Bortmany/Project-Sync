@@ -37,6 +37,16 @@ import {
 import { toggleFavorite, listFavorites } from "@/server/services/favorites";
 import { listNotifications } from "@/server/services/notifications";
 import {
+  createPost,
+  deletePost,
+  dismissAnnouncement,
+  editPost,
+  listAnnouncementsForUser,
+  listAudiences,
+  listBoard,
+  replyToPost,
+} from "@/server/services/posts";
+import {
   getProjectForActor,
   listProjectsForActor,
   setExternalSignoffRequired,
@@ -637,5 +647,82 @@ describe("a contractor's seat cannot be widened by a project role", () => {
         requiredDocuments: [],
       }),
     ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+});
+
+describe("a contractor has no noticeboard at all", () => {
+  it("answers every board read and write with not found, never forbidden", async () => {
+    const announcement = await createPost(fixture.adminActor, {
+      kind: "ANNOUNCEMENT",
+      title: "Company briefing",
+      body: "Everybody here should read this.",
+    });
+    const projectPost = await createPost(fixture.pmActor, {
+      kind: "BOARD",
+      projectId: fixture.projectId,
+      body: "A conversation on the project the contractor works on.",
+    });
+
+    // Reads: the tabs, the announcements, the company board and the board of the project they
+    // actually hold work on. All four are misses, so no id is ever confirmed as real.
+    await expect(listAudiences(contractor)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(listAnnouncementsForUser(contractor)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      listBoard(contractor, { kind: "EVERYONE", projectId: null, disciplineId: null }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      listBoard(contractor, { kind: "PROJECT", projectId: fixture.projectId, disciplineId: null }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    // Writes: posting, replying, dismissing and editing are all the same answer.
+    await expect(
+      createPost(contractor, { kind: "BOARD", projectId: fixture.projectId, body: "Hello?" }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      replyToPost(contractor, { parentId: projectPost.id, body: "Hello?" }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      dismissAnnouncement(contractor, { id: announcement.id }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      editPost(contractor, { id: projectPost.id, body: "Not mine." }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    await expect(deletePost(contractor, { id: projectPost.id })).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+  });
+
+  it("is left out of every announcement fan-out, company-wide and project", async () => {
+    await createPost(fixture.adminActor, { kind: "ANNOUNCEMENT", body: "Company-wide news." });
+    await createPost(fixture.pmActor, {
+      kind: "ANNOUNCEMENT",
+      projectId: fixture.projectId,
+      body: "News about the very project they work on.",
+    });
+
+    // A notification body names news a contractor may not read, and a notification is the one door
+    // read scoping cannot close — so the fan-out leaves them out, exactly as a task override does.
+    // Their own notifications — assigned, status changed, sent back for more work — are untouched;
+    // it is company news specifically that never reaches them.
+    const mine = await prisma.notification.findMany({
+      where: { userId: contractor.userId, type: "ANNOUNCEMENT" },
+    });
+    expect(mine).toEqual([]);
+    expect((await listNotifications(contractor)).some((row) => row.type === "ANNOUNCEMENT")).toBe(
+      false,
+    );
+
+    const told = await prisma.notification.findMany({
+      where: { type: "ANNOUNCEMENT" },
+      select: { userId: true },
+    });
+    expect(told.some((row) => row.userId === fixture.engineerActor.userId)).toBe(true);
+  });
+
+  it("keeps their own daily brief working, with an empty announcements section", async () => {
+    await createPost(fixture.adminActor, { kind: "ANNOUNCEMENT", body: "Company-wide news." });
+
+    const brief = await personBrief(contractor);
+    expect(brief.announcements).toEqual({ items: [], total: 0 });
   });
 });

@@ -43,6 +43,9 @@ const MAIN_NAV: NavItem[] = [
     ],
   },
   { href: "/notifications", label: "Notifications", icon: BellIcon },
+  // The company noticeboard. Named "Messages" deliberately: a project already has a "Team" tab of
+  // its own (its roster), and two different things called Team in one app is one too many.
+  { href: "/messages", label: "Messages", icon: PeopleIcon },
 ];
 
 // Administrators only — nobody else sees these three rows at all.
@@ -55,10 +58,10 @@ const ADMIN_NAV: NavItem[] = [
 /**
  * A contractor's menu is trimmed to the four things they actually have: their dashboard, the
  * projects they hold work on, their own tasks and their notifications. The people directory, the
- * project team and the whole Admin section are not rows they are given and not pages they can read
- * — the server answers "not found" either way.
+ * project team, the noticeboard and the whole Admin section are not rows they are given and not
+ * pages they can read — the server answers "not found" either way.
  */
-const EXTERNAL_NAV: NavItem[] = MAIN_NAV.map((item) =>
+const EXTERNAL_NAV: NavItem[] = MAIN_NAV.filter((item) => item.href !== "/messages").map((item) =>
   item.href === "/my-tasks"
     ? {
         ...item,

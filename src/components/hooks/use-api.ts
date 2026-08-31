@@ -7,6 +7,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { z } from "zod";
 import {
   ActivityItemDTO,
+  BoardPostDTO,
   BriefDTO,
   CommentDTO,
   DashboardDTO,
@@ -21,6 +22,8 @@ import {
   MyTasksDTO,
   PersonalTaskDTO,
   PhaseDTO,
+  PostAudienceDTO,
+  PostDTO,
   ProjectBriefDTO,
   ProjectDTO,
   ProjectListItemDTO,
@@ -475,5 +478,46 @@ export function useMicrosoftStatus(): UseQueryResult<MicrosoftConnectionDTO | nu
     },
     staleTime: 5 * 60_000,
     retry: false,
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* The noticeboard                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The announcements still running for this person. Used twice: the dashboard strip (which hides the
+ * ones they have dismissed) and the Messages page (which does not).
+ *
+ * `retry: false` on purpose — the dashboard strip fails silently rather than planting a red banner
+ * above somebody's actual work, so there is nothing to gain from trying again behind their back.
+ */
+export function useAnnouncements(enabled = true): UseQueryResult<PostDTO[]> {
+  return useQuery({
+    queryKey: ["announcements"],
+    queryFn: () => readRoute("/api/posts/announcements", z.array(PostDTO)),
+    enabled,
+    retry: false,
+    staleTime: 60_000,
+  });
+}
+
+/** The tabs this person may read, each saying whether they may post or moderate there. */
+export function usePostAudiences(enabled = true): UseQueryResult<PostAudienceDTO[]> {
+  return useQuery({
+    queryKey: ["post-audiences"],
+    queryFn: () => readRoute("/api/posts/audiences", z.array(PostAudienceDTO)),
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** One board's conversations, newest first, each with its replies. */
+export function useBoard(tab: string, enabled = true): UseQueryResult<BoardPostDTO[]> {
+  return useQuery({
+    queryKey: ["board", tab],
+    queryFn: () =>
+      readRoute(`/api/posts/board?tab=${encodeURIComponent(tab)}`, z.array(BoardPostDTO)),
+    enabled: enabled && tab.length > 0,
   });
 }

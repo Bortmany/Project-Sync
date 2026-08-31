@@ -65,6 +65,14 @@ export default function PrivacyPage() {
             <strong>Notifications:</strong> what you were alerted about, and whether you have read it.
           </li>
           <li>
+            <strong>Announcements and the team board:</strong> the posts and replies you write, who
+            wrote them and when, which audience they were for, and which announcements you have
+            dismissed from your own dashboard. A dismissal is yours alone — nobody can see what you
+            have hidden. A removed post stays as &quot;Post removed&quot; so the replies under it
+            still make sense. External contractors have no team board and are never sent
+            announcements.
+          </li>
+          <li>
             <strong>A personal to-do list</strong>, if you choose to use one — the notes you type there
             are private to your account and visible to nobody else.
           </li>
