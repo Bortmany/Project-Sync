@@ -179,6 +179,11 @@ export function NewMainTaskDialog({
           <Button onClick={submit} loading={pending} disabled={!canSubmit}>
             {pending ? "Creating…" : "Create main task"}
           </Button>
+          {!deadline ? (
+            <span className="text-xs text-[var(--brand-gray)]">
+              Set a deadline to create this task — every main task needs one.
+            </span>
+          ) : null}
           {selected.length > 0 && !everyoneAssigned ? (
             <span className="text-xs text-[var(--brand-gray)]">
               Add an assignee for each selected discipline to continue.
@@ -219,7 +224,11 @@ export function NewMainTaskDialog({
             <Field label="Start date">
               <DateInput value={startDate} onChange={(event) => setStartDate(event.target.value)} />
             </Field>
-            <Field label="Deadline" error={dateOrderError ?? fieldError(fieldErrors, "deadline")}>
+            <Field
+              label="Deadline"
+              hint="Required"
+              error={dateOrderError ?? fieldError(fieldErrors, "deadline")}
+            >
               <DateInput
                 value={deadline}
                 min={startDate || undefined}

@@ -343,18 +343,23 @@ export function PhaseRail({
                   type="button"
                   onClick={() => onSelect(isSelected ? null : phase.id)}
                   aria-pressed={isSelected}
-                  className="min-w-0 text-left"
+                  className="min-w-0 flex-1 text-left"
                 >
                   <span
                     className="flex items-center gap-1.5 text-sm font-semibold"
                     style={{
                       color: phase.locked ? "var(--brand-gray)" : "var(--brand-ink)",
                     }}
+                    title={phase.name}
                   >
-                    <span className="text-[10px] text-[var(--brand-gray)]">{index + 1}</span>
-                    {phase.name}
+                    <span className="shrink-0 text-[10px] text-[var(--brand-gray)]">
+                      {index + 1}
+                    </span>
+                    {/* Truncate rather than let a long name ("Commissioning") push into the Rename
+                        control on a narrow card — the full name stays on the hover title. */}
+                    <span className="min-w-0 truncate">{phase.name}</span>
                     {phase.locked ? (
-                      <LockIcon className="text-[var(--brand-gray)]" />
+                      <LockIcon className="shrink-0 text-[var(--brand-gray)]" />
                     ) : null}
                   </span>
                   <span className="mt-0.5 block text-xs text-[var(--brand-text)]">

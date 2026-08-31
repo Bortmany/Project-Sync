@@ -263,7 +263,7 @@ export function DocumentTable({
               {group.emptyNote ?? "No documents yet."}
             </p>
           ) : (
-            <div className="overflow-x-auto rounded-[var(--radius)] border border-[var(--border)] bg-white">
+            <div className="relative overflow-x-auto rounded-[var(--radius)] border border-[var(--border)] bg-white">
               <table className="w-full text-sm">
                 <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--brand-gray)]">
                   <tr>

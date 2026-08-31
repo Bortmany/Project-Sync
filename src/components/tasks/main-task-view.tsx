@@ -415,7 +415,7 @@ function AddDisciplineTaskDialog({
             ))}
           </Select>
         </Field>
-        <Field label="Deadline">
+        <Field label="Deadline" hint="Required">
           <DateInput value={deadline} onChange={(event) => setDeadline(event.target.value)} />
         </Field>
         <label className="flex items-center gap-2 text-sm">
@@ -533,7 +533,7 @@ export function MainTaskView({ taskId }: { taskId: string }) {
         </div>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
         <div className="min-w-0 space-y-5">
           <section className="space-y-3">
             <h2 className="text-sm font-semibold text-[var(--brand-ink)]">Discipline progress</h2>

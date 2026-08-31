@@ -9,7 +9,7 @@
 import Link from "next/link";
 import { useProjectBrief } from "@/components/hooks/use-api";
 import { formatDate } from "@/components/format";
-import { DisciplineDot, ErrorBanner, ProgressBar, SkeletonRows } from "@/components/ui";
+import { DisciplineDot, ErrorBanner, SkeletonRows } from "@/components/ui";
 import type { BriefItemDTO, ProjectBriefDTO, ProjectDTO } from "@/lib/zod-schemas";
 
 function TaskLine({ item }: { item: BriefItemDTO }) {
@@ -104,13 +104,15 @@ export function ProjectBriefTab({ project }: { project: ProjectDTO }) {
   return (
     <div className="space-y-3">
       <Panel title="Progress">
+        {/*
+          A plain count of finished main tasks — deliberately NOT a bare percentage. The page header
+          already shows the discipline-weighted figure (a task half-done still counts there); a
+          second, count-based "%" beside it read as a contradiction ("50%" up top, "0%" here). The
+          honest count and the week-over-week line below say everything without competing with it.
+        */}
         <p className="text-sm text-[var(--brand-text)]">
-          {data.progress.completed} of {data.progress.total} main tasks complete ·{" "}
-          {data.progress.pct}%
+          {data.progress.completed} of {data.progress.total} main tasks complete
         </p>
-        <div className="max-w-md py-1">
-          <ProgressBar pct={data.progress.pct} />
-        </div>
         <p className="text-xs text-[var(--brand-gray)]">{progressLine(data.progress)}</p>
       </Panel>
 
