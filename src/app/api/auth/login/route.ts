@@ -8,6 +8,7 @@ import {
   setSessionCookie,
   verifyPassword,
 } from "@/lib/auth";
+import { isAccessExpired } from "@/lib/access-expiry";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { byIp, checkOnly, clearFailures, clientIp, limit, recordFailure } from "@/lib/rate-limit";
@@ -52,12 +53,16 @@ export async function POST(request: Request) {
 
   const user = await prisma.user.findUnique({ where: { email } });
 
-  if (!user || !user.isActive) {
+  // A contractor whose access has run out is turned away exactly like a deactivated account: the
+  // same wording, the same status, the same time cost. Nobody outside is ever told which it was.
+  const accessExpired = user ? isAccessExpired(user) : false;
+
+  if (!user || !user.isActive || accessExpired) {
     // Same time cost as a real account, and no address in the log — people mistype passwords into email boxes.
     await burnPasswordCheck();
     recordFailure(accountKey, 15 * 60_000);
     logger.warn("Sign-in refused", {
-      reason: user ? "inactive" : "unknown-email",
+      reason: !user ? "unknown-email" : user.isActive ? "access-expired" : "inactive",
       userId: user?.id,
     });
     return NextResponse.json({ ok: false, error: GENERIC_FAILURE }, { status: 401 });

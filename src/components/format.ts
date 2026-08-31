@@ -57,11 +57,25 @@ export function formatRelative(value: Date, now: Date = new Date()): string {
   return formatDate(value);
 }
 
-/** The "YYYY-MM-DD" a date input expects. */
+/** The "YYYY-MM-DD" a date input expects, read as the LOCAL calendar day. */
 export function toDateInputValue(value: Date | null | undefined): string {
   if (!value) return "";
   const offset = value.getTimezoneOffset() * 60 * 1000;
   return new Date(value.getTime() - offset).toISOString().slice(0, 10);
+}
+
+/**
+ * The "YYYY-MM-DD" a date input expects, read as the UTC day — the same hazard `formatDateUtc`
+ * exists for, one step earlier.
+ *
+ * Use this wherever a stored UTC-midnight day is put BACK into a date field. A form field reads
+ * "2026-09-30" and sends `new Date("2026-09-30")`, which is UTC midnight; pre-filling that same
+ * value with the local reading west of Greenwich would show 29 Sep, and saving the form again
+ * would store 29 Sep — the day walking backwards on every save.
+ */
+export function toUtcDateInputValue(value: Date | null | undefined): string {
+  if (!value) return "";
+  return value.toISOString().slice(0, 10);
 }
 
 /** The day key used for day dividers in feeds. */

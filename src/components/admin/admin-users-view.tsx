@@ -7,12 +7,13 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createUser, deactivateUser, updateUser } from "@/components/actions";
 import { fieldError, useAction } from "@/components/hooks/use-action";
-import { formatDate } from "@/components/format";
+import { formatDate, formatDateUtc, toUtcDateInputValue } from "@/components/format";
 import {
   Avatar,
   Badge,
   Button,
   CompanyBadge,
+  DateInput,
   DisciplineDot,
   EmptyState,
   ErrorBanner,
@@ -25,6 +26,7 @@ import {
   type ActiveFilters,
   type FilterDimension,
 } from "@/components/ui";
+import { isAccessExpired } from "@/lib/access-expiry";
 import type { DisciplineDTO, RoleName, UserDTO } from "@/lib/zod-schemas";
 
 const ROLE_OPTIONS: { value: RoleName; label: string }[] = [
@@ -45,6 +47,15 @@ const ROLE_LABEL: Record<RoleName, string> = {
 
 /** The roles whose work always sits inside one discipline. */
 const DISCIPLINE_ROLES: RoleName[] = ["DISCIPLINE_LEAD", "ENGINEER"];
+
+/** The one hint the access-end field carries, in both dialogs. */
+const ACCESS_ENDS_HINT =
+  "Optional. After this date they're locked out automatically — leave it blank for no expiry.";
+
+/** A date typed into the form, ready for the server: blank means "no expiry". */
+function accessEndsValue(role: RoleName, typed: string): Date | null {
+  return role === "EXTERNAL" && typed ? new Date(typed) : null;
+}
 
 const PASSWORD_LENGTH = 16;
 // No look-alike characters — this password gets read out or typed by hand.
@@ -93,6 +104,7 @@ function NewUserDialog({
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<RoleName>("ENGINEER");
   const [companyName, setCompanyName] = useState("");
+  const [accessEnds, setAccessEnds] = useState("");
   const [disciplineId, setDisciplineId] = useState("");
   const [jobTitle, setJobTitle] = useState("");
   const [password, setPassword] = useState(generatePassword);
@@ -106,6 +118,7 @@ function NewUserDialog({
     setName("");
     setEmail("");
     setRole("ENGINEER");
+    setAccessEnds("");
     setDisciplineId("");
     setJobTitle("");
     setPassword(generatePassword());
@@ -159,6 +172,7 @@ function NewUserDialog({
                     disciplineId: disciplineId || null,
                     jobTitle: jobTitle.trim() || null,
                     companyName: companyName.trim() || null,
+                    accessExpiresAt: accessEndsValue(role, accessEnds),
                   }),
                 {
                   success: "User created.",
@@ -230,6 +244,15 @@ function NewUserDialog({
             />
           </Field>
         ) : null}
+        {needsCompany ? (
+          <Field
+            label="Access ends"
+            hint={ACCESS_ENDS_HINT}
+            error={fieldError(fieldErrors, "accessExpiresAt")}
+          >
+            <DateInput value={accessEnds} onChange={(event) => setAccessEnds(event.target.value)} />
+          </Field>
+        ) : null}
         <Field label="Job title" hint="Optional — how the role reads on their profile.">
           <Input value={jobTitle} onChange={(event) => setJobTitle(event.target.value)} />
         </Field>
@@ -260,6 +283,10 @@ function EditUserDialog({
   const [name, setName] = useState(user.name);
   const [role, setRole] = useState<RoleName>(user.role);
   const [companyName, setCompanyName] = useState(user.companyName ?? "");
+  // The UTC reading, not the local one: the date is stored at UTC midnight and goes back out as
+  // `new Date("YYYY-MM-DD")`, so reading it locally west of Greenwich would move the day back one
+  // on every save until the contractor was locked out early.
+  const [accessEnds, setAccessEnds] = useState(toUtcDateInputValue(user.accessExpiresAt));
   const [disciplineId, setDisciplineId] = useState(user.disciplineId ?? "");
   const [jobTitle, setJobTitle] = useState(user.jobTitle ?? "");
   const [password, setPassword] = useState("");
@@ -292,6 +319,7 @@ function EditUserDialog({
                     disciplineId: disciplineId || null,
                     jobTitle: jobTitle.trim() || null,
                     companyName: companyName.trim() || null,
+                    accessExpiresAt: accessEndsValue(role, accessEnds),
                     ...(password ? { password } : {}),
                   }),
                 {
@@ -354,6 +382,15 @@ function EditUserDialog({
               placeholder="e.g. Al Hassan Engineering"
               onChange={(event) => setCompanyName(event.target.value)}
             />
+          </Field>
+        ) : null}
+        {needsCompany ? (
+          <Field
+            label="Access ends"
+            hint={ACCESS_ENDS_HINT}
+            error={fieldError(fieldErrors, "accessExpiresAt")}
+          >
+            <DateInput value={accessEnds} onChange={(event) => setAccessEnds(event.target.value)} />
           </Field>
         ) : null}
         <Field label="Job title">
@@ -546,6 +583,8 @@ export function AdminUsersView({
                 <th className="px-3 py-2 font-semibold">Email</th>
                 <th className="px-3 py-2 font-semibold">Role</th>
                 <th className="px-3 py-2 font-semibold">Discipline</th>
+                <th className="px-3 py-2 font-semibold">Company</th>
+                <th className="px-3 py-2 font-semibold">Access ends</th>
                 <th className="px-3 py-2 font-semibold">Last signed in</th>
                 <th className="px-3 py-2 font-semibold">Status</th>
                 <th className="px-3 py-2 font-semibold">Actions</th>
@@ -556,6 +595,9 @@ export function AdminUsersView({
                 const discipline = user.disciplineId
                   ? disciplineName.get(user.disciplineId)
                   : undefined;
+                const isContractor = user.role === "EXTERNAL";
+                // Expired is worked out here, from the date — it is never stored.
+                const expired = isAccessExpired(user);
                 return (
                   <tr
                     key={user.id}
@@ -579,6 +621,38 @@ export function AdminUsersView({
                         />
                       ) : (
                         <span className="text-[var(--brand-gray)]">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 text-[var(--brand-text)]">
+                      {isContractor && user.companyName ? (
+                        user.companyName
+                      ) : (
+                        <span className="text-[var(--brand-gray)]">—</span>
+                      )}
+                    </td>
+                    <td className="px-3">
+                      {!isContractor ? (
+                        <span className="text-[var(--brand-gray)]">—</span>
+                      ) : !user.accessExpiresAt ? (
+                        <span className="text-[var(--brand-gray)]">No expiry</span>
+                      ) : expired ? (
+                        <span className="flex flex-wrap items-center gap-2">
+                          <span className="text-[var(--status-blocked)]">
+                            {formatDateUtc(user.accessExpiresAt)}
+                          </span>
+                          <Badge color="var(--status-blocked)">Expired</Badge>
+                          <button
+                            type="button"
+                            onClick={() => setEditing(user)}
+                            className="text-xs font-semibold text-[var(--brand-primary)] hover:underline"
+                          >
+                            Extend
+                          </button>
+                        </span>
+                      ) : (
+                        <span className="text-[var(--brand-text)]">
+                          {formatDateUtc(user.accessExpiresAt)}
+                        </span>
                       )}
                     </td>
                     <td className="px-3 text-[var(--brand-text)]">

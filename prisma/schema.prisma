@@ -161,6 +161,10 @@ model User {
   /// The company this person works for, when it is not this one — required for an EXTERNAL
   /// contractor so everyone can see at a glance whose engineer they are talking to.
   companyName  String?
+  /// When an EXTERNAL contractor's access ends. Null means it never does. Nobody else carries one:
+  /// the service clears it whenever somebody stops being a contractor. "Expired" itself is never
+  /// stored — it is derived from this date at read time, exactly as OVERDUE is.
+  accessExpiresAt DateTime?
   isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())

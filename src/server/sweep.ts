@@ -1,5 +1,6 @@
 // The overdue sweep: once an hour, look for deadlines that are close or past and tell the people
-// responsible. Started from src/instrumentation.ts, in the Node runtime only.
+// responsible — and, in the same pass, warn a company's administrators when a contractor's access
+// is about to end. Started from src/instrumentation.ts, in the Node runtime only.
 //
 // Two safety rules govern this file:
 //  1. Several copies of the app may run at once, so every run first takes a Postgres advisory lock
@@ -12,6 +13,7 @@ import { logger } from "@/lib/logger";
 import { IntegrationEventToggles as TogglesSchema } from "@/lib/zod-schemas";
 import { digestMessage, orgDigest } from "@/server/services/briefs";
 import {
+  sweepAccessExpiryNotifications,
   sweepDeadlineNotifications,
   type SweepCounts,
   type SweepWebhookEvent,
@@ -73,7 +75,15 @@ export async function runSweepOnce(now: Date = new Date()): Promise<SweepResult>
       }
 
       const swept = await sweepDeadlineNotifications(tx, now);
-      return { ran: true as const, counts: swept.counts, events: swept.events };
+      // Contractor access warnings ride on the same locked pass, for the same reason the reminders
+      // do: one instance writes them, or none does.
+      const expiring = await sweepAccessExpiryNotifications(tx, now);
+
+      return {
+        ran: true as const,
+        counts: { ...swept.counts, accessExpiring: expiring.count },
+        events: swept.events,
+      };
     },
     // A sweep walks every open task in every project, so the default five-second budget is far
     // too short once there is real data: two minutes to finish, ten seconds to wait for a slot.
@@ -308,7 +318,8 @@ export function startSweep(): void {
           recordRun("skipped — another instance");
           return;
         }
-        const total = result.counts.approaching + result.counts.overdue;
+        const total =
+          result.counts.approaching + result.counts.overdue + result.counts.accessExpiring;
         recordRun(total > 0 ? "sent" : "nothing to send");
         if (total > 0) logger.info("Deadline sweep sent notifications", { ...result.counts });
       })

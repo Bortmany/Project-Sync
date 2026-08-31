@@ -1,6 +1,6 @@
-// The comment thread: the composer, then every comment oldest first. People who were mentioned show
-// in blue; comments their author removed stay in place as a muted "Comment removed" line so the
-// conversation still makes sense.
+// The comment thread: the composer, then every comment oldest first. People and departments that
+// were mentioned show in blue, a department with the four-dot glyph beside it; comments their author
+// removed stay in place as a muted "Comment removed" line so the conversation still makes sense.
 
 "use client";
 
@@ -16,7 +16,12 @@ import {
   type MeDTO,
 } from "@/components/hooks/use-api";
 import { formatRelative } from "@/components/format";
-import { CommentComposer, type Mentionable } from "@/components/comments/comment-composer";
+import {
+  CommentComposer,
+  type Mentionable,
+  type MentionableDepartment,
+} from "@/components/comments/comment-composer";
+import { DisciplinesIcon } from "@/components/shell/icons";
 import {
   Avatar,
   Button,
@@ -32,36 +37,51 @@ function escapeForRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Splits a comment into plain text and the "@Name" tokens that match someone on the project. */
-function renderBody(body: string, names: string[]) {
-  if (names.length === 0) return body;
+/**
+ * Splits a comment into plain text and the "@Name" tokens that match someone — or some department —
+ * on the project. A department gets the same blue as a person plus the four-dot glyph, so a reader
+ * can tell a whole team was called at a glance. A name held by both wins as a person.
+ */
+function renderBody(body: string, names: string[], departmentNames: string[]) {
+  const all = [...new Set([...names, ...departmentNames])];
+  if (all.length === 0) return body;
 
-  const alternatives = [...names]
+  const people = new Set(names);
+  const alternatives = all
     .sort((a, b) => b.length - a.length)
     .map(escapeForRegExp)
     .join("|");
   const parts = body.split(new RegExp(`@(${alternatives})`, "g"));
 
-  return parts.map((part, index) =>
-    index % 2 === 1 ? (
+  return parts.map((part, index) => {
+    if (index % 2 === 0) return <span key={index}>{part}</span>;
+
+    return people.has(part) ? (
       <span key={index} className="font-semibold text-[var(--brand-primary)]">
         @{part}
       </span>
     ) : (
-      <span key={index}>{part}</span>
-    ),
-  );
+      <span
+        key={index}
+        className="inline-flex items-center gap-1 font-semibold text-[var(--brand-primary)]"
+      >
+        <DisciplinesIcon size={13} />@{part}
+      </span>
+    );
+  });
 }
 
 function CommentRow({
   comment,
   me,
   memberNames,
+  departmentNames,
   onChanged,
 }: {
   comment: CommentRowDTO;
   me: MeDTO | undefined;
   memberNames: string[];
+  departmentNames: string[];
   onChanged: () => void;
 }) {
   const { run, pending, error } = useAction();
@@ -180,7 +200,7 @@ function CommentRow({
           </div>
         ) : (
           <p className="whitespace-pre-wrap text-sm text-[var(--brand-text)]">
-            {renderBody(comment.body, memberNames)}
+            {renderBody(comment.body, memberNames, departmentNames)}
           </p>
         )}
       </div>
@@ -229,6 +249,7 @@ function Thread({
   isError,
   onRetry,
   members,
+  departments,
   mainTaskId,
   disciplineTaskId,
   onChanged,
@@ -238,12 +259,14 @@ function Thread({
   isError: boolean;
   onRetry: () => void;
   members: Mentionable[];
+  departments: MentionableDepartment[];
   mainTaskId?: string;
   disciplineTaskId?: string;
   onChanged: () => void;
 }) {
   const me = useMe();
   const memberNames = members.map((member) => member.userName);
+  const departmentNames = departments.map((department) => department.name);
 
   return (
     <div className="space-y-4">
@@ -251,6 +274,7 @@ function Thread({
         mainTaskId={mainTaskId}
         disciplineTaskId={disciplineTaskId}
         mentionable={members}
+        departments={departments}
         onPosted={onChanged}
       />
 
@@ -278,6 +302,7 @@ function Thread({
               comment={comment}
               me={me.data}
               memberNames={memberNames}
+              departmentNames={departmentNames}
               onChanged={onChanged}
             />
           ))}
@@ -292,10 +317,12 @@ export function MainTaskComments({
   mainTaskId,
   projectId,
   members,
+  departments = [],
 }: {
   mainTaskId: string;
   projectId: string;
   members: Mentionable[];
+  departments?: MentionableDepartment[];
 }) {
   const queryClient = useQueryClient();
   const comments = useMainTaskComments(mainTaskId);
@@ -312,6 +339,7 @@ export function MainTaskComments({
       isError={comments.isError}
       onRetry={() => void comments.refetch()}
       members={members}
+      departments={departments}
       mainTaskId={mainTaskId}
       onChanged={refresh}
     />
@@ -324,11 +352,13 @@ export function DisciplineTaskComments({
   mainTaskId,
   projectId,
   members,
+  departments = [],
 }: {
   disciplineTaskId: string;
   mainTaskId: string;
   projectId: string;
   members: Mentionable[];
+  departments?: MentionableDepartment[];
 }) {
   const queryClient = useQueryClient();
   const comments = useDisciplineTaskComments(disciplineTaskId);
@@ -346,6 +376,7 @@ export function DisciplineTaskComments({
       isError={comments.isError}
       onRetry={() => void comments.refetch()}
       members={members}
+      departments={departments}
       disciplineTaskId={disciplineTaskId}
       onChanged={refresh}
     />

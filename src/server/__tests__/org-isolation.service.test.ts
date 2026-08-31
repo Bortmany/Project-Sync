@@ -255,6 +255,36 @@ describe("an administrator of one company cannot reach another company's work", 
     expect(thread[0].body).toContain("Rival Energy");
   });
 
+  it("cannot mention another company's department", async () => {
+    // Both companies run a department with the same name, so the refusal must not name it: the
+    // message is the plain one, and it never says whether that id is real anywhere else.
+    let message = "";
+    try {
+      await createComment(acme.admin, {
+        mainTaskId: acme.mainTaskId,
+        body: "Their mechanical team should see this.",
+        mentions: [],
+        disciplineMentions: [rival.fixture.disciplineId],
+      });
+    } catch (error) {
+      message = (error as ServiceError).message;
+    }
+    expect(message).toBe("You can only mention departments that are on this project.");
+
+    // Nothing was written, and no notification left the company.
+    expect(await prisma.comment.count()).toBe(2);
+    expect(await prisma.notification.count({ where: { type: "MENTIONED" } })).toBe(0);
+
+    // Their own department, on their own project, still works.
+    const posted = await createComment(acme.admin, {
+      mainTaskId: acme.mainTaskId,
+      body: "Ours, though.",
+      mentions: [],
+      disciplineMentions: [acme.fixture.disciplineId],
+    });
+    expect(posted.mentions).toEqual([`d:${acme.fixture.disciplineId}`]);
+  });
+
   it("cannot star their work", async () => {
     await expect(
       toggleFavorite(acme.admin, { targetType: "MAIN_TASK", targetId: rival.mainTaskId }),
@@ -479,6 +509,57 @@ describe("the hourly deadline sweep stays inside each company", () => {
       const taskOrgId = task?.mainTask.project.orgId ?? mainTask?.project.orgId;
       expect(taskOrgId).toBe(notification.user.orgId);
     }
+  });
+});
+
+describe("a contractor's access end date is one company's business", () => {
+  const IN_THREE_DAYS = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+
+  /** A contractor of one company, with a last day a few days out. */
+  async function contractorFor(company: Company) {
+    return createUser(company.admin, {
+      email: `contractor.${Math.random().toString(36).slice(2)}@partner.example`,
+      name: "Sami al-Harthy",
+      password: "coordination-2026",
+      role: "EXTERNAL",
+      companyName: "Al Hassan Engineering",
+      accessExpiresAt: IN_THREE_DAYS,
+    });
+  }
+
+  it("warns the administrators of that contractor's own company and nobody else", async () => {
+    const theirs = await contractorFor(acme);
+
+    const result = await runSweepOnce();
+    expect(result.ran).toBe(true);
+
+    const warnings = await prisma.notification.findMany({
+      where: { linkUrl: { contains: "expiring=" } },
+      include: { user: { select: { orgId: true } } },
+    });
+    expect(warnings.length).toBeGreaterThan(0);
+
+    // Every warning names Acme's contractor and went to somebody inside Acme.
+    for (const warning of warnings) {
+      expect(warning.linkUrl).toContain(`expiring=${theirs.id}`);
+      expect(warning.user.orgId).toBe(acme.fixture.orgId);
+    }
+    expect(warnings.some((row) => row.userId === rival.admin.userId)).toBe(false);
+  });
+
+  it("is invisible to the other company, who cannot see it or move it", async () => {
+    const theirs = await contractorFor(acme);
+
+    const seenByRival = await listAllUsers(rival.admin);
+    expect(seenByRival.some((person) => person.id === theirs.id)).toBe(false);
+
+    // Not "forbidden" — an administrator of another company never learns the account is real.
+    await expect(
+      updateUser(rival.admin, { id: theirs.id, accessExpiresAt: null }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    const unchanged = await prisma.user.findUniqueOrThrow({ where: { id: theirs.id } });
+    expect(unchanged.accessExpiresAt).not.toBeNull();
   });
 });
 

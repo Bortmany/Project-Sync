@@ -47,7 +47,10 @@ export default function PrivacyPage() {
             a contractor, the name of the company they work for is stored alongside their account and
             shown beside their name on the work they touch, so everybody here knows who they are
             dealing with. A contractor only ever sees the tasks assigned to them — not the team list,
-            not other people&apos;s work, and not another company&apos;s data.
+            not other people&apos;s work, and not another company&apos;s data. An administrator may
+            also set a date their access ends; that date is stored on the account, shown on the admin
+            people screen, and after it they can no longer sign in. Their work, comments and
+            documents stay on record as described below.
           </li>
           <li>
             <strong>Your company:</strong> the company name given at sign-up, the handle made from it,
