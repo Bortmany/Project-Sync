@@ -16,7 +16,7 @@ export default function GlobalError({ error, reset }: { error: Error; reset: () 
         style={{
           fontFamily: 'Candara, "Segoe UI", "Trebuchet MS", system-ui, sans-serif',
           background: "#F5F6F7",
-          color: "#5F6062",
+          color: "#4A4E57",
           display: "flex",
           minHeight: "100vh",
           alignItems: "center",
@@ -25,7 +25,7 @@ export default function GlobalError({ error, reset }: { error: Error; reset: () 
         }}
       >
         <div style={{ maxWidth: 420, textAlign: "center" }}>
-          <h1 style={{ color: "#003E51", fontSize: 22, fontWeight: 600 }}>Something went wrong</h1>
+          <h1 style={{ color: "#152647", fontSize: 22, fontWeight: 600 }}>Something went wrong</h1>
           <p style={{ marginTop: 8, fontSize: 14 }}>
             The page could not be loaded. Nothing you were working on has been lost. Please try
             again, and tell your administrator if it keeps happening.
@@ -35,7 +35,7 @@ export default function GlobalError({ error, reset }: { error: Error; reset: () 
             onClick={reset}
             style={{
               marginTop: 16,
-              background: "#00558C",
+              background: "#2E5AAC",
               color: "#fff",
               border: 0,
               borderRadius: 6,

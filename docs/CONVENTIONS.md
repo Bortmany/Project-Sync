@@ -1,4 +1,4 @@
-# Project Nexus — conventions (this repo's law)
+# Tielora — conventions (this repo's law)
 
 Every agent and every session working in this repo reads this file first. It overrides the cross-repo
 baseline in `Agents/docs/engineering-standards.md` wherever the two differ.
@@ -10,10 +10,11 @@ holds main tasks, each main task is delivered by discipline tasks (Mechanical, E
 Instrumentation, Civil, Process, HSE, Reliability, Inspection — the set depends on the company's
 industry template) with required documents, dependencies, comments and a full audit trail.
 
-It was Project Nexus, one company's internal tool. Since the Milestone 1 SaaS conversion it serves
-many companies from one database: a company signs itself up at `/api/auth/signup`, gets its
-disciplines from an industry template and an administrator of its own, and adds everyone else from
-the Admin section. The screens still say Project Nexus in places — the rebrand is a later milestone.
+It began as one company's internal tool. Since the Milestone 1 SaaS conversion it serves many
+companies from one database: a company signs itself up at `/signup` (`POST /api/auth/signup`), gets
+its disciplines from an industry template and an administrator of its own, and adds everyone else
+from the Admin section. Milestone 2 rebranded the whole app to Tielora — there is no other name on
+any screen.
 
 ## THE TENANT RULE (read this before the golden rule)
 
@@ -80,8 +81,9 @@ In practice:
 6. **Plain-English user-facing text.** Sentence case, no jargon, no stack traces. Dates as
    "30 Sep 2026" via `Intl` — the app carries no date library. The app is English-only; there is no
    i18n dictionary, so strings live in the components.
-7. **Brand tokens from `src/app/globals.css` only.** No new hex values anywhere. The sail motif
-   appears on the login page and empty states only.
+7. **Brand tokens from `src/app/globals.css` only** (`--brand-primary`, `--brand-ink`,
+   `--brand-mid`, `--brand-accent`, `--brand-text`, `--brand-gray`, `--brand-stone`). No new hex
+   values anywhere.
 8. **Server components for reads by default**; client components only where there is real
    interaction (forms, drag, popovers). TanStack Query lives in `src/app/(app)/providers.tsx`.
 9. **Uploads:** always `validateUpload()` then `storeFile()` from `src/lib/upload.ts` — magic-number

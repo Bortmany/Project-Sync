@@ -1,6 +1,7 @@
-// The photograph layered over the sail motif on the sign-in panel. Decorative only — the panel
+// The photograph on the public panel (sign in, create a workspace). Decorative only — the panel
 // still reads correctly without it, which is why it simply disappears if the file can't be loaded.
-// (An <Image> with onError has to be a client component; the motif underneath stays server-rendered.)
+// (An <Image> with onError has to be a client component; the gradient panel behind it stays
+// server-rendered.)
 
 "use client";
 
@@ -23,7 +24,7 @@ export function LoginHero() {
         onError={() => setFailed(true)}
       />
       {/* Keeps the wordmark and tagline readable over the photograph. */}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[var(--olng-navy)] via-[var(--olng-navy)]/40 to-transparent" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[var(--brand-ink)] via-[var(--brand-ink)]/40 to-transparent" />
     </>
   );
 }

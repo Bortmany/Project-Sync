@@ -43,7 +43,7 @@ function renderBody(body: string, names: string[]) {
 
   return parts.map((part, index) =>
     index % 2 === 1 ? (
-      <span key={index} className="font-semibold text-[var(--olng-blue)]">
+      <span key={index} className="font-semibold text-[var(--brand-primary)]">
         @{part}
       </span>
     ) : (
@@ -79,11 +79,11 @@ function CommentRow({
       <li className="flex items-start gap-3 py-3">
         <Avatar name={comment.authorName} size={32} />
         <div className="min-w-0 flex-1">
-          <p className="text-sm text-[var(--olng-gray)]">
+          <p className="text-sm text-[var(--brand-gray)]">
             <span className="font-semibold">{comment.authorName}</span> ·{" "}
             {formatRelative(comment.createdAt)}
           </p>
-          <p className="mt-1 text-sm italic text-[var(--olng-gray)]">Comment removed</p>
+          <p className="mt-1 text-sm italic text-[var(--brand-gray)]">Comment removed</p>
         </div>
       </li>
     );
@@ -95,8 +95,8 @@ function CommentRow({
 
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex items-start gap-2">
-          <p className="min-w-0 flex-1 text-sm text-[var(--olng-gray)]">
-            <span className="font-semibold text-[var(--olng-navy)]">{comment.authorName}</span> ·{" "}
+          <p className="min-w-0 flex-1 text-sm text-[var(--brand-gray)]">
+            <span className="font-semibold text-[var(--brand-ink)]">{comment.authorName}</span> ·{" "}
             {formatRelative(comment.createdAt)}
             {comment.editedAt ? " · (edited)" : ""}
           </p>
@@ -107,7 +107,7 @@ function CommentRow({
                 type="button"
                 aria-label={`Options for ${comment.authorName}'s comment`}
                 aria-expanded={menuOpen}
-                className="rounded px-2 py-1 text-sm text-[var(--olng-gray)] hover:bg-[var(--page-bg)]"
+                className="rounded px-2 py-1 text-sm text-[var(--brand-gray)] hover:bg-[var(--page-bg)]"
                 onClick={() => setMenuOpen((open) => !open)}
               >
                 ⋯
@@ -177,7 +177,7 @@ function CommentRow({
             </div>
           </div>
         ) : (
-          <p className="whitespace-pre-wrap text-sm text-[var(--olng-text)]">
+          <p className="whitespace-pre-wrap text-sm text-[var(--brand-text)]">
             {renderBody(comment.body, memberNames)}
           </p>
         )}

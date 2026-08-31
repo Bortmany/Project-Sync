@@ -39,7 +39,7 @@ export function Topbar({ name, email, role }: { name: string; email: string; rol
           className="flex items-center gap-2 rounded-[var(--radius)] p-1 hover:bg-[var(--page-bg)]"
         >
           <Avatar name={name} />
-          <span className="hidden text-sm text-[var(--olng-text)] sm:inline">{name}</span>
+          <span className="hidden text-sm text-[var(--brand-text)] sm:inline">{name}</span>
         </button>
 
         {open ? (
@@ -47,13 +47,13 @@ export function Topbar({ name, email, role }: { name: string; email: string; rol
             role="menu"
             className="absolute right-0 z-40 mt-2 w-56 rounded-[var(--radius)] border border-[var(--border)] bg-white p-2 shadow-lg"
           >
-            <p className="px-2 py-1 text-xs text-[var(--olng-gray)]">{email}</p>
+            <p className="px-2 py-1 text-xs text-[var(--brand-gray)]">{email}</p>
             <button
               type="button"
               role="menuitem"
               onClick={signOut}
               disabled={signingOut}
-              className="w-full rounded-[var(--radius)] px-2 py-2 text-left text-sm text-[var(--olng-text)] hover:bg-[var(--page-bg)]"
+              className="w-full rounded-[var(--radius)] px-2 py-2 text-left text-sm text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
             >
               {signingOut ? "Signing out…" : "Sign out"}
             </button>

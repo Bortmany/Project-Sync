@@ -59,7 +59,7 @@ function PasswordPanel({ password }: { password: string }) {
 
   return (
     <div className="space-y-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--page-bg)] p-3">
-      <code className="block break-all font-mono text-sm text-[var(--olng-navy)]">{password}</code>
+      <code className="block break-all font-mono text-sm text-[var(--brand-ink)]">{password}</code>
       <Button
         variant="secondary"
         onClick={() => {
@@ -68,7 +68,7 @@ function PasswordPanel({ password }: { password: string }) {
       >
         {copied ? "Copied" : "Copy password"}
       </Button>
-      <p className="text-xs text-[var(--olng-gray)]">
+      <p className="text-xs text-[var(--brand-gray)]">
         This is the only time it is shown. If it is lost, set a new one from Edit.
       </p>
     </div>
@@ -118,7 +118,7 @@ function NewUserDialog({
       >
         <div className="space-y-3">
           <p>Share these sign-in details with {created.name}:</p>
-          <p className="text-sm font-semibold text-[var(--olng-navy)]">{created.email}</p>
+          <p className="text-sm font-semibold text-[var(--brand-ink)]">{created.email}</p>
           <PasswordPanel password={password} />
         </div>
       </Modal>
@@ -174,7 +174,7 @@ function NewUserDialog({
           <Input
             type="email"
             value={email}
-            placeholder="you@omanlng.com"
+            placeholder="name@company.com"
             onChange={(event) => setEmail(event.target.value)}
           />
         </Field>
@@ -400,7 +400,7 @@ function ReactivateButton({ user }: { user: UserDTO }) {
           onSuccess: () => router.refresh(),
         })
       }
-      className="text-xs font-semibold text-[var(--olng-blue)] hover:underline disabled:text-[var(--olng-gray)]"
+      className="text-xs font-semibold text-[var(--brand-primary)] hover:underline disabled:text-[var(--brand-gray)]"
     >
       Reactivate
     </button>
@@ -466,7 +466,7 @@ export function AdminUsersView({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold text-[var(--olng-blue)]">Users</h1>
+        <h1 className="text-xl font-semibold text-[var(--brand-primary)]">Users</h1>
         <Button onClick={() => setNewOpen(true)}>+ New user</Button>
       </div>
 
@@ -485,12 +485,12 @@ export function AdminUsersView({
       {users.length === 0 ? (
         <EmptyState message="No people yet. Create the first account to get the team started." />
       ) : visible.length === 0 ? (
-        <div className="py-8 text-center text-sm text-[var(--olng-text)]">
+        <div className="py-8 text-center text-sm text-[var(--brand-text)]">
           <p>No users match your search.</p>
           <button
             type="button"
             onClick={clearFilters}
-            className="mt-1 font-semibold text-[var(--olng-blue)] underline underline-offset-2"
+            className="mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
           >
             Clear filters
           </button>
@@ -498,7 +498,7 @@ export function AdminUsersView({
       ) : (
         <div className="overflow-x-auto rounded-[var(--radius)] border border-[var(--border)] bg-white">
           <table className="w-full text-sm">
-            <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--olng-gray)]">
+            <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--brand-gray)]">
               <tr>
                 <th className="px-3 py-2 font-semibold">Name</th>
                 <th className="px-3 py-2 font-semibold">Email</th>
@@ -520,13 +520,13 @@ export function AdminUsersView({
                     className={`h-11 hover:bg-[var(--page-bg)] ${user.isActive ? "" : "opacity-60"}`}
                   >
                     <td className="px-3">
-                      <span className="flex items-center gap-2 font-semibold text-[var(--olng-navy)]">
+                      <span className="flex items-center gap-2 font-semibold text-[var(--brand-ink)]">
                         <Avatar name={user.name} size={24} />
                         {user.name}
                       </span>
                     </td>
-                    <td className="px-3 text-[var(--olng-text)]">{user.email}</td>
-                    <td className="px-3 text-[var(--olng-text)]">{ROLE_LABEL[user.role]}</td>
+                    <td className="px-3 text-[var(--brand-text)]">{user.email}</td>
+                    <td className="px-3 text-[var(--brand-text)]">{ROLE_LABEL[user.role]}</td>
                     <td className="px-3">
                       {discipline ? (
                         <DisciplineDot
@@ -535,17 +535,17 @@ export function AdminUsersView({
                           showCode
                         />
                       ) : (
-                        <span className="text-[var(--olng-gray)]">—</span>
+                        <span className="text-[var(--brand-gray)]">—</span>
                       )}
                     </td>
-                    <td className="px-3 text-[var(--olng-text)]">
+                    <td className="px-3 text-[var(--brand-text)]">
                       {user.lastLoginAt ? formatDate(user.lastLoginAt) : "Never"}
                     </td>
                     <td className="px-3">
                       {user.isActive ? (
                         <Badge color="var(--status-completed)">Active</Badge>
                       ) : (
-                        <Badge color="var(--olng-gray)">Deactivated</Badge>
+                        <Badge color="var(--brand-gray)">Deactivated</Badge>
                       )}
                     </td>
                     <td className="px-3">
@@ -553,7 +553,7 @@ export function AdminUsersView({
                         <button
                           type="button"
                           onClick={() => setEditing(user)}
-                          className="text-xs font-semibold text-[var(--olng-blue)] hover:underline"
+                          className="text-xs font-semibold text-[var(--brand-primary)] hover:underline"
                         >
                           Edit
                         </button>
@@ -582,7 +582,7 @@ export function AdminUsersView({
         <button
           type="button"
           onClick={clearFilters}
-          className="text-xs font-semibold text-[var(--olng-blue)] underline underline-offset-2"
+          className="text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
         >
           Clear filters
         </button>

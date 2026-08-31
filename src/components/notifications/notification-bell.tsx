@@ -45,7 +45,7 @@ export function NotificationBell() {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={count > 0 ? `Notifications, ${count} unread` : "Notifications"}
-        className="relative rounded-[var(--radius)] p-2 text-[var(--olng-text)] hover:bg-[var(--page-bg)]"
+        className="relative rounded-[var(--radius)] p-2 text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
       >
         <BellIcon />
         {count > 0 ? (
@@ -61,13 +61,13 @@ export function NotificationBell() {
           className="absolute right-0 z-40 mt-2 w-[360px] max-w-[calc(100vw-1rem)] rounded-[var(--radius)] border border-[var(--border)] bg-white shadow-lg"
         >
           <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2">
-            <span className="text-sm font-semibold text-[var(--olng-blue)]">Notifications</span>
+            <span className="text-sm font-semibold text-[var(--brand-primary)]">Notifications</span>
             {count > 0 ? (
               <button
                 type="button"
                 onClick={() => markAllRead.mutate()}
                 disabled={markAllRead.isPending}
-                className="text-xs font-semibold text-[var(--olng-blue)] hover:underline disabled:text-[var(--olng-gray)]"
+                className="text-xs font-semibold text-[var(--brand-primary)] hover:underline disabled:text-[var(--brand-gray)]"
               >
                 Mark all read
               </button>
@@ -76,19 +76,19 @@ export function NotificationBell() {
 
           <div className="max-h-96 overflow-y-auto py-1">
             {list.isPending ? (
-              <p className="px-3 py-6 text-center text-sm text-[var(--olng-gray)]">Loading…</p>
+              <p className="px-3 py-6 text-center text-sm text-[var(--brand-gray)]">Loading…</p>
             ) : list.isError ? (
               <p className="px-3 py-6 text-center text-sm text-[var(--status-blocked)]">
                 Couldn&apos;t load notifications. Try refreshing the page.
               </p>
             ) : items.length === 0 ? (
-              <p className="px-3 py-6 text-center text-sm text-[var(--olng-text)]">
+              <p className="px-3 py-6 text-center text-sm text-[var(--brand-text)]">
                 You&apos;re all caught up. Nothing to see here.
               </p>
             ) : (
               <>
                 {groups.unread.length > 0 ? (
-                  <p className="px-3 pb-1 pt-2 text-[11px] uppercase tracking-wide text-[var(--olng-gray)]">
+                  <p className="px-3 pb-1 pt-2 text-[11px] uppercase tracking-wide text-[var(--brand-gray)]">
                     New
                   </p>
                 ) : null}
@@ -97,7 +97,7 @@ export function NotificationBell() {
                 ))}
 
                 {groups.read.length > 0 ? (
-                  <p className="px-3 pb-1 pt-2 text-[11px] uppercase tracking-wide text-[var(--olng-gray)]">
+                  <p className="px-3 pb-1 pt-2 text-[11px] uppercase tracking-wide text-[var(--brand-gray)]">
                     Earlier
                   </p>
                 ) : null}
@@ -112,7 +112,7 @@ export function NotificationBell() {
             <Link
               href="/notifications"
               onClick={() => setOpen(false)}
-              className="text-xs font-semibold text-[var(--olng-blue)] hover:underline"
+              className="text-xs font-semibold text-[var(--brand-primary)] hover:underline"
             >
               View all notifications →
             </Link>

@@ -2,7 +2,7 @@
 
 import { ProjectView } from "@/components/projects/project-view";
 
-export const metadata = { title: "Project — Project Nexus" };
+export const metadata = { title: "Project — Tielora" };
 
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

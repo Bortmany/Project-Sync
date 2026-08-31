@@ -13,7 +13,7 @@ export default function AppError({ error, reset }: { error: Error; reset: () => 
 
   return (
     <Card title="Something went wrong">
-      <p className="text-sm text-[var(--olng-text)]">
+      <p className="text-sm text-[var(--brand-text)]">
         We could not load this page. Nothing you were working on has been lost. Please try again, and
         tell your administrator if it keeps happening.
       </p>

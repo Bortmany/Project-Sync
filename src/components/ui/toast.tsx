@@ -14,7 +14,7 @@ const ToastContext = createContext<ToastApi | null>(null);
 const TONE_COLOR: Record<ToastTone, string> = {
   success: "var(--status-completed)",
   error: "var(--status-blocked)",
-  info: "var(--olng-navy)",
+  info: "var(--brand-ink)",
 };
 
 export function ToastProvider({ children }: { children: ReactNode }) {

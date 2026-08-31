@@ -2,7 +2,7 @@
 
 import { DisciplineTaskView } from "@/components/tasks/discipline-task-view";
 
-export const metadata = { title: "Discipline task — Project Nexus" };
+export const metadata = { title: "Discipline task — Tielora" };
 
 export default async function DisciplineTaskPage({
   params,

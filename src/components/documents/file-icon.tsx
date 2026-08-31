@@ -24,13 +24,13 @@ const FAMILY_BY_EXTENSION: Record<string, FileFamily> = {
 
 const FAMILY_COLOR: Record<FileFamily, string> = {
   pdf: "var(--status-blocked)",
-  image: "var(--olng-sail)",
+  image: "var(--brand-accent)",
   sheet: "var(--status-completed)",
-  doc: "var(--olng-blue)",
-  slides: "var(--olng-sand)",
-  archive: "var(--olng-gray)",
-  drawing: "var(--olng-navy)",
-  file: "var(--olng-gray)",
+  doc: "var(--brand-primary)",
+  slides: "var(--brand-stone)",
+  archive: "var(--brand-gray)",
+  drawing: "var(--brand-ink)",
+  file: "var(--brand-gray)",
 };
 
 const FAMILY_LABEL: Record<FileFamily, string> = {

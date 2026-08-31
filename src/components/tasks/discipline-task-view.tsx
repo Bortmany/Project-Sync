@@ -58,7 +58,7 @@ function RequiredDocsCount({ documents }: { documents: RequiredDocumentDTO[] }) 
 
   if (mandatory.length === 0) {
     return (
-      <span className="text-xs text-[var(--olng-gray)]">
+      <span className="text-xs text-[var(--brand-gray)]">
         {optionalDone} of {optional.length} optional
       </span>
     );
@@ -66,10 +66,10 @@ function RequiredDocsCount({ documents }: { documents: RequiredDocumentDTO[] }) 
 
   const mandatoryDone = mandatory.filter((document) => document.isSatisfied).length;
   return (
-    <span className="text-xs text-[var(--olng-text)]">
+    <span className="text-xs text-[var(--brand-text)]">
       {mandatoryDone} of {mandatory.length} complete
       {optional.length > 0 ? (
-        <span className="text-[var(--olng-gray)]">
+        <span className="text-[var(--brand-gray)]">
           {" · "}
           {optionalDone}/{optional.length} optional
         </span>
@@ -159,7 +159,7 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
       />
 
       <header className="space-y-2">
-        <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--olng-gray)]">
+        <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--brand-gray)]">
           <span
             className="inline-block h-2.5 w-2.5 rounded-full"
             style={{ backgroundColor: data.disciplineColorHex }}
@@ -168,13 +168,13 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
           {data.disciplineName}
         </p>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="min-w-0 break-words text-xl font-semibold text-[var(--olng-blue)]">
+          <h1 className="min-w-0 break-words text-xl font-semibold text-[var(--brand-primary)]">
             {data.title}
           </h1>
           <StatusBadge status={data.status} />
           <PriorityFlag priority={data.priority} />
           {data.isMandatory ? (
-            <span className="rounded-full bg-[var(--page-bg)] px-2 py-0.5 text-xs text-[var(--olng-text)]">
+            <span className="rounded-full bg-[var(--page-bg)] px-2 py-0.5 text-xs text-[var(--brand-text)]">
               Mandatory
             </span>
           ) : null}
@@ -182,7 +182,7 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
         </div>
         <p
           className="text-sm"
-          style={{ color: data.isOverdue ? "var(--status-blocked)" : "var(--olng-text)" }}
+          style={{ color: data.isOverdue ? "var(--status-blocked)" : "var(--brand-text)" }}
         >
           Deadline {formatDate(data.deadline)}
           {data.isOverdue ? " — overdue" : ""}
@@ -191,7 +191,7 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
           Part of:{" "}
           <Link
             href={`/tasks/${data.mainTaskId}`}
-            className="font-semibold text-[var(--olng-blue)] hover:underline"
+            className="font-semibold text-[var(--brand-primary)] hover:underline"
           >
             {data.mainTaskTitle} →
           </Link>
@@ -208,7 +208,7 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
           <div className="flex flex-wrap items-center gap-3">
             {canControl ? (
               <>
-                <label className="text-xs text-[var(--olng-text)]" htmlFor="discipline-status">
+                <label className="text-xs text-[var(--brand-text)]" htmlFor="discipline-status">
                   Change status
                 </label>
                 {/* Select fills its container, so the width is set here rather than on the field. */}
@@ -268,7 +268,7 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
           </div>
 
           {canControl && data.status !== "COMPLETED" && !data.canComplete ? (
-            <p className="text-sm text-[var(--olng-text)]">
+            <p className="text-sm text-[var(--brand-text)]">
               {/* Each blocker is already a full sentence with its own full stop — don't add another. */}
               You can&apos;t mark this complete yet: {data.blockers.join(" ")}
             </p>
@@ -289,14 +289,14 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
             title="What's required"
             action={<RequiredDocsCount documents={data.requiredDocuments} />}
           >
-            <p className="text-sm text-[var(--olng-text)]">
+            <p className="text-sm text-[var(--brand-text)]">
               {data.description?.trim()
                 ? data.description
                 : "No description was added for this discipline task."}
             </p>
 
             <div className="mt-4">
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--olng-gray)]">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--brand-gray)]">
                 Required documents
               </h3>
               <RequiredDocsChecklist task={data} />
@@ -305,7 +305,7 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
 
           <Card title="Depends on">
             {data.dependencies.length === 0 ? (
-              <p className="text-sm text-[var(--olng-gray)]">
+              <p className="text-sm text-[var(--brand-gray)]">
                 Nothing else has to finish before this task.
               </p>
             ) : (
@@ -317,11 +317,11 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
                   >
                     <Link
                       href={`/discipline-tasks/${dependency.id}`}
-                      className="min-w-0 flex-1 basis-40 text-[var(--olng-blue)] hover:underline"
+                      className="min-w-0 flex-1 basis-40 text-[var(--brand-primary)] hover:underline"
                     >
                       {dependency.title}
                     </Link>
-                    <span className="text-xs text-[var(--olng-gray)]">
+                    <span className="text-xs text-[var(--brand-gray)]">
                       {dependency.disciplineCode}
                     </span>
                     <StatusBadge status={dependency.status} />
@@ -364,7 +364,7 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
           <Card title="Details">
             <dl className="space-y-3 text-sm">
               <div>
-                <dt className="text-xs text-[var(--olng-gray)]">Assignee</dt>
+                <dt className="text-xs text-[var(--brand-gray)]">Assignee</dt>
                 <dd className="mt-1">
                   {canReassign ? (
                     <Select
@@ -394,29 +394,29 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
                       ))}
                     </Select>
                   ) : data.assigneeName ? (
-                    <span className="flex items-center gap-2 text-[var(--olng-navy)]">
+                    <span className="flex items-center gap-2 text-[var(--brand-ink)]">
                       <Avatar name={data.assigneeName} size={24} />
                       {data.assigneeName}
                     </span>
                   ) : (
-                    <span className="text-[var(--olng-gray)]">No one yet</span>
+                    <span className="text-[var(--brand-gray)]">No one yet</span>
                   )}
                 </dd>
               </div>
               <div>
-                <dt className="text-xs text-[var(--olng-gray)]">Dates</dt>
+                <dt className="text-xs text-[var(--brand-gray)]">Dates</dt>
                 <dd className="mt-1">
                   {formatDate(data.startDate)} — {formatDate(data.deadline)}
                 </dd>
               </div>
               <div>
-                <dt className="text-xs text-[var(--olng-gray)]">Priority</dt>
+                <dt className="text-xs text-[var(--brand-gray)]">Priority</dt>
                 <dd className="mt-1">
                   <PriorityFlag priority={data.priority} />
                 </dd>
               </div>
               <div>
-                <dt className="text-xs text-[var(--olng-gray)]">Must be done</dt>
+                <dt className="text-xs text-[var(--brand-gray)]">Must be done</dt>
                 <dd className="mt-1">
                   {data.isMandatory
                     ? "Yes — the main task waits on it"
@@ -425,7 +425,7 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
               </div>
               {data.completedAt ? (
                 <div>
-                  <dt className="text-xs text-[var(--olng-gray)]">Completed</dt>
+                  <dt className="text-xs text-[var(--brand-gray)]">Completed</dt>
                   <dd className="mt-1">
                     {data.completedByName ?? "Someone"} · {formatDate(data.completedAt)}
                   </dd>

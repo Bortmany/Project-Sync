@@ -172,8 +172,8 @@ export function ProjectView({ projectId }: { projectId: string }) {
 
       <header className="space-y-3">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold text-[var(--olng-blue)]">{data.name}</h1>
-          <span className="rounded-full bg-[var(--page-bg)] px-2 py-0.5 text-xs text-[var(--olng-text)]">
+          <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">{data.name}</h1>
+          <span className="rounded-full bg-[var(--page-bg)] px-2 py-0.5 text-xs text-[var(--brand-text)]">
             {data.code}
           </span>
           <ProjectStatusBadge status={data.status} />
@@ -186,14 +186,14 @@ export function ProjectView({ projectId }: { projectId: string }) {
         </div>
 
         <div className="max-w-md space-y-1">
-          <p className="text-sm text-[var(--olng-text)]">
+          <p className="text-sm text-[var(--brand-text)]">
             {data.counts.completed} of {data.counts.mainTasks} main tasks complete ·{" "}
             {data.progressPct}%
           </p>
           <ProgressBar pct={data.progressPct} />
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--olng-text)]">
+        <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--brand-text)]">
           <span>
             {formatDate(data.startDate)} — {formatDate(data.targetDate)}
           </span>

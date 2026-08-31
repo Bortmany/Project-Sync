@@ -66,14 +66,14 @@ export function FilterChips({
         (active[dimension.key] ?? []).map((value) => (
           <span
             key={`${dimension.key}:${value}`}
-            className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-white px-2 py-1 text-xs text-[var(--olng-text)]"
+            className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-white px-2 py-1 text-xs text-[var(--brand-text)]"
           >
             {dimension.label}: {labelFor(dimension, value)}
             <button
               type="button"
               onClick={() => toggle(dimension.key, value)}
               aria-label={`Remove filter ${dimension.label}: ${labelFor(dimension, value)}`}
-              className="rounded-full px-1 text-[var(--olng-gray)] hover:text-[var(--olng-navy)]"
+              className="rounded-full px-1 text-[var(--brand-gray)] hover:text-[var(--brand-ink)]"
             >
               ×
             </button>
@@ -86,7 +86,7 @@ export function FilterChips({
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
         aria-haspopup="dialog"
-        className="rounded-full border border-dashed border-[var(--olng-gray)] px-3 py-1 text-xs font-semibold text-[var(--olng-blue)] hover:border-[var(--olng-blue)]"
+        className="rounded-full border border-dashed border-[var(--brand-gray)] px-3 py-1 text-xs font-semibold text-[var(--brand-primary)] hover:border-[var(--brand-primary)]"
       >
         + Filter
       </button>
@@ -99,16 +99,16 @@ export function FilterChips({
         >
           {filters.map((dimension) => (
             <fieldset key={dimension.key} className="mb-3 last:mb-0">
-              <legend className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--olng-gray)]">
+              <legend className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--brand-gray)]">
                 {dimension.label}
               </legend>
               {dimension.options.length === 0 ? (
-                <p className="text-xs text-[var(--olng-gray)]">Nothing to filter by yet.</p>
+                <p className="text-xs text-[var(--brand-gray)]">Nothing to filter by yet.</p>
               ) : (
                 dimension.options.map((option) => (
                   <label
                     key={option.value}
-                    className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-sm text-[var(--olng-text)] hover:bg-[var(--page-bg)]"
+                    className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-sm text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
                   >
                     <input
                       type={dimension.single ? "radio" : "checkbox"}

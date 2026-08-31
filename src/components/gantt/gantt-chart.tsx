@@ -347,8 +347,8 @@ export function GanttChart({
               aria-pressed={zoom === option}
               className={`px-3 py-1.5 text-xs font-semibold ${
                 zoom === option
-                  ? "bg-[var(--olng-blue)] text-white"
-                  : "bg-white text-[var(--olng-text)] hover:bg-[var(--page-bg)]"
+                  ? "bg-[var(--brand-primary)] text-white"
+                  : "bg-white text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
               }`}
             >
               {option === "weeks" ? "Weeks" : "Months"}
@@ -363,14 +363,14 @@ export function GanttChart({
           onClick={() =>
             setCollapsed(allCollapsed ? new Set() : new Set(gantt.mainTasks.map((task) => task.id)))
           }
-          className="text-xs font-semibold text-[var(--olng-blue)] underline underline-offset-2"
+          className="text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
         >
           {allCollapsed ? "Expand all" : "Collapse all"}
         </button>
-        {saving ? <span className="text-xs text-[var(--olng-gray)]">Saving…</span> : null}
+        {saving ? <span className="text-xs text-[var(--brand-gray)]">Saving…</span> : null}
       </div>
 
-      <p className="text-xs text-[var(--olng-gray)] sm:hidden">
+      <p className="text-xs text-[var(--brand-gray)] sm:hidden">
         The schedule view works best on a larger screen. Use a tablet or desktop for the full
         timeline.
       </p>
@@ -379,7 +379,7 @@ export function GanttChart({
         {/* Left pane: the task tree. */}
         <div className="shrink-0 border-r border-[var(--border)]" style={{ width: TREE_WIDTH }}>
           <div
-            className="flex items-center border-b border-[var(--border)] px-3 text-[11px] font-semibold uppercase tracking-wide text-[var(--olng-gray)]"
+            className="flex items-center border-b border-[var(--border)] px-3 text-[11px] font-semibold uppercase tracking-wide text-[var(--brand-gray)]"
             style={{ height: HEADER_HEIGHT }}
           >
             Task
@@ -405,7 +405,7 @@ export function GanttChart({
                     }
                     aria-label={collapsed.has(row.id) ? `Show ${row.title}'s disciplines` : `Hide ${row.title}'s disciplines`}
                     aria-expanded={!collapsed.has(row.id)}
-                    className="shrink-0 rounded px-1 text-[var(--olng-gray)] hover:text-[var(--olng-navy)]"
+                    className="shrink-0 rounded px-1 text-[var(--brand-gray)] hover:text-[var(--brand-ink)]"
                   >
                     {collapsed.has(row.id) ? "▸" : "▾"}
                   </button>
@@ -427,15 +427,15 @@ export function GanttChart({
                   href={row.href}
                   className={`min-w-0 flex-1 truncate hover:underline ${
                     row.depth === 0
-                      ? "font-semibold text-[var(--olng-navy)]"
-                      : "text-[var(--olng-text)]"
+                      ? "font-semibold text-[var(--brand-ink)]"
+                      : "text-[var(--brand-text)]"
                   }`}
                   title={row.title}
                 >
                   {row.title}
                 </Link>
 
-                <span className="shrink-0 text-[10px] text-[var(--olng-gray)]">
+                <span className="shrink-0 text-[10px] text-[var(--brand-gray)]">
                   {dates.startDate ? `${formatShortDate(dates.startDate)}–` : ""}
                   {formatShortDate(dates.deadline)}
                 </span>
@@ -444,7 +444,7 @@ export function GanttChart({
                   <button
                     type="button"
                     onClick={() => setEditing(row)}
-                    className="shrink-0 rounded px-1 text-[10px] font-semibold text-[var(--olng-blue)] hover:underline"
+                    className="shrink-0 rounded px-1 text-[10px] font-semibold text-[var(--brand-primary)] hover:underline"
                   >
                     Edit dates
                   </button>
@@ -477,7 +477,7 @@ export function GanttChart({
                   x={column.x + 6}
                   y={HEADER_HEIGHT / 2 + 4}
                   fontSize={10}
-                  fill="var(--olng-gray)"
+                  fill="var(--brand-gray)"
                 >
                   {column.label}
                 </text>
@@ -612,7 +612,7 @@ export function GanttChart({
                       width={(barWidth * Math.min(100, row.progressPct)) / 100}
                       height={BAR_HEIGHT}
                       rx={3}
-                      fill="var(--olng-sail)"
+                      fill="var(--brand-accent)"
                       opacity={0.65}
                     />
                   ) : null}
@@ -622,7 +622,7 @@ export function GanttChart({
                       y={y}
                       width={HANDLE_WIDTH}
                       height={BAR_HEIGHT}
-                      fill="var(--olng-navy)"
+                      fill="var(--brand-ink)"
                       opacity={0.35}
                       style={{ cursor: "ew-resize" }}
                       onPointerDown={(event) => {
@@ -705,7 +705,7 @@ function EditDatesDialog({
       <div className="space-y-3">
         <p className="flex items-center gap-2 text-sm">
           <StatusBadge status={row.status} />
-          <span className="font-semibold text-[var(--olng-navy)]">{row.title}</span>
+          <span className="font-semibold text-[var(--brand-ink)]">{row.title}</span>
         </p>
         <Field label="Start date" hint="Leave empty to show this task as a single milestone.">
           <DateInput value={startDate} onChange={(event) => setStartDate(event.target.value)} />

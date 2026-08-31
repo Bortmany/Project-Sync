@@ -9,7 +9,7 @@ import { currentActor } from "@/server/session";
 import { listAllUsers } from "@/server/services/admin";
 import { listDisciplines } from "@/server/services/directory";
 
-export const metadata = { title: "Users — Project Nexus" };
+export const metadata = { title: "Users — Tielora" };
 export const dynamic = "force-dynamic";
 
 export default async function AdminUsersPage() {

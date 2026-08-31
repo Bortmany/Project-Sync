@@ -81,7 +81,7 @@ export function ProjectTeamTab({
         }
       >
         {project.disciplines.length === 0 ? (
-          <p className="py-6 text-center text-sm text-[var(--olng-text)]">
+          <p className="py-6 text-center text-sm text-[var(--brand-text)]">
             No disciplines on this project yet.
           </p>
         ) : (
@@ -91,10 +91,10 @@ export function ProjectTeamTab({
               return (
                 <li key={discipline.id} className="flex flex-wrap items-center gap-3 py-3">
                   <DisciplineDot colorHex={discipline.colorHex} code={discipline.code} />
-                  <span className="min-w-32 flex-1 text-sm font-semibold text-[var(--olng-navy)]">
+                  <span className="min-w-32 flex-1 text-sm font-semibold text-[var(--brand-ink)]">
                     {discipline.name}
                   </span>
-                  <span className="text-xs text-[var(--olng-gray)]">
+                  <span className="text-xs text-[var(--brand-gray)]">
                     {people.length} {people.length === 1 ? "person" : "people"}
                   </span>
 
@@ -130,7 +130,7 @@ export function ProjectTeamTab({
                       ))}
                     </Select>
                   ) : (
-                    <span className="text-sm text-[var(--olng-text)]">
+                    <span className="text-sm text-[var(--brand-text)]">
                       {discipline.leadName ?? "No lead assigned"}
                     </span>
                   )}
@@ -180,7 +180,7 @@ export function ProjectTeamTab({
         }
       >
         {project.members.length === 0 ? (
-          <p className="py-6 text-center text-sm text-[var(--olng-text)]">
+          <p className="py-6 text-center text-sm text-[var(--brand-text)]">
             No one has been added to this project yet.
           </p>
         ) : (
@@ -189,10 +189,10 @@ export function ProjectTeamTab({
               <li key={member.id} className="flex flex-wrap items-center gap-3 py-3">
                 <Avatar name={member.userName} size={28} />
                 <span className="min-w-32 flex-1">
-                  <span className="block text-sm font-semibold text-[var(--olng-navy)]">
+                  <span className="block text-sm font-semibold text-[var(--brand-ink)]">
                     {member.userName}
                   </span>
-                  <span className="block text-xs text-[var(--olng-gray)]">{member.userEmail}</span>
+                  <span className="block text-xs text-[var(--brand-gray)]">{member.userEmail}</span>
                 </span>
 
                 {canManage ? (
@@ -266,10 +266,10 @@ export function ProjectTeamTab({
                   </>
                 ) : (
                   <>
-                    <span className="text-sm text-[var(--olng-text)]">
+                    <span className="text-sm text-[var(--brand-text)]">
                       {ROLE_LABEL[member.projectRole]}
                     </span>
-                    <span className="text-sm text-[var(--olng-text)]">
+                    <span className="text-sm text-[var(--brand-text)]">
                       {member.disciplineCode ?? "—"}
                     </span>
                   </>

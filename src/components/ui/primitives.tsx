@@ -13,13 +13,13 @@ import type {
 export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 
 const BUTTON_STYLES: Record<ButtonVariant, string> = {
-  primary: "bg-[var(--olng-blue)] text-white hover:bg-[var(--olng-mid)] disabled:bg-[var(--olng-gray)]",
+  primary: "bg-[var(--brand-primary)] text-white hover:bg-[var(--brand-mid)] disabled:bg-[var(--brand-gray)]",
   secondary:
-    "bg-white text-[var(--olng-blue)] border border-[var(--olng-blue)] hover:bg-[var(--page-bg)] disabled:text-[var(--olng-gray)] disabled:border-[var(--olng-gray)]",
+    "bg-white text-[var(--brand-primary)] border border-[var(--brand-primary)] hover:bg-[var(--page-bg)] disabled:text-[var(--brand-gray)] disabled:border-[var(--brand-gray)]",
   danger:
-    "bg-[var(--status-blocked)] text-white hover:opacity-90 disabled:bg-[var(--olng-gray)]",
+    "bg-[var(--status-blocked)] text-white hover:opacity-90 disabled:bg-[var(--brand-gray)]",
   ghost:
-    "bg-transparent text-[var(--olng-text)] hover:bg-[var(--page-bg)] disabled:text-[var(--olng-gray)]",
+    "bg-transparent text-[var(--brand-text)] hover:bg-[var(--page-bg)] disabled:text-[var(--brand-gray)]",
 };
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -48,19 +48,19 @@ export function Button({
 }
 
 const FIELD_CLASS =
-  "w-full rounded-[var(--radius)] border border-[var(--border)] bg-white px-3 py-2 text-sm text-[var(--olng-text)] placeholder:text-[var(--olng-gray)] focus:border-[var(--olng-blue)] focus:outline-none disabled:bg-[var(--page-bg)]";
+  "w-full rounded-[var(--radius)] border border-[var(--border)] bg-white px-3 py-2 text-sm text-[var(--brand-text)] placeholder:text-[var(--brand-gray)] focus:border-[var(--brand-primary)] focus:outline-none disabled:bg-[var(--page-bg)]";
 
 type FieldWrapProps = { label?: string; hint?: string; error?: string; children: ReactNode };
 
 export function Field({ label, hint, error, children }: FieldWrapProps) {
   return (
     <label className="block space-y-1">
-      {label ? <span className="block text-sm font-semibold text-[var(--olng-navy)]">{label}</span> : null}
+      {label ? <span className="block text-sm font-semibold text-[var(--brand-ink)]">{label}</span> : null}
       {children}
       {error ? (
         <span className="block text-xs text-[var(--status-blocked)]">{error}</span>
       ) : hint ? (
-        <span className="block text-xs text-[var(--olng-gray)]">{hint}</span>
+        <span className="block text-xs text-[var(--brand-gray)]">{hint}</span>
       ) : null}
     </label>
   );
@@ -104,7 +104,7 @@ export function Card({
       {title || action ? (
         <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] px-4 py-3">
           {title ? (
-            <h2 className="text-sm font-semibold text-[var(--olng-navy)]">{title}</h2>
+            <h2 className="text-sm font-semibold text-[var(--brand-ink)]">{title}</h2>
           ) : (
             <span />
           )}
@@ -118,7 +118,7 @@ export function Card({
 
 export function Badge({
   children,
-  color = "var(--olng-gray)",
+  color = "var(--brand-gray)",
   textColor = "#ffffff",
 }: {
   children: ReactNode;

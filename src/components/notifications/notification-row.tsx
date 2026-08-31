@@ -14,12 +14,12 @@ function toneFor(type: NotificationDTO["type"]): string {
       return "var(--status-blocked)";
     case "DEADLINE_APPROACHING":
     case "DOCUMENT_UPLOADED":
-      return "var(--olng-sand)";
+      return "var(--brand-stone)";
     case "COMMENT_ADDED":
     case "MENTIONED":
-      return "var(--olng-gray)";
+      return "var(--brand-gray)";
     default:
-      return "var(--olng-blue)";
+      return "var(--brand-primary)";
   }
 }
 
@@ -40,7 +40,7 @@ export function NotificationRow({
       onClick={() => onOpen(item)}
       className={`flex w-full items-start gap-3 border-l-[3px] px-3 text-left hover:bg-[var(--page-bg)] ${
         compact ? "py-2" : "min-h-12 py-3"
-      } ${unread ? "border-[var(--olng-sail)] bg-[var(--olng-sail)]/10" : "border-transparent"}`}
+      } ${unread ? "border-[var(--brand-accent)] bg-[var(--brand-accent)]/10" : "border-transparent"}`}
     >
       <span
         className="mt-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full"
@@ -51,13 +51,13 @@ export function NotificationRow({
       </span>
 
       <span className="min-w-0 flex-1">
-        <span className="block text-sm text-[var(--olng-text)]">
+        <span className="block text-sm text-[var(--brand-text)]">
           {item.actorName ? (
-            <span className="font-semibold text-[var(--olng-navy)]">{item.actorName} </span>
+            <span className="font-semibold text-[var(--brand-ink)]">{item.actorName} </span>
           ) : null}
           {item.body}
         </span>
-        <span className="relative mt-0.5 block text-xs text-[var(--olng-gray)]">
+        <span className="relative mt-0.5 block text-xs text-[var(--brand-gray)]">
           {item.title} · {formatRelative(item.createdAt)}
           {unread ? <span className="sr-only"> — unread</span> : null}
         </span>

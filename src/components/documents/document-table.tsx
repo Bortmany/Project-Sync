@@ -107,43 +107,43 @@ function DocumentRow({
           <button
             type="button"
             onClick={onOpenHistory}
-            className="truncate text-left font-semibold text-[var(--olng-blue)] hover:underline"
+            className="truncate text-left font-semibold text-[var(--brand-primary)] hover:underline"
           >
             {document.title}
           </button>
           {revision ? <Badge>Rev {revision.revisionNumber}</Badge> : null}
           {revision ? (
-            <Badge color="var(--olng-sail)" textColor="var(--olng-navy)">
+            <Badge color="var(--brand-accent)" textColor="var(--brand-ink)">
               Latest
             </Badge>
           ) : null}
         </div>
       </td>
 
-      <td className="px-3 text-[var(--olng-text)]">
+      <td className="px-3 text-[var(--brand-text)]">
         {document.category ? (
           <span className="rounded-full bg-[var(--page-bg)] px-2 py-0.5 text-xs">
             {document.category}
           </span>
         ) : (
-          <span className="text-xs text-[var(--olng-gray)]">—</span>
+          <span className="text-xs text-[var(--brand-gray)]">—</span>
         )}
       </td>
 
       {location !== undefined ? <td className="px-3 text-xs">{location}</td> : null}
 
       <td className="px-3">
-        <span className="inline-flex items-center gap-2 text-xs text-[var(--olng-text)]">
+        <span className="inline-flex items-center gap-2 text-xs text-[var(--brand-text)]">
           <Avatar name={document.uploadedByName} size={24} />
           {document.uploadedByName}
         </span>
       </td>
 
-      <td className="px-3 text-xs text-[var(--olng-text)]">
+      <td className="px-3 text-xs text-[var(--brand-text)]">
         {formatDate(revision?.createdAt ?? document.createdAt)}
       </td>
 
-      <td className="px-3 text-xs text-[var(--olng-text)]">
+      <td className="px-3 text-xs text-[var(--brand-text)]">
         {revision ? formatFileSize(revision.sizeBytes) : "—"}
       </td>
 
@@ -152,7 +152,7 @@ function DocumentRow({
           {revision ? (
             <a
               href={revision.downloadUrl}
-              className="font-semibold text-[var(--olng-blue)] hover:underline"
+              className="font-semibold text-[var(--brand-primary)] hover:underline"
             >
               Download
             </a>
@@ -160,7 +160,7 @@ function DocumentRow({
           <button
             type="button"
             onClick={onOpenHistory}
-            className="font-semibold text-[var(--olng-blue)] hover:underline"
+            className="font-semibold text-[var(--brand-primary)] hover:underline"
           >
             History
           </button>
@@ -253,19 +253,19 @@ export function DocumentTable({
       {groups.map((group) => (
         <section key={group.key} className="space-y-2">
           {group.label ? (
-            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--olng-gray)]">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--brand-gray)]">
               {group.label} ({group.documents.length})
             </h3>
           ) : null}
 
           {group.documents.length === 0 ? (
-            <p className="text-sm text-[var(--olng-gray)]">
+            <p className="text-sm text-[var(--brand-gray)]">
               {group.emptyNote ?? "No documents yet."}
             </p>
           ) : (
             <div className="overflow-x-auto rounded-[var(--radius)] border border-[var(--border)] bg-white">
               <table className="w-full text-sm">
-                <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--olng-gray)]">
+                <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--brand-gray)]">
                   <tr>
                     <th className="px-3 py-2 font-semibold">Name</th>
                     <th className="px-3 py-2 font-semibold">Category</th>

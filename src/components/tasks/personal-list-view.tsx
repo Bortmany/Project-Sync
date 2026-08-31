@@ -40,11 +40,11 @@ function PersonalRow({ task }: { task: PersonalTaskDTO }) {
             onSuccess: refresh,
           })
         }
-        className="h-4 w-4 shrink-0 accent-[var(--olng-blue)]"
+        className="h-4 w-4 shrink-0 accent-[var(--brand-primary)]"
       />
       <span
         className={`min-w-0 flex-1 break-words text-sm ${
-          task.done ? "text-[var(--olng-gray)] line-through" : "text-[var(--olng-navy)]"
+          task.done ? "text-[var(--brand-gray)] line-through" : "text-[var(--brand-ink)]"
         }`}
       >
         {task.title}
@@ -60,7 +60,7 @@ function PersonalRow({ task }: { task: PersonalTaskDTO }) {
             onSuccess: refresh,
           })
         }
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--olng-gray)] transition-colors hover:bg-white hover:text-[var(--status-blocked)] disabled:cursor-not-allowed"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--brand-gray)] transition-colors hover:bg-white hover:text-[var(--status-blocked)] disabled:cursor-not-allowed"
       >
         <CloseIcon size={16} />
       </button>

@@ -1,6 +1,6 @@
-# Project Nexus — going live
+# Tielora — going live
 
-Everything that must be true before real Oman LNG people use this app, and the steps to put it on
+Everything that must be true before real companies use this app, and the steps to put it on
 Railway. Written in plain English on purpose: the person running these steps is not a developer.
 
 Keep this file true to the code. If a step here stops matching what the app does, fix it in the same
@@ -40,9 +40,9 @@ publicly reachable with no sign-in, following what this app *actually* stores:
   (documented deviation), and now covered in the data inventory above.
 
 Both pages carry an honest note that they are a template pending professional review, and are not yet
-reviewed by Oman LNG legal or compliance — do that before relying on them for real launch. Because
-this is an internal tool for employees, "download my data" and "delete my account" are handled by
-**your Project Nexus administrator** rather than self-service — the privacy page says so by name.
+reviewed by a lawyer — do that before relying on them for real launch. Because each company runs its
+own workspace, "download my data" and "delete my account" are handled by **your workspace
+administrator** rather than self-service — the privacy page says so by name.
 
 **Rule that outlives this file:** if a change starts storing a new piece of personal information, the
 privacy page changes in the *same* change.
@@ -105,7 +105,7 @@ lets a clean Nixpacks checkout build at all — the generated Prisma client live
      so a skipped or failed sweep never makes the app unhealthy. `lastRunAt` stays `null` for the
      first minute after a deploy, and `"skipped — another instance"` is the normal, correct answer
      on every copy but one when the app runs on several.
-   - The deploy logs contain no "Project Nexus cannot start in production" line. If they do, the
+   - The deploy logs contain no "Tielora cannot start in production" line. If they do, the
      message names exactly which variable is wrong.
    - `curl -sD - -o /dev/null https://<domain>/login` shows `Content-Security-Policy`,
      `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`,
@@ -153,7 +153,7 @@ Documents people upload live on disk under `DATA_DIR` (`/data/uploads`), not in 
 
 ```bash
 # From your machine, with the Railway CLI linked to the project:
-railway run tar -czf - -C /data uploads > nexus-uploads-$(date +%Y-%m-%d).tar.gz
+railway run tar -czf - -C /data uploads > tielora-uploads-$(date +%Y-%m-%d).tar.gz
 ```
 
 Keep the archive somewhere that is not Railway (the owner's own encrypted drive or cloud storage).
@@ -175,9 +175,9 @@ the document count makes the copy-out awkward.
 
 **A backup that has never been restored is not a backup.** Test it before launch, then every 90 days:
 
-1. Create a second, scratch Postgres database in Railway (call it `nexus-restore-test`).
+1. Create a second, scratch Postgres database in Railway (call it `tielora-restore-test`).
 2. Restore the backup into the scratch database — Railway's own restore, or from a downloaded dump:
-   `pg_restore --clean --if-exists -d "<scratch DATABASE_URL>" nexus-backup.dump`
+   `pg_restore --clean --if-exists -d "<scratch DATABASE_URL>" tielora-backup.dump`
 3. Check the crown jewels are all there, against the scratch database:
    ```bash
    psql "<scratch DATABASE_URL>" -c 'select count(*) from "ActivityLog";'
@@ -202,7 +202,7 @@ the document count makes the copy-out awkward.
 Named here so nobody assumes otherwise:
 
 - **A legal review of the privacy and terms pages** — gate 1 above is written and linked, but it is a
-  template. Have Oman LNG legal or compliance review the actual wording before relying on it.
+  template. Have a lawyer review the actual wording before relying on it.
 - **Self-service "download my data" / "delete my account"** — this is an internal staff tool with
   admin-created accounts; an administrator deactivates a person, and the audit trail stays by design.
   If the app ever takes non-staff users, both become required.

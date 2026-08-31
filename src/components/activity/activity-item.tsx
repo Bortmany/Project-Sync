@@ -13,9 +13,9 @@ function toneFor(action: string): string {
   if (value.includes("BLOCK") || value.includes("OVERRIDE") || value.includes("DELETE")) {
     return "var(--status-blocked)";
   }
-  if (value.includes("DOCUMENT") || value.includes("UPLOAD")) return "var(--olng-sand)";
-  if (value.includes("COMMENT")) return "var(--olng-gray)";
-  return "var(--olng-blue)";
+  if (value.includes("DOCUMENT") || value.includes("UPLOAD")) return "var(--brand-stone)";
+  if (value.includes("COMMENT")) return "var(--brand-gray)";
+  return "var(--brand-primary)";
 }
 
 /** Where an activity row points, or null when the entity has no screen of its own yet. */
@@ -35,9 +35,9 @@ export function ActivityItem({ item }: { item: ActivityItemDTO }) {
   const repeatsName = Boolean(item.actorName) && item.summary.startsWith(item.actorName as string);
 
   const body: ReactNode = (
-    <span className="text-sm text-[var(--olng-text)]">
+    <span className="text-sm text-[var(--brand-text)]">
       {item.actorName && !repeatsName ? (
-        <span className="font-semibold text-[var(--olng-navy)]">{item.actorName} </span>
+        <span className="font-semibold text-[var(--brand-ink)]">{item.actorName} </span>
       ) : null}
       {item.summary}
     </span>
@@ -60,7 +60,7 @@ export function ActivityItem({ item }: { item: ActivityItemDTO }) {
         ) : (
           body
         )}
-        <span className="mt-0.5 block text-xs text-[var(--olng-gray)]">
+        <span className="mt-0.5 block text-xs text-[var(--brand-gray)]">
           {formatRelative(item.createdAt)}
         </span>
       </span>
@@ -110,7 +110,7 @@ export function DayDivider({ date }: { date: Date }) {
   return (
     <div className="flex items-center gap-2 py-2">
       <span className="h-px flex-1 bg-[var(--border)]" />
-      <span className="text-[11px] uppercase tracking-wide text-[var(--olng-gray)]">
+      <span className="text-[11px] uppercase tracking-wide text-[var(--brand-gray)]">
         {formatDate(date)}
       </span>
       <span className="h-px flex-1 bg-[var(--border)]" />

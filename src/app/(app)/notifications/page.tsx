@@ -3,7 +3,7 @@
 
 import { NotificationsView } from "@/components/notifications/notifications-view";
 
-export const metadata = { title: "Notifications — Project Nexus" };
+export const metadata = { title: "Notifications — Tielora" };
 
 export default function NotificationsPage() {
   return <NotificationsView />;

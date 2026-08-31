@@ -26,10 +26,12 @@ vi.mock("next/headers", () => ({
 
 import { POST as signup } from "@/app/api/auth/signup/route";
 import { prisma } from "@/lib/db";
+import { IndustryTemplateSchema } from "@/lib/zod-schemas";
 import type { SignupInput } from "@/lib/zod-schemas";
 import { ServiceError } from "@/server/errors";
 import { signUpOrganization } from "@/server/services/signup";
 import { INDUSTRY_TEMPLATES, slugify, templatesUsePaletteColorsOnly } from "@/server/industry-templates";
+import { SIGNUP_TEMPLATE_CARDS } from "@/app/(auth)/signup/template-cards";
 import { resetDatabase } from "@/server/__tests__/harness";
 
 const PASSWORD = "coordination-2026";
@@ -151,6 +153,27 @@ describe("signing a company up", () => {
 
   it("only ever gives a template brand palette colours", () => {
     expect(templatesUsePaletteColorsOnly()).toBe(true);
+  });
+
+  // The signup screen's template cards list the disciplines a template seeds, read straight from
+  // INDUSTRY_TEMPLATES. A template the enum accepts but the lists do not cover would show an empty
+  // card and seed a company with no disciplines at all.
+  it("has a non-empty discipline list for every template the schema accepts", () => {
+    for (const template of IndustryTemplateSchema.options) {
+      expect(INDUSTRY_TEMPLATES[template]?.length ?? 0).toBeGreaterThan(0);
+    }
+  });
+
+  // A template with no card cannot be chosen, however happily the API would accept it.
+  it("offers a signup card for every template the schema accepts, listing that template's real disciplines", () => {
+    const cards = new Map(SIGNUP_TEMPLATE_CARDS.map((card) => [card.value, card]));
+
+    expect([...cards.keys()].sort()).toEqual([...IndustryTemplateSchema.options].sort());
+    for (const template of IndustryTemplateSchema.options) {
+      const card = cards.get(template);
+      expect(card?.label.length ?? 0).toBeGreaterThan(0);
+      expect(card?.disciplines).toEqual(INDUSTRY_TEMPLATES[template].map((row) => row.name));
+    }
   });
 
   it("gives two companies of the same name different handles", async () => {

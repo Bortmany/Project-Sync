@@ -9,9 +9,9 @@ import type { ReactNode } from "react";
 
 const BASE = "flex items-center gap-3 rounded-[var(--radius)] border-l-2 transition-colors";
 
-/** The active treatment: sail-blue left edge on the lighter navy, exactly as before. */
-const ACTIVE = "border-[var(--olng-sail)] bg-[var(--olng-mid)] text-white";
-const IDLE = "border-transparent text-white/75 hover:bg-[var(--olng-mid)] hover:text-white";
+/** The active treatment: accent left edge on the lighter ink, exactly as before. */
+const ACTIVE = "border-[var(--brand-accent)] bg-[var(--brand-mid)] text-white";
+const IDLE = "border-transparent text-white/75 hover:bg-[var(--brand-mid)] hover:text-white";
 
 export type NavRowProps = {
   href: string;
@@ -68,7 +68,7 @@ export function NavRow({
         <span
           aria-hidden="true"
           className="h-1.5 w-1.5 shrink-0 rounded-full"
-          style={{ backgroundColor: dotColor ?? "var(--olng-sail)" }}
+          style={{ backgroundColor: dotColor ?? "var(--brand-accent)" }}
         />
       ) : null}
       <span className={labelClass}>{label}</span>
@@ -99,7 +99,7 @@ export function NavGroupToggle({
       aria-expanded={open}
       aria-controls={controls}
       aria-label={open ? `Hide ${label} links` : `Show ${label} links`}
-      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-white/60 transition-colors hover:bg-[var(--olng-mid)] hover:text-white"
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-white/60 transition-colors hover:bg-[var(--brand-mid)] hover:text-white"
     >
       <span className={`transition-transform ${open ? "rotate-0" : "-rotate-90"}`}>{children}</span>
     </button>

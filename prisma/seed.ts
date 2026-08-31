@@ -28,25 +28,25 @@ import {
 /* ------------------------------------------------------------------ */
 
 const DISCIPLINES = [
-  { code: "MECH", name: "Mechanical", colorHex: "#00558C", sortOrder: 1 },
-  { code: "ELEC", name: "Electrical", colorHex: "#5BC2E7", sortOrder: 2 },
-  { code: "INST", name: "Instrumentation", colorHex: "#004F71", sortOrder: 3 },
-  { code: "CIVIL", name: "Civil", colorHex: "#8A8D6A", sortOrder: 4 },
-  { code: "PROC", name: "Process", colorHex: "#003E51", sortOrder: 5 },
-  { code: "HSE", name: "HSE", colorHex: "#3E7A5E", sortOrder: 6 },
-  { code: "REL", name: "Reliability", colorHex: "#B08D57", sortOrder: 7 },
-  { code: "INSP", name: "Inspection", colorHex: "#7A6A8A", sortOrder: 8 },
+  { code: "MECH", name: "Mechanical", colorHex: "#2E5AAC", sortOrder: 1 },
+  { code: "ELEC", name: "Electrical", colorHex: "#46C4B0", sortOrder: 2 },
+  { code: "INST", name: "Instrumentation", colorHex: "#1F3D77", sortOrder: 3 },
+  { code: "CIVIL", name: "Civil", colorHex: "#7A8450", sortOrder: 4 },
+  { code: "PROC", name: "Process", colorHex: "#152647", sortOrder: 5 },
+  { code: "HSE", name: "HSE", colorHex: "#2F7D63", sortOrder: 6 },
+  { code: "REL", name: "Reliability", colorHex: "#A8763C", sortOrder: 7 },
+  { code: "INSP", name: "Inspection", colorHex: "#6B5B95", sortOrder: 8 },
 ];
 
 // The demo company every seeded person and project belongs to. Real companies arrive through
 // /api/auth/signup; this one exists so a fresh checkout has something to look at.
-const ORG_NAME = "Tielora Demo";
-const ORG_SLUG = "tielora-demo";
+const ORG_NAME = "Meridian Energy Demo";
+const ORG_SLUG = "meridian-energy-demo";
 const ORG_TEMPLATE = "OIL_AND_GAS";
 
 // Demo credentials for local development only — never use these anywhere real.
-const ADMIN_EMAIL = "admin@omanlng.example";
-const DEMO_PASSWORD = "Nexus!Demo2026";
+const ADMIN_EMAIL = "admin@tielora.example";
+const DEMO_PASSWORD = "Meridian!Demo2026";
 const PROJECT_CODE = "SUR-EXP";
 
 type Person = {
@@ -58,19 +58,19 @@ type Person = {
 };
 
 const PEOPLE: Person[] = [
-  { email: "layla.alriyami@omanlng.example", name: "Layla al-Riyami", role: "PROJECT_MANAGER", discipline: null, jobTitle: "Project manager" },
-  { email: "omar.alhabsi@omanlng.example", name: "Omar al-Habsi", role: "PROJECT_MANAGER", discipline: null, jobTitle: "Deputy project manager" },
-  { email: "khalid.alfarsi@omanlng.example", name: "Khalid al-Farsi", role: "DISCIPLINE_LEAD", discipline: "MECH", jobTitle: "Mechanical lead" },
-  { email: "fatma.alzadjali@omanlng.example", name: "Fatma al-Zadjali", role: "DISCIPLINE_LEAD", discipline: "ELEC", jobTitle: "Electrical lead" },
-  { email: "sarah.whitmore@omanlng.example", name: "Sarah Whitmore", role: "DISCIPLINE_LEAD", discipline: "INST", jobTitle: "Instrumentation lead" },
-  { email: "yousuf.alamri@omanlng.example", name: "Yousuf al-Amri", role: "DISCIPLINE_LEAD", discipline: "CIVIL", jobTitle: "Civil lead" },
-  { email: "maria.santos@omanlng.example", name: "Maria Santos", role: "DISCIPLINE_LEAD", discipline: "PROC", jobTitle: "Process lead" },
-  { email: "salim.alhinai@omanlng.example", name: "Salim al-Hinai", role: "DISCIPLINE_LEAD", discipline: "HSE", jobTitle: "HSE lead" },
-  { email: "daniel.okoro@omanlng.example", name: "Daniel Okoro", role: "DISCIPLINE_LEAD", discipline: "REL", jobTitle: "Reliability lead" },
-  { email: "aisha.alkindi@omanlng.example", name: "Aisha al-Kindi", role: "DISCIPLINE_LEAD", discipline: "INSP", jobTitle: "Inspection lead" },
-  { email: "john.carter@omanlng.example", name: "John Carter", role: "ENGINEER", discipline: "MECH", jobTitle: "Mechanical engineer" },
-  { email: "priya.nair@omanlng.example", name: "Priya Nair", role: "ENGINEER", discipline: "INST", jobTitle: "Instrumentation engineer" },
-  { email: "ahmed.albalushi@omanlng.example", name: "Ahmed al-Balushi", role: "ENGINEER", discipline: "ELEC", jobTitle: "Electrical engineer" },
+  { email: "layla.alriyami@tielora.example", name: "Layla al-Riyami", role: "PROJECT_MANAGER", discipline: null, jobTitle: "Project manager" },
+  { email: "omar.alhabsi@tielora.example", name: "Omar al-Habsi", role: "PROJECT_MANAGER", discipline: null, jobTitle: "Deputy project manager" },
+  { email: "khalid.alfarsi@tielora.example", name: "Khalid al-Farsi", role: "DISCIPLINE_LEAD", discipline: "MECH", jobTitle: "Mechanical lead" },
+  { email: "fatma.alzadjali@tielora.example", name: "Fatma al-Zadjali", role: "DISCIPLINE_LEAD", discipline: "ELEC", jobTitle: "Electrical lead" },
+  { email: "sarah.whitmore@tielora.example", name: "Sarah Whitmore", role: "DISCIPLINE_LEAD", discipline: "INST", jobTitle: "Instrumentation lead" },
+  { email: "yousuf.alamri@tielora.example", name: "Yousuf al-Amri", role: "DISCIPLINE_LEAD", discipline: "CIVIL", jobTitle: "Civil lead" },
+  { email: "maria.santos@tielora.example", name: "Maria Santos", role: "DISCIPLINE_LEAD", discipline: "PROC", jobTitle: "Process lead" },
+  { email: "salim.alhinai@tielora.example", name: "Salim al-Hinai", role: "DISCIPLINE_LEAD", discipline: "HSE", jobTitle: "HSE lead" },
+  { email: "daniel.okoro@tielora.example", name: "Daniel Okoro", role: "DISCIPLINE_LEAD", discipline: "REL", jobTitle: "Reliability lead" },
+  { email: "aisha.alkindi@tielora.example", name: "Aisha al-Kindi", role: "DISCIPLINE_LEAD", discipline: "INSP", jobTitle: "Inspection lead" },
+  { email: "john.carter@tielora.example", name: "John Carter", role: "ENGINEER", discipline: "MECH", jobTitle: "Mechanical engineer" },
+  { email: "priya.nair@tielora.example", name: "Priya Nair", role: "ENGINEER", discipline: "INST", jobTitle: "Instrumentation engineer" },
+  { email: "ahmed.albalushi@tielora.example", name: "Ahmed al-Balushi", role: "ENGINEER", discipline: "ELEC", jobTitle: "Electrical engineer" },
 ];
 
 // Task dates are always stored at UTC midnight — the same invariant the services enforce.
@@ -113,12 +113,12 @@ const WORK: SeedMainTask[] = [
     priority: "HIGH",
     startDate: "2026-03-15",
     deadline: "2026-09-30",
-    owner: "layla.alriyami@omanlng.example",
+    owner: "layla.alriyami@tielora.example",
     subtasks: [
       {
         discipline: "MECH",
         title: "Mechanical design review comments closed",
-        assignee: "john.carter@omanlng.example",
+        assignee: "john.carter@tielora.example",
         deadline: "2026-08-20",
         documents: [{ name: "Vendor data sheet (nice to have)", isMandatory: false }],
         end: "COMPLETED",
@@ -126,21 +126,21 @@ const WORK: SeedMainTask[] = [
       {
         discipline: "ELEC",
         title: "Electrical single line diagrams reviewed",
-        assignee: "ahmed.albalushi@omanlng.example",
+        assignee: "ahmed.albalushi@tielora.example",
         deadline: "2026-08-25",
         end: "COMPLETED",
       },
       {
         discipline: "INST",
         title: "Instrument index and loop drawings reviewed",
-        assignee: "priya.nair@omanlng.example",
+        assignee: "priya.nair@tielora.example",
         deadline: "2026-09-01",
         end: "COMPLETED",
       },
       {
         discipline: "CIVIL",
         title: "Civil foundation load check",
-        assignee: "yousuf.alamri@omanlng.example",
+        assignee: "yousuf.alamri@tielora.example",
         deadline: "2026-09-20",
         documents: [
           { name: "Foundation load calculation report", isMandatory: true },
@@ -152,7 +152,7 @@ const WORK: SeedMainTask[] = [
       {
         discipline: "PROC",
         title: "Process safeguarding review sign-off",
-        assignee: "maria.santos@omanlng.example",
+        assignee: "maria.santos@tielora.example",
         deadline: "2026-09-25",
       },
     ],
@@ -164,19 +164,19 @@ const WORK: SeedMainTask[] = [
     priority: "MEDIUM",
     startDate: "2026-06-01",
     deadline: "2026-11-15",
-    owner: "omar.alhabsi@omanlng.example",
+    owner: "omar.alhabsi@tielora.example",
     subtasks: [
-      { discipline: "MECH", title: "Mechanical datasheets compiled", assignee: "john.carter@omanlng.example", deadline: "2026-10-20", end: "IN_PROGRESS" },
-      { discipline: "ELEC", title: "Electrical load list finalised", assignee: "fatma.alzadjali@omanlng.example", deadline: "2026-10-22", end: "IN_PROGRESS" },
-      { discipline: "INST", title: "Control narrative updated", assignee: "sarah.whitmore@omanlng.example", deadline: "2026-10-25" },
-      { discipline: "CIVIL", title: "Structural steel drawings issued", assignee: "yousuf.alamri@omanlng.example", deadline: "2026-10-28", end: "IN_PROGRESS" },
-      { discipline: "PROC", title: "Heat and material balance rev C", assignee: "maria.santos@omanlng.example", deadline: "2026-10-30" },
-      { discipline: "HSE", title: "HSE dossier assembled", assignee: "salim.alhinai@omanlng.example", deadline: "2026-11-01" },
-      { discipline: "REL", title: "Criticality assessment attached", assignee: "daniel.okoro@omanlng.example", deadline: "2026-11-03" },
+      { discipline: "MECH", title: "Mechanical datasheets compiled", assignee: "john.carter@tielora.example", deadline: "2026-10-20", end: "IN_PROGRESS" },
+      { discipline: "ELEC", title: "Electrical load list finalised", assignee: "fatma.alzadjali@tielora.example", deadline: "2026-10-22", end: "IN_PROGRESS" },
+      { discipline: "INST", title: "Control narrative updated", assignee: "sarah.whitmore@tielora.example", deadline: "2026-10-25" },
+      { discipline: "CIVIL", title: "Structural steel drawings issued", assignee: "yousuf.alamri@tielora.example", deadline: "2026-10-28", end: "IN_PROGRESS" },
+      { discipline: "PROC", title: "Heat and material balance rev C", assignee: "maria.santos@tielora.example", deadline: "2026-10-30" },
+      { discipline: "HSE", title: "HSE dossier assembled", assignee: "salim.alhinai@tielora.example", deadline: "2026-11-01" },
+      { discipline: "REL", title: "Criticality assessment attached", assignee: "daniel.okoro@tielora.example", deadline: "2026-11-03" },
       {
         discipline: "INSP",
         title: "Inspection release certificates collected",
-        assignee: "aisha.alkindi@omanlng.example",
+        assignee: "aisha.alkindi@tielora.example",
         deadline: "2026-11-05",
         end: "BLOCKED",
         note: "The vendor has not released the certificates for the two spare exchangers yet.",
@@ -189,11 +189,11 @@ const WORK: SeedMainTask[] = [
     priority: "MEDIUM",
     startDate: "2026-04-01",
     deadline: "2026-05-25",
-    owner: "layla.alriyami@omanlng.example",
+    owner: "layla.alriyami@tielora.example",
     subtasks: [
-      { discipline: "INSP", title: "Inspection findings closed", assignee: "aisha.alkindi@omanlng.example", deadline: "2026-05-15", end: "COMPLETED" },
-      { discipline: "MECH", title: "Repair work packs signed off", assignee: "khalid.alfarsi@omanlng.example", deadline: "2026-05-18", end: "COMPLETED" },
-      { discipline: "REL", title: "Failure history updated", assignee: "daniel.okoro@omanlng.example", deadline: "2026-05-20", end: "COMPLETED" },
+      { discipline: "INSP", title: "Inspection findings closed", assignee: "aisha.alkindi@tielora.example", deadline: "2026-05-15", end: "COMPLETED" },
+      { discipline: "MECH", title: "Repair work packs signed off", assignee: "khalid.alfarsi@tielora.example", deadline: "2026-05-18", end: "COMPLETED" },
+      { discipline: "REL", title: "Failure history updated", assignee: "daniel.okoro@tielora.example", deadline: "2026-05-20", end: "COMPLETED" },
     ],
   },
   {
@@ -203,12 +203,12 @@ const WORK: SeedMainTask[] = [
     priority: "CRITICAL",
     startDate: "2026-06-15",
     deadline: "2026-08-01",
-    owner: "omar.alhabsi@omanlng.example",
+    owner: "omar.alhabsi@tielora.example",
     subtasks: [
-      { discipline: "MECH", title: "Compressor general arrangement reviewed", assignee: "khalid.alfarsi@omanlng.example", deadline: "2026-07-20", end: "COMPLETED" },
-      { discipline: "ELEC", title: "Motor data sheets reviewed", assignee: "ahmed.albalushi@omanlng.example", deadline: "2026-07-22", end: "IN_PROGRESS" },
-      { discipline: "INST", title: "Vibration monitoring scope reviewed", assignee: "priya.nair@omanlng.example", deadline: "2026-07-25" },
-      { discipline: "REL", title: "Spare parts list reviewed", assignee: "daniel.okoro@omanlng.example", deadline: "2026-07-28" },
+      { discipline: "MECH", title: "Compressor general arrangement reviewed", assignee: "khalid.alfarsi@tielora.example", deadline: "2026-07-20", end: "COMPLETED" },
+      { discipline: "ELEC", title: "Motor data sheets reviewed", assignee: "ahmed.albalushi@tielora.example", deadline: "2026-07-22", end: "IN_PROGRESS" },
+      { discipline: "INST", title: "Vibration monitoring scope reviewed", assignee: "priya.nair@tielora.example", deadline: "2026-07-25" },
+      { discipline: "REL", title: "Spare parts list reviewed", assignee: "daniel.okoro@tielora.example", deadline: "2026-07-28" },
     ],
   },
   {
@@ -217,14 +217,14 @@ const WORK: SeedMainTask[] = [
     priority: "HIGH",
     startDate: "2026-04-10",
     deadline: "2026-10-15",
-    owner: "layla.alriyami@omanlng.example",
+    owner: "layla.alriyami@tielora.example",
     subtasks: [
-      { discipline: "HSE", title: "Safety-critical actions closed", assignee: "salim.alhinai@omanlng.example", deadline: "2026-09-10", end: "COMPLETED" },
-      { discipline: "PROC", title: "Relief scenario recalculated", assignee: "maria.santos@omanlng.example", deadline: "2026-09-15", end: "COMPLETED" },
+      { discipline: "HSE", title: "Safety-critical actions closed", assignee: "salim.alhinai@tielora.example", deadline: "2026-09-10", end: "COMPLETED" },
+      { discipline: "PROC", title: "Relief scenario recalculated", assignee: "maria.santos@tielora.example", deadline: "2026-09-15", end: "COMPLETED" },
       {
         discipline: "REL",
         title: "Reliability improvement action (optional)",
-        assignee: "daniel.okoro@omanlng.example",
+        assignee: "daniel.okoro@tielora.example",
         deadline: "2026-10-10",
         isMandatory: false,
         end: "IN_PROGRESS",
@@ -233,7 +233,7 @@ const WORK: SeedMainTask[] = [
     override: {
       status: "COMPLETED",
       reason: "Remaining action transferred to operations MOC-1182",
-      by: "layla.alriyami@omanlng.example",
+      by: "layla.alriyami@tielora.example",
     },
   },
   {
@@ -243,11 +243,11 @@ const WORK: SeedMainTask[] = [
     priority: "MEDIUM",
     startDate: "2026-12-01",
     deadline: "2027-02-15",
-    owner: "omar.alhabsi@omanlng.example",
+    owner: "omar.alhabsi@tielora.example",
     subtasks: [
-      { discipline: "PROC", title: "Process line walkdown", assignee: "maria.santos@omanlng.example", deadline: "2027-01-10" },
-      { discipline: "MECH", title: "Mechanical completion walkdown", assignee: "khalid.alfarsi@omanlng.example", deadline: "2027-01-25" },
-      { discipline: "INSP", title: "Final inspection walkdown", assignee: "aisha.alkindi@omanlng.example", deadline: "2027-02-10" },
+      { discipline: "PROC", title: "Process line walkdown", assignee: "maria.santos@tielora.example", deadline: "2027-01-10" },
+      { discipline: "MECH", title: "Mechanical completion walkdown", assignee: "khalid.alfarsi@tielora.example", deadline: "2027-01-25" },
+      { discipline: "INSP", title: "Final inspection walkdown", assignee: "aisha.alkindi@tielora.example", deadline: "2027-02-10" },
     ],
     chain: ["Process line walkdown", "Mechanical completion walkdown", "Final inspection walkdown"],
   },
@@ -427,7 +427,7 @@ async function seedPeople(
     create: {
       orgId,
       email: ADMIN_EMAIL,
-      name: "Nexus Administrator",
+      name: "Meridian Administrator",
       passwordHash,
       role: "ADMIN",
       jobTitle: "System administrator",
@@ -531,7 +531,7 @@ async function report(): Promise<void> {
   out("");
   out(`${users} people, ${mainTasks.length} main tasks, ${activity} audit entries on this project.`);
   out("");
-  out("Demo logins (development only — every account uses the same password):");
+  out(`Demo logins for ${ORG_NAME} (development only — every account uses the same password):`);
   out(`  administrator   ${ADMIN_EMAIL}`);
   out(`  project manager ${PEOPLE[0].email}`);
   out(`  discipline lead ${PEOPLE[5].email}`);

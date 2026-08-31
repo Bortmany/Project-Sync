@@ -37,7 +37,7 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--olng-navy)]/40 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--brand-ink)]/40 p-4"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -51,19 +51,19 @@ export function Modal({
         className={`max-h-[90vh] w-full ${SIZE_CLASS[size]} overflow-y-auto rounded-[var(--radius)] bg-white shadow-lg focus:outline-none`}
       >
         <header className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-          <h2 className="text-sm font-semibold text-[var(--olng-navy)]">{title}</h2>
+          <h2 className="text-sm font-semibold text-[var(--brand-ink)]">{title}</h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="rounded p-1 text-[var(--olng-text)] hover:bg-[var(--page-bg)]"
+            className="rounded p-1 text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
               <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.5" />
             </svg>
           </button>
         </header>
-        <div className="px-4 py-4 text-sm text-[var(--olng-text)]">{children}</div>
+        <div className="px-4 py-4 text-sm text-[var(--brand-text)]">{children}</div>
         {footer ? (
           <footer className="flex justify-end gap-2 border-t border-[var(--border)] px-4 py-3">
             {footer}

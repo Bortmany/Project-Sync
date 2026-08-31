@@ -4,14 +4,14 @@ import { Suspense } from "react";
 import { PersonalListView } from "@/components/tasks/personal-list-view";
 import { SkeletonRows } from "@/components/ui";
 
-export const metadata = { title: "Personal list — Project Nexus" };
+export const metadata = { title: "Personal list — Tielora" };
 
 export default function PersonalListPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold text-[var(--olng-blue)]">Personal list</h1>
-        <p className="mt-1 text-sm text-[var(--olng-text)]">
+        <h1 className="text-xl font-semibold text-[var(--brand-primary)]">Personal list</h1>
+        <p className="mt-1 text-sm text-[var(--brand-text)]">
           A private scratchpad only you can see.
         </p>
       </div>

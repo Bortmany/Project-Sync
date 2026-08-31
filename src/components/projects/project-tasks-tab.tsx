@@ -116,7 +116,7 @@ export function ProjectTasksTab({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <FilterChips filters={dimensions} active={active} onChange={setActive} />
         <div className="flex items-center gap-2">
-          <label htmlFor="project-task-sort" className="text-xs text-[var(--olng-text)]">
+          <label htmlFor="project-task-sort" className="text-xs text-[var(--brand-text)]">
             Sort by
           </label>
           <Select
@@ -142,12 +142,12 @@ export function ProjectTasksTab({
       ) : tasks.isPending ? (
         <SkeletonRows rows={8} />
       ) : rows.length === 0 && hasActiveFilters(active) ? (
-        <div className="py-8 text-center text-sm text-[var(--olng-text)]">
+        <div className="py-8 text-center text-sm text-[var(--brand-text)]">
           <p>No tasks match your filters.</p>
           <button
             type="button"
             onClick={() => setActive({})}
-            className="mt-1 font-semibold text-[var(--olng-blue)] underline underline-offset-2"
+            className="mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
           >
             Clear filters
           </button>
@@ -164,7 +164,7 @@ export function ProjectTasksTab({
       ) : (
         <div className="overflow-x-auto rounded-[var(--radius)] border border-[var(--border)] bg-white">
           <table className="w-full text-sm">
-            <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--olng-gray)]">
+            <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--brand-gray)]">
               <tr>
                 <th className="px-3 py-2 font-semibold">Title</th>
                 <th className="px-3 py-2 font-semibold">Disciplines</th>
@@ -182,7 +182,7 @@ export function ProjectTasksTab({
                     <td className="px-3">
                       <Link
                         href={`/tasks/${task.id}`}
-                        className="font-semibold text-[var(--olng-blue)] hover:underline"
+                        className="font-semibold text-[var(--brand-primary)] hover:underline"
                       >
                         {task.title}
                       </Link>
@@ -197,7 +197,7 @@ export function ProjectTasksTab({
                           />
                         ))}
                         {task.disciplineSummary.length > 4 ? (
-                          <span className="text-xs text-[var(--olng-gray)]">
+                          <span className="text-xs text-[var(--brand-gray)]">
                             +{task.disciplineSummary.length - 4}
                           </span>
                         ) : null}
@@ -217,8 +217,8 @@ export function ProjectTasksTab({
                         color: task.isOverdue
                           ? "var(--status-blocked)"
                           : soon
-                            ? "var(--olng-sand)"
-                            : "var(--olng-text)",
+                            ? "var(--brand-stone)"
+                            : "var(--brand-text)",
                       }}
                     >
                       {formatDate(task.deadline)}

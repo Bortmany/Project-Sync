@@ -187,7 +187,7 @@ export function UploadDropzone({
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          className="font-semibold text-[var(--olng-blue)] hover:underline"
+          className="font-semibold text-[var(--brand-primary)] hover:underline"
         >
           {buttonLabel}
         </button>
@@ -207,8 +207,8 @@ export function UploadDropzone({
           onDrop={onDrop}
           className={`flex w-full flex-col items-center gap-2 rounded-[var(--radius)] border border-dashed px-4 py-6 text-sm transition-colors ${
             dragging
-              ? "border-[var(--olng-sail)] bg-[var(--olng-sail)]/10 text-[var(--olng-navy)]"
-              : "border-[var(--olng-gray)] text-[var(--olng-text)] hover:border-[var(--olng-blue)]"
+              ? "border-[var(--brand-accent)] bg-[var(--brand-accent)]/10 text-[var(--brand-ink)]"
+              : "border-[var(--brand-gray)] text-[var(--brand-text)] hover:border-[var(--brand-primary)]"
           }`}
         >
           <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
@@ -250,17 +250,17 @@ export function UploadDropzone({
         <div className="space-y-3">
           {error ? <ErrorBanner message={error} /> : null}
 
-          <p className="text-sm text-[var(--olng-navy)]">
+          <p className="text-sm text-[var(--brand-ink)]">
             <span className="font-semibold">{file?.name}</span>
           </p>
           {requirementName ? (
-            <p className="text-xs text-[var(--olng-text)]">
+            <p className="text-xs text-[var(--brand-text)]">
               This upload ticks off “{requirementName}” on the checklist.
             </p>
           ) : null}
 
           {isNewRevision ? (
-            <p className="text-xs text-[var(--olng-text)]">
+            <p className="text-xs text-[var(--brand-text)]">
               This becomes the next revision of the same document. The file that is there now stays
               in the history and can still be downloaded.
             </p>
@@ -295,12 +295,12 @@ export function UploadDropzone({
             <div
               role="progressbar"
               aria-label="Uploading"
-              className="h-1 w-full overflow-hidden rounded bg-[var(--olng-gray)]/30"
+              className="h-1 w-full overflow-hidden rounded bg-[var(--brand-gray)]/30"
             >
-              <span className="block h-full w-1/3 animate-pulse rounded bg-[var(--olng-sail)]" />
+              <span className="block h-full w-1/3 animate-pulse rounded bg-[var(--brand-accent)]" />
             </div>
           ) : (
-            <p className="text-xs text-[var(--olng-gray)]">
+            <p className="text-xs text-[var(--brand-gray)]">
               PDF, Office, images, CSV, DWG or ZIP — up to 25 MB.
             </p>
           )}

@@ -21,7 +21,7 @@ function check(passed: boolean, description: string, detail = ""): void {
 
 async function main() {
   const project = await prisma.project.findFirst({
-    where: { code: PROJECT_CODE, organization: { slug: "tielora-demo" } },
+    where: { code: PROJECT_CODE, organization: { slug: "meridian-energy-demo" } },
   });
   if (!project) throw new Error(`The demo project ${PROJECT_CODE} is missing. Run npm run seed first.`);
 

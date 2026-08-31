@@ -16,34 +16,34 @@ export type DisciplineTemplateRow = {
 };
 
 /**
- * OIL_AND_GAS is the set Project Nexus shipped with (prisma/seed.ts) — codes, names, colours and
- * order copied exactly, so an oil and gas company signing up gets what the original app had.
+ * OIL_AND_GAS is the set the app shipped with (prisma/seed.ts) — codes, names, colours and order
+ * copied exactly, so an oil and gas company signing up gets the original eight disciplines.
  */
 const OIL_AND_GAS: DisciplineTemplateRow[] = [
-  { code: "MECH", name: "Mechanical", colorHex: "#00558C", sortOrder: 1 },
-  { code: "ELEC", name: "Electrical", colorHex: "#5BC2E7", sortOrder: 2 },
-  { code: "INST", name: "Instrumentation", colorHex: "#004F71", sortOrder: 3 },
-  { code: "CIVIL", name: "Civil", colorHex: "#8A8D6A", sortOrder: 4 },
-  { code: "PROC", name: "Process", colorHex: "#003E51", sortOrder: 5 },
-  { code: "HSE", name: "HSE", colorHex: "#3E7A5E", sortOrder: 6 },
-  { code: "REL", name: "Reliability", colorHex: "#B08D57", sortOrder: 7 },
-  { code: "INSP", name: "Inspection", colorHex: "#7A6A8A", sortOrder: 8 },
+  { code: "MECH", name: "Mechanical", colorHex: "#2E5AAC", sortOrder: 1 },
+  { code: "ELEC", name: "Electrical", colorHex: "#46C4B0", sortOrder: 2 },
+  { code: "INST", name: "Instrumentation", colorHex: "#1F3D77", sortOrder: 3 },
+  { code: "CIVIL", name: "Civil", colorHex: "#7A8450", sortOrder: 4 },
+  { code: "PROC", name: "Process", colorHex: "#152647", sortOrder: 5 },
+  { code: "HSE", name: "HSE", colorHex: "#2F7D63", sortOrder: 6 },
+  { code: "REL", name: "Reliability", colorHex: "#A8763C", sortOrder: 7 },
+  { code: "INSP", name: "Inspection", colorHex: "#6B5B95", sortOrder: 8 },
 ];
 
 const CONSTRUCTION: DisciplineTemplateRow[] = [
-  { code: "STRUCT", name: "Structural", colorHex: "#00558C", sortOrder: 1 },
-  { code: "ARCH", name: "Architectural", colorHex: "#5BC2E7", sortOrder: 2 },
-  { code: "MEP", name: "MEP", colorHex: "#004F71", sortOrder: 3 },
-  { code: "CIVIL", name: "Civil", colorHex: "#8A8D6A", sortOrder: 4 },
-  { code: "QAQC", name: "QA/QC", colorHex: "#003E51", sortOrder: 5 },
-  { code: "HSE", name: "HSE", colorHex: "#3E7A5E", sortOrder: 6 },
-  { code: "SURV", name: "Surveying", colorHex: "#B08D57", sortOrder: 7 },
+  { code: "STRUCT", name: "Structural", colorHex: "#2E5AAC", sortOrder: 1 },
+  { code: "ARCH", name: "Architectural", colorHex: "#46C4B0", sortOrder: 2 },
+  { code: "MEP", name: "MEP", colorHex: "#1F3D77", sortOrder: 3 },
+  { code: "CIVIL", name: "Civil", colorHex: "#7A8450", sortOrder: 4 },
+  { code: "QAQC", name: "QA/QC", colorHex: "#152647", sortOrder: 5 },
+  { code: "HSE", name: "HSE", colorHex: "#2F7D63", sortOrder: 6 },
+  { code: "SURV", name: "Surveying", colorHex: "#A8763C", sortOrder: 7 },
 ];
 
 const GENERIC: DisciplineTemplateRow[] = [
-  { code: "ENG", name: "Engineering", colorHex: "#00558C", sortOrder: 1 },
-  { code: "OPS", name: "Operations", colorHex: "#5BC2E7", sortOrder: 2 },
-  { code: "QUAL", name: "Quality", colorHex: "#3E7A5E", sortOrder: 3 },
+  { code: "ENG", name: "Engineering", colorHex: "#2E5AAC", sortOrder: 1 },
+  { code: "OPS", name: "Operations", colorHex: "#46C4B0", sortOrder: 2 },
+  { code: "QUAL", name: "Quality", colorHex: "#2F7D63", sortOrder: 3 },
 ];
 
 export const INDUSTRY_TEMPLATES: Record<IndustryTemplateName, DisciplineTemplateRow[]> = {

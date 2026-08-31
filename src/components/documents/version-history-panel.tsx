@@ -41,7 +41,7 @@ export function VersionHistoryPanel({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex justify-end bg-[var(--olng-navy)]/40"
+      className="fixed inset-0 z-50 flex justify-end bg-[var(--brand-ink)]/40"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -56,10 +56,10 @@ export function VersionHistoryPanel({
       >
         <header className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold text-[var(--olng-navy)]">
+            <h2 className="truncate text-sm font-semibold text-[var(--brand-ink)]">
               {documentTitle}
             </h2>
-            <p className="text-xs text-[var(--olng-gray)]">
+            <p className="text-xs text-[var(--brand-gray)]">
               Every revision, newest first. Revisions are kept for good.
             </p>
           </div>
@@ -67,7 +67,7 @@ export function VersionHistoryPanel({
             type="button"
             onClick={onClose}
             aria-label="Close version history"
-            className="rounded p-1 text-[var(--olng-text)] hover:bg-[var(--page-bg)]"
+            className="rounded p-1 text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
               <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.5" />
@@ -91,7 +91,7 @@ export function VersionHistoryPanel({
               ))}
             </div>
           ) : rows.length === 0 ? (
-            <p className="text-sm text-[var(--olng-text)]">No revisions to show yet.</p>
+            <p className="text-sm text-[var(--brand-text)]">No revisions to show yet.</p>
           ) : (
             <ol className="divide-y divide-[var(--border)]">
               {rows.map((version) => (
@@ -99,25 +99,25 @@ export function VersionHistoryPanel({
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge>Rev {version.revisionNumber}</Badge>
                     {version.revisionNumber === latestRevision ? (
-                      <Badge color="var(--olng-sail)" textColor="var(--olng-navy)">
+                      <Badge color="var(--brand-accent)" textColor="var(--brand-ink)">
                         Latest
                       </Badge>
                     ) : null}
-                    <span className="text-xs text-[var(--olng-text)]">
+                    <span className="text-xs text-[var(--brand-text)]">
                       {version.uploadedByName} · {formatDate(version.createdAt)}
                     </span>
                   </div>
-                  <p className="truncate text-sm text-[var(--olng-navy)]">
+                  <p className="truncate text-sm text-[var(--brand-ink)]">
                     {version.originalFilename}
                   </p>
                   {version.note ? (
-                    <p className="text-sm text-[var(--olng-text)]">{version.note}</p>
+                    <p className="text-sm text-[var(--brand-text)]">{version.note}</p>
                   ) : null}
-                  <div className="flex items-center gap-3 text-xs text-[var(--olng-gray)]">
+                  <div className="flex items-center gap-3 text-xs text-[var(--brand-gray)]">
                     <span>{formatFileSize(version.sizeBytes)}</span>
                     <a
                       href={version.downloadUrl}
-                      className="font-semibold text-[var(--olng-blue)] hover:underline"
+                      className="font-semibold text-[var(--brand-primary)] hover:underline"
                     >
                       Download
                     </a>

@@ -16,7 +16,7 @@ export function RequiredDocsChecklist({ task }: { task: DisciplineTaskDTO }) {
 
   if (task.requiredDocuments.length === 0) {
     return (
-      <p className="text-sm text-[var(--olng-gray)]">
+      <p className="text-sm text-[var(--brand-gray)]">
         No required documents for this discipline task.
       </p>
     );
@@ -50,16 +50,16 @@ export function RequiredDocsChecklist({ task }: { task: DisciplineTaskDTO }) {
               {requirement.isSatisfied ? "Uploaded:" : "Still missing:"}
             </span>
 
-            <span className="min-w-0 flex-1 basis-40 text-sm text-[var(--olng-navy)]">
+            <span className="min-w-0 flex-1 basis-40 text-sm text-[var(--brand-ink)]">
               {requirement.name}
             </span>
 
             {requirement.isMandatory ? (
-              <span className="text-xs text-[var(--olng-gray)]">Mandatory</span>
+              <span className="text-xs text-[var(--brand-gray)]">Mandatory</span>
             ) : null}
 
             {requirement.isSatisfied ? (
-              <span className="flex flex-wrap items-center gap-2 text-xs text-[var(--olng-text)]">
+              <span className="flex flex-wrap items-center gap-2 text-xs text-[var(--brand-text)]">
                 {revision ? <Badge>Rev {revision.revisionNumber}</Badge> : null}
                 <span>
                   {document?.title ?? "Uploaded"}
@@ -68,7 +68,7 @@ export function RequiredDocsChecklist({ task }: { task: DisciplineTaskDTO }) {
                 {revision ? (
                   <a
                     href={revision.downloadUrl}
-                    className="font-semibold text-[var(--olng-blue)] hover:underline"
+                    className="font-semibold text-[var(--brand-primary)] hover:underline"
                   >
                     View
                   </a>
@@ -87,7 +87,7 @@ export function RequiredDocsChecklist({ task }: { task: DisciplineTaskDTO }) {
               </span>
             ) : (
               <span className="flex items-center gap-3">
-                <span className="text-xs text-[var(--olng-gray)]">Not uploaded</span>
+                <span className="text-xs text-[var(--brand-gray)]">Not uploaded</span>
                 <UploadDropzone
                   mode="button"
                   buttonLabel="Upload"

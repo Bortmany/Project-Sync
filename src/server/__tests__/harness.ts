@@ -87,7 +87,7 @@ export async function makeDiscipline(
       orgId: orgId ?? (await defaultOrg()),
       code,
       name: `${code} discipline`,
-      colorHex: "#00558C",
+      colorHex: "#2E5AAC",
       sortOrder,
     },
   });

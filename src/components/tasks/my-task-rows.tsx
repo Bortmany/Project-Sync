@@ -90,18 +90,18 @@ function TaskRow({ task, rich }: { task: MyTask; rich: boolean }) {
       {rich ? <QuickStatus task={task} /> : <StatusBadge status={task.status} />}
       <Link
         href={`/discipline-tasks/${task.id}`}
-        className="order-first w-full min-w-0 truncate text-sm font-semibold text-[var(--olng-navy)] hover:underline sm:order-none sm:w-auto sm:flex-1"
+        className="order-first w-full min-w-0 truncate text-sm font-semibold text-[var(--brand-ink)] hover:underline sm:order-none sm:w-auto sm:flex-1"
       >
         {task.title}
       </Link>
       {rich ? <PriorityFlag priority={task.priority} /> : null}
       <DisciplineDot colorHex={task.disciplineColorHex} code={task.disciplineCode} showCode={rich} />
-      <span className="rounded-full bg-[var(--page-bg)] px-2 py-0.5 text-xs text-[var(--olng-text)]">
+      <span className="rounded-full bg-[var(--page-bg)] px-2 py-0.5 text-xs text-[var(--brand-text)]">
         {task.projectCode}
       </span>
       <span
         className="ml-auto shrink-0 text-right text-xs sm:ml-0 sm:w-24"
-        style={{ color: task.isOverdue ? "var(--status-blocked)" : "var(--olng-text)" }}
+        style={{ color: task.isOverdue ? "var(--status-blocked)" : "var(--brand-text)" }}
       >
         {formatDate(task.deadline)}
       </span>
@@ -128,7 +128,7 @@ export function MyTaskGroups({ tasks, rich = false }: { tasks: MyTask[]; rich?: 
       {DUE_BUCKET_ORDER.map((bucket) =>
         buckets[bucket].length === 0 ? null : (
           <section key={bucket}>
-            <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--olng-gray)]">
+            <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--brand-gray)]">
               {DUE_BUCKET_LABEL[bucket]} ({buckets[bucket].length})
             </h3>
             <MyTaskList tasks={buckets[bucket]} rich={rich} />

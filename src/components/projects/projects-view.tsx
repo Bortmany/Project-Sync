@@ -1,10 +1,15 @@
 // Projects list — every project the signed-in person can see, with search, status filter,
 // and (for admins and project managers) the "New project" flow.
+//
+// `/projects?new=1` opens that flow straight away — the dashboard's first-run panel links here
+// rather than duplicating the dialog. The parameter is cleared as soon as it has been acted on, so
+// a refresh or a back-button press does not reopen the form.
 
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { NewProjectDialog } from "@/components/projects/new-project-dialog";
 import { isManager, useMe, useProjects } from "@/components/hooks/use-api";
 import { formatDate } from "@/components/format";
@@ -52,7 +57,7 @@ function DisciplineDots({ disciplines }: { disciplines: ProjectListItemDTO["disc
       {shown.map((discipline) => (
         <DisciplineDot key={discipline.id} colorHex={discipline.colorHex} code={discipline.code} />
       ))}
-      {rest > 0 ? <span className="text-xs text-[var(--olng-gray)]">+{rest}</span> : null}
+      {rest > 0 ? <span className="text-xs text-[var(--brand-gray)]">+{rest}</span> : null}
     </span>
   );
 }
@@ -65,6 +70,18 @@ export function ProjectsView() {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const canCreate = isManager(me.data);
+
+  // Opened from elsewhere in the app with ?new=1. Waits for the "who am I" read, because only an
+  // administrator or project manager may create a project.
+  const router = useRouter();
+  const params = useSearchParams();
+  const askedForNew = params.get("new") === "1";
+
+  useEffect(() => {
+    if (!askedForNew || me.isPending) return;
+    if (canCreate) setDialogOpen(true);
+    router.replace("/projects", { scroll: false });
+  }, [askedForNew, canCreate, me.isPending, router]);
 
   const visible = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -87,7 +104,7 @@ export function ProjectsView() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold text-[var(--olng-blue)]">Projects</h1>
+        <h1 className="text-xl font-semibold text-[var(--brand-primary)]">Projects</h1>
         {canCreate ? <Button onClick={() => setDialogOpen(true)}>+ New project</Button> : null}
       </div>
 
@@ -118,8 +135,8 @@ export function ProjectsView() {
                 }
                 className={`min-h-9 rounded-full border px-3 text-xs font-semibold ${
                   active
-                    ? "border-[var(--olng-blue)] bg-[var(--olng-blue)] text-white"
-                    : "border-[var(--border)] bg-white text-[var(--olng-text)]"
+                    ? "border-[var(--brand-primary)] bg-[var(--brand-primary)] text-white"
+                    : "border-[var(--border)] bg-white text-[var(--brand-text)]"
                 }`}
               >
                 {option.label}
@@ -146,12 +163,12 @@ export function ProjectsView() {
           <EmptyState message="You haven't been added to any projects yet. Check with your project manager." />
         )
       ) : visible.length === 0 ? (
-        <div className="py-8 text-center text-sm text-[var(--olng-text)]">
+        <div className="py-8 text-center text-sm text-[var(--brand-text)]">
           <p>No projects match your filters.</p>
           <button
             type="button"
             onClick={clearFilters}
-            className="mt-1 font-semibold text-[var(--olng-blue)] underline underline-offset-2"
+            className="mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
           >
             Clear filters
           </button>
@@ -159,7 +176,7 @@ export function ProjectsView() {
       ) : (
         <div className="overflow-x-auto rounded-[var(--radius)] border border-[var(--border)] bg-white">
           <table className="w-full text-sm">
-            <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--olng-gray)]">
+            <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--brand-gray)]">
               <tr>
                 <th className="px-3 py-2 font-semibold">Project</th>
                 <th className="px-3 py-2 font-semibold">Status</th>
@@ -180,11 +197,11 @@ export function ProjectsView() {
                     <td className="px-3">
                       <Link
                         href={`/projects/${project.id}`}
-                        className="font-semibold text-[var(--olng-blue)] hover:underline"
+                        className="font-semibold text-[var(--brand-primary)] hover:underline"
                       >
                         {project.name}
                       </Link>
-                      <span className="ml-2 rounded-full bg-[var(--page-bg)] px-2 py-0.5 text-xs text-[var(--olng-text)]">
+                      <span className="ml-2 rounded-full bg-[var(--page-bg)] px-2 py-0.5 text-xs text-[var(--brand-text)]">
                         {project.code}
                       </span>
                     </td>
@@ -193,7 +210,7 @@ export function ProjectsView() {
                     </td>
                     <td className="px-3">
                       <ProgressBar pct={project.progressPct} />
-                      <span className="text-xs text-[var(--olng-gray)]">
+                      <span className="text-xs text-[var(--brand-gray)]">
                         {project.mainTaskCount} main tasks
                       </span>
                     </td>
@@ -206,12 +223,12 @@ export function ProjectsView() {
                           {project.overdueCount} overdue
                         </span>
                       ) : (
-                        <span className="text-xs text-[var(--olng-gray)]">None</span>
+                        <span className="text-xs text-[var(--brand-gray)]">None</span>
                       )}
                     </td>
                     <td
                       className="px-3"
-                      style={{ color: overdue ? "var(--status-blocked)" : "var(--olng-text)" }}
+                      style={{ color: overdue ? "var(--status-blocked)" : "var(--brand-text)" }}
                     >
                       {formatDate(project.targetDate)}
                     </td>
@@ -227,7 +244,7 @@ export function ProjectsView() {
         <button
           type="button"
           onClick={clearFilters}
-          className="text-xs font-semibold text-[var(--olng-blue)] underline underline-offset-2"
+          className="text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
         >
           Clear filters
         </button>

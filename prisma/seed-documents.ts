@@ -197,7 +197,7 @@ export async function seedDocuments(ctx: SeedDocumentsContext): Promise<SeedDocu
   const designReviewId = await mainTaskId("Complete Engineering Design Review");
 
   const rev0 = await upload(
-    "khalid.alfarsi@omanlng.example",
+    "khalid.alfarsi@tielora.example",
     { mainTaskId: designReviewId, title: "Master Engineering Review Register", category: "Register", note: "First issue for comment." },
     MASTER_REGISTER,
     registerCsv(0, [
@@ -210,7 +210,7 @@ export async function seedDocuments(ctx: SeedDocumentsContext): Promise<SeedDocu
   revisions += 1;
 
   await upload(
-    "fatma.alzadjali@omanlng.example",
+    "fatma.alzadjali@tielora.example",
     { documentId: rev0.documentId, note: "Electrical comments closed out." },
     MASTER_REGISTER,
     registerCsv(1, [
@@ -223,7 +223,7 @@ export async function seedDocuments(ctx: SeedDocumentsContext): Promise<SeedDocu
   revisions += 1;
 
   await upload(
-    "sarah.whitmore@omanlng.example",
+    "sarah.whitmore@tielora.example",
     { documentId: rev0.documentId, note: "Instrumentation comments added and mechanical closed." },
     MASTER_REGISTER,
     registerCsv(2, [
@@ -244,7 +244,7 @@ export async function seedDocuments(ctx: SeedDocumentsContext): Promise<SeedDocu
   if (!loadCalculation) throw new Error("The civil task has no foundation load calculation requirement.");
 
   await upload(
-    "yousuf.alamri@omanlng.example",
+    "yousuf.alamri@tielora.example",
     {
       disciplineTaskId: civil.id,
       requiredDocumentId: loadCalculation.id,
@@ -271,7 +271,7 @@ export async function seedDocuments(ctx: SeedDocumentsContext): Promise<SeedDocu
   /* A marked-up drawing on the overdue vendor review. */
   const motorDataSheets = await disciplineTask("Motor data sheets reviewed");
   await upload(
-    "ahmed.albalushi@omanlng.example",
+    "ahmed.albalushi@tielora.example",
     {
       disciplineTaskId: motorDataSheets.id,
       title: "Motor Data Sheet Markup",
@@ -287,7 +287,7 @@ export async function seedDocuments(ctx: SeedDocumentsContext): Promise<SeedDocu
   /* The close-out report on the overridden HAZOP task. */
   const hazopId = await mainTaskId("HAZOP Action Close-out");
   await upload(
-    "salim.alhinai@omanlng.example",
+    "salim.alhinai@tielora.example",
     {
       mainTaskId: hazopId,
       title: "HAZOP Close-out Report",

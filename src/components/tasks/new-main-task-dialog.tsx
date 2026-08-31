@@ -165,7 +165,7 @@ export function NewMainTaskDialog({
             {pending ? "Creating…" : "Create main task"}
           </Button>
           {selected.length > 0 && !everyoneAssigned ? (
-            <span className="text-xs text-[var(--olng-gray)]">
+            <span className="text-xs text-[var(--brand-gray)]">
               Add an assignee for each selected discipline to continue.
             </span>
           ) : null}
@@ -176,7 +176,7 @@ export function NewMainTaskDialog({
         {error ? <ErrorBanner message="Couldn't create this task. Try again." /> : null}
 
         <section className="space-y-3">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--olng-gray)]">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--brand-gray)]">
             Details
           </h3>
           <Field label="Title" error={fieldError(fieldErrors, "title")}>
@@ -235,11 +235,11 @@ export function NewMainTaskDialog({
         </section>
 
         <section className="space-y-3 border-t border-[var(--border)] pt-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--olng-gray)]">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--brand-gray)]">
             Disciplines involved
           </h3>
           {project.disciplines.length === 0 ? (
-            <p className="text-sm text-[var(--olng-text)]">
+            <p className="text-sm text-[var(--brand-text)]">
               No disciplines on this project yet — add them in the Team tab first.
             </p>
           ) : null}
@@ -256,17 +256,17 @@ export function NewMainTaskDialog({
                     onChange={() => toggleDiscipline(discipline.disciplineId)}
                   />
                   <DisciplineDot colorHex={discipline.colorHex} code={discipline.code} />
-                  <span className="font-semibold text-[var(--olng-navy)]">{discipline.name}</span>
+                  <span className="font-semibold text-[var(--brand-ink)]">{discipline.name}</span>
                 </label>
                 {members.length === 0 ? (
-                  <p className="mt-1 text-xs text-[var(--olng-gray)]">
+                  <p className="mt-1 text-xs text-[var(--brand-gray)]">
                     No one&apos;s assigned to {discipline.name} on this project yet — add them in the
                     Team tab first.
                   </p>
                 ) : null}
 
                 {row ? (
-                  <div className="mt-3 space-y-3 border-l-2 border-[var(--olng-sail)] pl-3">
+                  <div className="mt-3 space-y-3 border-l-2 border-[var(--brand-accent)] pl-3">
                     <div className="grid gap-3 sm:grid-cols-2">
                       <Field label="Assignee">
                         <Select
@@ -301,7 +301,7 @@ export function NewMainTaskDialog({
                       </Field>
                     </div>
 
-                    <label className="flex items-center gap-2 text-sm text-[var(--olng-text)]">
+                    <label className="flex items-center gap-2 text-sm text-[var(--brand-text)]">
                       <input
                         type="checkbox"
                         checked={row.isMandatory}
@@ -313,11 +313,11 @@ export function NewMainTaskDialog({
                     </label>
 
                     <div className="space-y-2">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-[var(--olng-gray)]">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-[var(--brand-gray)]">
                         Required documents
                       </p>
                       {row.documents.length === 0 ? (
-                        <p className="text-xs text-[var(--olng-gray)]">
+                        <p className="text-xs text-[var(--brand-gray)]">
                           No required documents — this discipline task can be marked complete
                           without an upload.
                         </p>
@@ -339,7 +339,7 @@ export function NewMainTaskDialog({
                               })
                             }
                           />
-                          <label className="flex items-center gap-1 text-xs text-[var(--olng-text)]">
+                          <label className="flex items-center gap-1 text-xs text-[var(--brand-text)]">
                             <input
                               type="checkbox"
                               checked={document.isMandatory}
@@ -380,7 +380,7 @@ export function NewMainTaskDialog({
                             ],
                           })
                         }
-                        className="text-sm font-semibold text-[var(--olng-blue)] underline underline-offset-2"
+                        className="text-sm font-semibold text-[var(--brand-primary)] underline underline-offset-2"
                       >
                         + Add required document
                       </button>
@@ -392,7 +392,7 @@ export function NewMainTaskDialog({
           })}
         </section>
 
-        <p className="text-xs text-[var(--olng-gray)]">
+        <p className="text-xs text-[var(--brand-gray)]">
           Discipline task titles default to &quot;{`<Discipline> — ${title || "main task title"}`}
           &quot; and their deadlines to {deadline ? toDateInputValue(new Date(deadline)) : "the main task's deadline"}.
         </p>

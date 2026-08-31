@@ -1,4 +1,4 @@
-// Navy sidebar: 240px on large screens, an icon rail between the md and lg breakpoints, and hidden
+// Ink sidebar: 240px on large screens, an icon rail between the md and lg breakpoints, and hidden
 // altogether on phones — below md the menu button in the top bar opens the same list.
 // Admin links only appear for administrators.
 //
@@ -61,14 +61,13 @@ export function Sidebar({ role }: { role: RoleName }) {
   return (
     <nav
       aria-label="Main"
-      className="hidden w-16 shrink-0 flex-col gap-1 overflow-y-auto bg-[var(--olng-navy)] p-2 md:flex lg:w-60 lg:p-3"
+      className="hidden w-16 shrink-0 flex-col gap-1 overflow-y-auto bg-[var(--brand-ink)] p-2 md:flex lg:w-60 lg:p-3"
     >
       <div className="mb-4 px-2 py-3">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-[var(--olng-sail)]">
-          <span className="hidden lg:inline">Oman LNG</span>
-          <span className="lg:hidden">OLNG</span>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-[var(--brand-accent)] lg:hidden">
+          TLR
         </p>
-        <p className="hidden text-lg font-semibold text-white lg:block">Project Nexus</p>
+        <p className="hidden text-lg font-semibold tracking-tight text-white lg:block">Tielora</p>
       </div>
 
       {items.map((item) => {
@@ -92,7 +91,7 @@ export function Sidebar({ role }: { role: RoleName }) {
                     label={favorite.title}
                     active={isCurrentNav(pathname, favoriteHref(favorite))}
                     subItem
-                    dotColor="var(--olng-gray)"
+                    dotColor="var(--brand-gray)"
                   />
                 ))}
                 <div className="mt-3 border-t border-white/10" />

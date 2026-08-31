@@ -16,7 +16,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <div className="flex min-w-0 flex-1 flex-col">
           <Topbar name={user.name} email={user.email} role={user.role} />
           <main className="min-w-0 flex-1 p-4 sm:p-6">{children}</main>
-          <footer className="border-t border-[var(--olng-sand)] px-4 py-3 text-xs text-[var(--olng-gray)] sm:px-6">
+          <footer className="border-t border-[var(--brand-stone)] px-4 py-3 text-xs text-[var(--brand-gray)] sm:px-6">
+            Tielora &middot;{" "}
             <Link href="/privacy" className="underline-offset-2 hover:underline">
               Privacy notice
             </Link>{" "}

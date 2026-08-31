@@ -1,5 +1,9 @@
 # Design notes — Project Nexus (Oman LNG)
 
+> **Superseded in part by the Milestone 2 Tielora rebrand.** The layout patterns still hold; the
+> brand names and the `--olng-*` tokens in this file do not — the live tokens are `--brand-*` in
+> `src/app/globals.css`, and the sign-in panel now carries the Tielora wordmark with no sail motif.
+
 Distilled from Mobbin research (Aug 2026) + OLNG brand constraints. This feeds the ui-designer's screen spec and every UI builder. Patterns were studied from Wrike, Motion, Height, Asana, Qatalog, Shopify, Dovetail, Twenty, Airtable, komoot — we borrow interaction patterns, never visual identity.
 
 ## Brand tokens (hard constraints — Oman LNG)
