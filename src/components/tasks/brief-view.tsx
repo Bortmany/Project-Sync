@@ -105,15 +105,16 @@ export function BriefView() {
     data.overdue.total +
     data.newlyUnblocked.total +
     data.mentions.total +
-    data.awaitingReview.total;
+    data.awaitingReview.total +
+    data.announcements.total;
 
   const since = `The 24 hours since ${formatDateTime(data.since)}`;
 
   if (total === 0) {
     return (
       <p className="text-sm text-[var(--brand-text)]">
-        Nothing due today, nothing overdue, nothing newly unblocked, no mentions in the last 24 hours
-        and nothing waiting for your review.
+        Nothing due today, nothing overdue, nothing newly unblocked, no mentions in the last 24
+        hours, nothing waiting for your review and no announcements running.
       </p>
     );
   }
@@ -147,6 +148,11 @@ export function BriefView() {
         title="Awaiting your review"
         window="Main tasks you own whose work is finished"
         section={data.awaitingReview}
+      />
+      <Section
+        title="Announcements"
+        window="Still running for you — the company, your projects, your department"
+        section={data.announcements}
       />
     </div>
   );

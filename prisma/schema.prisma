@@ -14,6 +14,10 @@ enum Role {
   PROJECT_MANAGER
   DISCIPLINE_LEAD
   ENGINEER
+  /// A contractor from another company, invited to deliver named discipline tasks and nothing else.
+  /// An EXTERNAL never escalates through a project role: their ProjectMember.projectRole is always
+  /// EXTERNAL too, and every read they make is narrowed to the tasks assigned to them.
+  EXTERNAL
 }
 
 enum TaskStatus {
@@ -48,6 +52,8 @@ enum NotificationType {
   DOCUMENT_UPLOADED
   COMMENT_ADDED
   OVERRIDE_APPLIED
+  /// A company announcement posted to the noticeboard.
+  ANNOUNCEMENT
 }
 
 /// One customer company. EVERY tenant-owned row reaches its organisation through this model:
@@ -60,6 +66,12 @@ model Organization {
   slug   String @unique
   /// Which discipline template the company started from: OIL_AND_GAS, CONSTRUCTION or GENERIC.
   industryTemplate String
+  /// Who may post a company-wide announcement: "ADMIN_ONLY" (administrators only), "ADMIN_PM"
+  /// (administrators and project managers — the default) or "ADMIN_PM_LEAD" (those plus discipline
+  /// leads). A plain string validated by zod, not a database enum, so a third policy needs no
+  /// migration — the same shape OrgIntegration.kind uses. broadcastPolicyOf() maps the legacy
+  /// spelling "ADMIN" to "ADMIN_ONLY" and reads any other unrecognised value as the default.
+  broadcastPolicy  String   @default("ADMIN_PM")
   createdAt        DateTime @default(now())
 
   users        User[]
@@ -67,6 +79,7 @@ model Organization {
   projects     Project[]
   integrations OrgIntegration[]
   microsoft    MicrosoftConnection?
+  posts        Post[]
 }
 
 /// One company's link to its own Microsoft 365 (OneDrive / SharePoint), so members can attach a file
@@ -145,6 +158,9 @@ model User {
   role         Role
   disciplineId String?
   jobTitle     String?
+  /// The company this person works for, when it is not this one — required for an EXTERNAL
+  /// contractor so everyone can see at a glance whose engineer they are talking to.
+  companyName  String?
   isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
@@ -172,6 +188,8 @@ model User {
   activityLogs          ActivityLog[]
   favorites             Favorite[]
   personalTasks         PersonalTask[]
+  posts                 Post[]              @relation("PostAuthor")
+  postDismissals        PostDismissal[]
   createdIntegrations   OrgIntegration[]    @relation("OrgIntegrationCreatedBy")
   microsoftConnections  MicrosoftConnection[] @relation("MicrosoftConnectionConnectedBy")
 
@@ -211,6 +229,7 @@ model Discipline {
   projectDisciplines ProjectDiscipline[]
   projectMembers     ProjectMember[]
   disciplineTasks    DisciplineTask[]
+  posts              Post[]
 
   // Per organisation, not global: two companies may both run a "Civil" discipline.
   @@unique([orgId, code])
@@ -226,6 +245,10 @@ model Project {
   status      ProjectStatus @default(ACTIVE)
   startDate   DateTime?
   targetDate  DateTime?
+  /// When true (the default), work an EXTERNAL contractor says is finished goes to AWAITING_REVIEW
+  /// and only a discipline lead, project manager or administrator can confirm it through the real
+  /// completion gate. Switched off, a contractor completes exactly as an engineer does.
+  externalSignoffRequired Boolean @default(true)
   createdById String
   deletedAt   DateTime?
   createdAt   DateTime      @default(now())
@@ -241,6 +264,7 @@ model Project {
   documents   Document[]
   activity    ActivityLog[]
   favorites   Favorite[]
+  posts       Post[]
 
   // Per organisation, not global: two companies may both run a project called "PH-1".
   @@unique([orgId, code])
@@ -562,4 +586,64 @@ model PersonalTask {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, sortOrder])
+}
+
+/// A company noticeboard entry: an announcement everyone in the company sees, or a board message
+/// aimed at one project or one discipline. Replies are one level deep — a reply carries `parentId`
+/// and never has replies of its own (the service refuses a reply to a reply).
+///
+/// `kind` is a STRING validated by zod (PostKindSchema in src/lib/zod-schemas.ts), not a Prisma
+/// enum — the same choice OrgIntegration.kind made, so a third kind of post needs no migration.
+/// Everything reaches its organisation through `orgId`, which cascades from Organization.
+/// A post is soft-deleted (`deletedAt`), like a comment, so a thread keeps its shape.
+model Post {
+  id           String    @id @default(cuid())
+  orgId        String
+  /// "ANNOUNCEMENT" or "BOARD".
+  kind         String
+  /// Set when the post is aimed at one project; null for a company-wide announcement.
+  projectId    String?
+  /// Set when the post is aimed at one discipline.
+  disciplineId String?
+  title        String?
+  body         String
+  authorId     String
+  /// When the post stops being shown. Null means it stays until it is deleted.
+  expiresAt    DateTime?
+  /// The post this one replies to. One level only.
+  parentId     String?
+  createdAt    DateTime  @default(now())
+  editedAt     DateTime?
+  deletedAt    DateTime?
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  discipline   Discipline?  @relation(fields: [disciplineId], references: [id], onDelete: Cascade)
+  // Restrict, exactly as a Comment's author is: nobody is ever hard-deleted (people are
+  // deactivated), so a post can never be left without the person who wrote it.
+  author       User         @relation("PostAuthor", fields: [authorId], references: [id])
+  parent       Post?        @relation("PostReplies", fields: [parentId], references: [id], onDelete: Cascade)
+
+  replies    Post[]          @relation("PostReplies")
+  dismissals PostDismissal[]
+
+  @@index([orgId, kind, createdAt(sort: Desc)])
+  @@index([orgId, disciplineId])
+  @@index([orgId, projectId])
+  @@index([parentId])
+}
+
+/// "I have read this one" — a person hiding a noticeboard post from their own view.
+/// Personal preference, not project work: no ActivityLog row is ever written for one.
+model PostDismissal {
+  id        String   @id @default(cuid())
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@index([userId])
 }

@@ -16,7 +16,7 @@ import {
   DocumentDTO as DocumentSchema,
   DocumentVersionDTO as DocumentVersionSchema,
 } from "@/lib/zod-schemas";
-import type { ActorContext } from "@/server/actor";
+import { externalTaskScope, isExternal, type ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
 import { checkDto, checkDtoList } from "@/server/serialize";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
@@ -85,8 +85,10 @@ export async function assertCanUploadTo(actor: ActorContext, meta: UploadMeta): 
   // Shared working documents (main-task level) are revised by everyone contributing to that
   // main task, so an engineer assigned to any of its live discipline tasks counts as an
   // assignee here — that is the whole point of a shared register.
+  // A contractor is deliberately left out of that widening: they upload to their own discipline
+  // task and nowhere else, so the shared register stays the company's.
   let assigneeCtx = target.assigneeId;
-  if (target.mainTaskId && !target.disciplineTaskId && assigneeCtx === null) {
+  if (!isExternal(actor) && target.mainTaskId && !target.disciplineTaskId && assigneeCtx === null) {
     const contributes = await prisma.disciplineTask.findFirst({
       where: { mainTaskId: target.mainTaskId, assigneeId: actor.userId, ...notDeleted },
       select: { id: true },
@@ -225,15 +227,18 @@ export async function listDocumentsForMainTask(
   await assertCanViewProject(actor, mainTask.projectId);
 
   const subtasks = await prisma.disciplineTask.findMany({
-    where: { mainTaskId: mainTask.id, ...notDeleted },
+    where: { mainTaskId: mainTask.id, ...notDeleted, ...externalTaskScope(actor) },
     select: { id: true },
   });
   const subtaskIds = new Set(subtasks.map((subtask) => subtask.id));
 
-  const rows = (await activeDocuments(actor.orgId, mainTask.projectId)).filter(
-    (row) =>
-      row.mainTaskId === mainTask.id ||
-      (row.disciplineTaskId !== null && subtaskIds.has(row.disciplineTaskId)),
+  // A contractor sees the files on their own discipline tasks and nothing else — not the shared
+  // main-task register, not another discipline's drawings.
+  const rows = (await activeDocuments(actor.orgId, mainTask.projectId)).filter((row) =>
+    isExternal(actor)
+      ? row.disciplineTaskId !== null && subtaskIds.has(row.disciplineTaskId)
+      : row.mainTaskId === mainTask.id ||
+        (row.disciplineTaskId !== null && subtaskIds.has(row.disciplineTaskId)),
   );
 
   return toDocumentDTOs(rows);
@@ -245,7 +250,12 @@ export async function listDocumentsForDisciplineTask(
   disciplineTaskId: string,
 ): Promise<DocumentDTO[]> {
   const task = await prisma.disciplineTask.findFirst({
-    where: { id: disciplineTaskId, ...notDeleted, mainTask: { project: { orgId: actor.orgId } } },
+    where: {
+      id: disciplineTaskId,
+      ...notDeleted,
+      ...externalTaskScope(actor),
+      mainTask: { project: { orgId: actor.orgId } },
+    },
     select: { id: true, mainTask: { select: { projectId: true } } },
   });
   if (!task) throw new NotFoundError("We could not find that task.");
@@ -263,8 +273,9 @@ export async function listDocumentsForProject(
   projectId: string,
 ): Promise<DocumentDTO[]> {
   await assertCanViewProject(actor, projectId);
-  const rows = (await activeDocuments(actor.orgId, projectId)).slice(0, PROJECT_DOCUMENT_CAP);
-  return toDocumentDTOs(rows);
+  const all = await activeDocuments(actor.orgId, projectId);
+  const mine = isExternal(actor) ? await keepOwnTaskDocuments(actor, all) : all;
+  return toDocumentDTOs(mine.slice(0, PROJECT_DOCUMENT_CAP));
 }
 
 /** Every revision of one document, newest first. Nothing is ever missing from this list. */
@@ -274,6 +285,7 @@ export async function listVersions(
 ): Promise<DocumentVersionDTO[]> {
   const document = await loadDocument(actor, documentId);
   await assertCanViewProject(actor, document.projectId);
+  await assertExternalMaySeeDocument(actor, document);
 
   const versions = await prisma.documentVersion.findMany({
     where: { documentId: document.id },
@@ -291,12 +303,17 @@ export async function getVersionForDownload(
 ): Promise<{ absolutePath: string; originalFilename: string; mimeType: string; sizeBytes: number }> {
   const version = await prisma.documentVersion.findFirst({
     where: { id: versionId, document: { project: { orgId: actor.orgId } } },
-    include: { document: { select: { projectId: true, deletedAt: true } } },
+    include: {
+      document: { select: { projectId: true, deletedAt: true, disciplineTaskId: true } },
+    },
   });
   if (!version) throw new NotFoundError("We could not find that file.");
   if (version.document.deletedAt) throw new NotFoundError("That document has been removed.");
 
+  // Downloading goes through exactly the same visibility as listing does — a contractor holding a
+  // revision id for somebody else's file is told the file does not exist.
   await assertCanViewProject(actor, version.document.projectId);
+  await assertExternalMaySeeDocument(actor, version.document);
 
   return {
     absolutePath: storedFilePath(version.storedFilename),
@@ -451,9 +468,9 @@ async function resolveTarget(actor: ActorContext, meta: UploadMeta): Promise<Upl
       throw new ServiceError("That document belongs to a different project.");
     }
     const base = document.disciplineTaskId
-      ? await disciplineTaskTarget(project, document.disciplineTaskId)
+      ? await disciplineTaskTarget(actor, project, document.disciplineTaskId)
       : document.mainTaskId
-        ? await mainTaskTarget(project, document.mainTaskId)
+        ? await mainTaskTarget(actor, project, document.mainTaskId)
         : {
             projectId: project.id,
             orgId: project.orgId,
@@ -468,20 +485,28 @@ async function resolveTarget(actor: ActorContext, meta: UploadMeta): Promise<Upl
   }
 
   if (meta.disciplineTaskId) {
-    return { ...(await disciplineTaskTarget(project, meta.disciplineTaskId)), documentId: null };
+    return { ...(await disciplineTaskTarget(actor, project, meta.disciplineTaskId)), documentId: null };
   }
 
-  return { ...(await mainTaskTarget(project, meta.mainTaskId as string)), documentId: null };
+  return { ...(await mainTaskTarget(actor, project, meta.mainTaskId as string)), documentId: null };
 }
 
 type TargetProject = { id: string; orgId: string };
 
 async function mainTaskTarget(
+  actor: ActorContext,
   project: TargetProject,
   mainTaskId: string,
 ): Promise<Omit<UploadTarget, "documentId">> {
   const task = await prisma.mainTask.findFirst({
-    where: { id: mainTaskId, ...notDeleted, project: { orgId: project.orgId } },
+    where: {
+      id: mainTaskId,
+      ...notDeleted,
+      project: { orgId: project.orgId },
+      ...(isExternal(actor)
+        ? { disciplineTasks: { some: { assigneeId: actor.userId, ...notDeleted } } }
+        : {}),
+    },
     select: { id: true, projectId: true, ownerId: true },
   });
   if (!task) throw new NotFoundError("We could not find that task.");
@@ -500,6 +525,7 @@ async function mainTaskTarget(
 }
 
 async function disciplineTaskTarget(
+  actor: ActorContext,
   project: TargetProject,
   disciplineTaskId: string,
 ): Promise<Omit<UploadTarget, "documentId">> {
@@ -507,6 +533,7 @@ async function disciplineTaskTarget(
     where: {
       id: disciplineTaskId,
       ...notDeleted,
+      ...externalTaskScope(actor),
       mainTask: { project: { orgId: project.orgId } },
     },
     select: {
@@ -628,11 +655,12 @@ export async function toDocumentDTOs(rows: DocumentRow[]): Promise<DocumentDTO[]
     }),
     prisma.user.findMany({
       where: { id: { in: [...new Set(rows.map((row) => row.uploadedById))] } },
-      select: { id: true, name: true },
+      select: { id: true, name: true, companyName: true },
     }),
   ]);
 
   const nameById = new Map(uploaders.map((user) => [user.id, user.name]));
+  const companyById = new Map(uploaders.map((user) => [user.id, user.companyName]));
   const byDocument = new Map<string, VersionRow[]>();
   for (const version of versions) {
     const list = byDocument.get(version.documentId) ?? [];
@@ -652,6 +680,7 @@ export async function toDocumentDTOs(rows: DocumentRow[]): Promise<DocumentDTO[]
       category: row.category,
       uploadedById: row.uploadedById,
       uploadedByName: nameById.get(row.uploadedById) ?? "Someone",
+      uploadedByCompanyName: companyById.get(row.uploadedById) ?? null,
       createdAt: row.createdAt,
       currentRevision: current ? toVersionDTO(current) : null,
       versionsCount: own.length,
@@ -659,6 +688,31 @@ export async function toDocumentDTOs(rows: DocumentRow[]): Promise<DocumentDTO[]
   });
 
   return checkDtoList(DocumentSchema, items, "DocumentDTO");
+}
+
+/** Of a set of documents, the ones hanging off this contractor's own live discipline tasks. */
+async function keepOwnTaskDocuments<T extends { disciplineTaskId: string | null }>(
+  actor: ActorContext,
+  rows: T[],
+): Promise<T[]> {
+  const ids = [...new Set(rows.map((row) => row.disciplineTaskId).filter((id): id is string => Boolean(id)))];
+  if (ids.length === 0) return [];
+  const mine = await prisma.disciplineTask.findMany({
+    where: { id: { in: ids }, assigneeId: actor.userId, ...notDeleted },
+    select: { id: true },
+  });
+  const allowed = new Set(mine.map((row) => row.id));
+  return rows.filter((row) => row.disciplineTaskId !== null && allowed.has(row.disciplineTaskId));
+}
+
+/** A contractor may only reach a document that sits on a discipline task assigned to them. */
+async function assertExternalMaySeeDocument(
+  actor: ActorContext,
+  document: { disciplineTaskId: string | null },
+): Promise<void> {
+  if (!isExternal(actor)) return;
+  const kept = await keepOwnTaskDocuments(actor, [document]);
+  if (kept.length === 0) throw new NotFoundError("We could not find that document.");
 }
 
 /**

@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { updateProject } from "@/components/actions";
+import { setExternalSignoffRequired, updateProject } from "@/components/actions";
 import { ProjectActivity } from "@/components/activity/activity-feeds";
 import { ProjectDocumentsTab } from "@/components/documents/project-documents";
 import { ProjectTimelineTab } from "@/components/gantt/timeline-tab";
@@ -13,7 +13,7 @@ import { ProjectStatusBadge } from "@/components/projects/projects-view";
 import { ProjectTasksTab } from "@/components/projects/project-tasks-tab";
 import { ProjectTeamTab } from "@/components/projects/project-team-tab";
 import { fieldError, useAction } from "@/components/hooks/use-action";
-import { isManager, isManagerOn, useMe, useProject } from "@/components/hooks/use-api";
+import { isExternalUser, isManager, isManagerOn, useMe, useProject } from "@/components/hooks/use-api";
 import { FavoriteStar } from "@/components/shell/favorite-star";
 import { formatDate, toDateInputValue } from "@/components/format";
 import {
@@ -50,6 +50,7 @@ function EditProjectDialog({
   const [status, setStatus] = useState<ProjectStatusName>(project.status);
   const [startDate, setStartDate] = useState(toDateInputValue(project.startDate));
   const [targetDate, setTargetDate] = useState(toDateInputValue(project.targetDate));
+  const [signoff, setSignoff] = useState(project.externalSignoffRequired);
 
   const dateOrderError =
     startDate && targetDate && targetDate < startDate
@@ -71,15 +72,25 @@ function EditProjectDialog({
             disabled={!name.trim() || Boolean(dateOrderError)}
             onClick={() =>
               run(
-                () =>
-                  updateProject({
+                async () => {
+                  // The setting has its own action because it has its own audit line: turning a
+                  // check off is a decision worth finding in the trail later.
+                  if (signoff !== project.externalSignoffRequired) {
+                    const toggled = await setExternalSignoffRequired({
+                      projectId: project.id,
+                      required: signoff,
+                    });
+                    if (!toggled.ok) return toggled;
+                  }
+                  return updateProject({
                     id: project.id,
                     name: name.trim(),
                     description: description.trim(),
                     status,
                     startDate: startDate ? new Date(startDate) : null,
                     targetDate: targetDate ? new Date(targetDate) : null,
-                  }),
+                  });
+                },
                 {
                   success: "Project updated.",
                   failure: "Couldn't save these changes. Try again.",
@@ -134,6 +145,20 @@ function EditProjectDialog({
             onChange={(event) => setDescription(event.target.value)}
           />
         </Field>
+        <Field
+          label="External contractors"
+          hint="With this on, work a contractor marks finished waits for someone here to sign it off."
+        >
+          <label className="flex min-h-11 items-center gap-2 text-sm text-[var(--brand-ink)]">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-[var(--brand-primary)]"
+              checked={signoff}
+              onChange={(event) => setSignoff(event.target.checked)}
+            />
+            Require an internal sign-off
+          </label>
+        </Field>
       </div>
     </Modal>
   );
@@ -166,6 +191,9 @@ export function ProjectView({ projectId }: { projectId: string }) {
 
   const data = project.data;
   const canManage = isManager(me.data);
+  // A contractor sees the work assigned to them and its documents. The team roster, the project
+  // brief and the whole-project activity trail are the company's — the server refuses them too.
+  const external = isExternalUser(me.data);
 
   return (
     <div className="space-y-5">
@@ -215,11 +243,18 @@ export function ProjectView({ projectId }: { projectId: string }) {
         </div>
       </header>
 
+      {external ? (
+        <p className="rounded-[var(--radius)] border border-[var(--border)] bg-white px-4 py-3 text-sm text-[var(--brand-text)]">
+          You are working on this project as an external contractor, so this page shows the tasks
+          assigned to you and nothing else.
+        </p>
+      ) : null}
+
       <Tabs
         items={[
           {
             id: "tasks",
-            label: "Tasks",
+            label: external ? "Your tasks" : "Tasks",
             content: <ProjectTasksTab project={data} canManage={canManage} />,
           },
           {
@@ -227,11 +262,15 @@ export function ProjectView({ projectId }: { projectId: string }) {
             label: "Timeline",
             content: <ProjectTimelineTab project={data} />,
           },
-          {
-            id: "brief",
-            label: "Brief",
-            content: <ProjectBriefTab project={data} />,
-          },
+          ...(external
+            ? []
+            : [
+                {
+                  id: "brief",
+                  label: "Brief",
+                  content: <ProjectBriefTab project={data} />,
+                },
+              ]),
           {
             id: "documents",
             label: "Documents",
@@ -239,16 +278,20 @@ export function ProjectView({ projectId }: { projectId: string }) {
               <ProjectDocumentsTab project={data} canDelete={isManagerOn(me.data, data)} />
             ),
           },
-          {
-            id: "team",
-            label: "Team",
-            content: <ProjectTeamTab project={data} canManage={canManage} />,
-          },
-          {
-            id: "activity",
-            label: "Activity",
-            content: <ProjectActivity projectId={data.id} />,
-          },
+          ...(external
+            ? []
+            : [
+                {
+                  id: "team",
+                  label: "Team",
+                  content: <ProjectTeamTab project={data} canManage={canManage} />,
+                },
+                {
+                  id: "activity",
+                  label: "Activity",
+                  content: <ProjectActivity projectId={data.id} />,
+                },
+              ]),
         ]}
       />
 

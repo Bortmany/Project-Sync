@@ -33,6 +33,7 @@ import {
   Breadcrumb,
   Button,
   Card,
+  CompanyBadge,
   DateInput,
   DisciplineDot,
   EmptyState,
@@ -562,9 +563,10 @@ export function MainTaskView({ taskId }: { taskId: string }) {
                         {item.title}
                       </span>
                       {item.assigneeName ? (
-                        <span className="inline-flex min-w-0 max-w-full items-center gap-2 text-xs text-[var(--brand-text)]">
+                        <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-2 text-xs text-[var(--brand-text)]">
                           <Avatar name={item.assigneeName} size={24} />
                           <span className="truncate">{item.assigneeName}</span>
+                          <CompanyBadge companyName={item.assigneeCompanyName} />
                         </span>
                       ) : (
                         <span className="text-xs text-[var(--brand-gray)]">Unassigned</span>

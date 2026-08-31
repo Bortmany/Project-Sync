@@ -10,14 +10,14 @@
 // The queries use case-insensitive "contains" (Postgres ILIKE), which the trigram indexes added in
 // prisma/migrations/20260820173145_search_trgm_indexes keep quick on partial words.
 
-import { activeProjects, activeProjectsForUser, notDeleted, prisma } from "@/lib/db";
+import { notDeleted, prisma } from "@/lib/db";
 import type { SearchResultsDTO } from "@/lib/zod-schemas";
 import { SearchResultsDTO as SearchResultsSchema } from "@/lib/zod-schemas";
-import type { ActorContext } from "@/server/actor";
+import { externalTaskScope, isExternal, type ActorContext } from "@/server/actor";
 import { checkDto } from "@/server/serialize";
 import { listUsers } from "@/server/services/directory";
 import { toDocumentDTOs } from "@/server/services/documents";
-import { buildProjectListItems } from "@/server/services/projects";
+import { buildProjectListItems, projectsVisibleTo } from "@/server/services/projects";
 import { listMainTaskItems } from "@/server/services/tasks";
 
 /** The shortest query worth running — one letter would match half the database. */
@@ -40,12 +40,16 @@ export async function searchEverything(
     return checkDto(SearchResultsSchema, emptyResults(), "SearchResultsDTO");
   }
 
-  // The scope: the same projects the projects list would show this person.
-  const visibleProjects =
-    actor.role === "ADMIN"
-      ? await activeProjects(actor.orgId)
-      : await activeProjectsForUser(actor.orgId, actor.userId);
+  // The scope: the same projects the projects list would show this person — which for a contractor
+  // is only the projects they hold live work on.
+  const visibleProjects = await projectsVisibleTo(actor);
   const projectIds = visibleProjects.map((project) => project.id);
+  const external = isExternal(actor);
+
+  // A contractor searches inside their own work: every task row joins on assigneeId, main tasks
+  // only match through one of their own, documents only through the tasks they hold, and the people
+  // directory is not theirs to search at all.
+  const ownWork = externalTaskScope(actor);
 
   const like = { contains: needle, mode: "insensitive" as const };
 
@@ -67,6 +71,7 @@ export async function searchEverything(
             projectId: { in: projectIds },
             ...notDeleted,
             OR: [{ title: like }, { description: like }],
+            ...(external ? { disciplineTasks: { some: { ...ownWork, ...notDeleted } } } : {}),
           },
           orderBy: { deadline: "asc" },
           take: PER_GROUP,
@@ -77,6 +82,7 @@ export async function searchEverything(
       : prisma.disciplineTask.findMany({
           where: {
             ...notDeleted,
+            ...ownWork,
             title: like,
             mainTask: { projectId: { in: projectIds }, ...notDeleted },
           },
@@ -90,7 +96,14 @@ export async function searchEverything(
     projectIds.length === 0
       ? []
       : prisma.document.findMany({
-          where: { projectId: { in: projectIds }, ...notDeleted, title: like },
+          where: {
+            projectId: { in: projectIds },
+            ...notDeleted,
+            title: like,
+            ...(external
+              ? { disciplineTask: { is: { ...ownWork, ...notDeleted } } }
+              : {}),
+          },
           orderBy: { createdAt: "desc" },
           take: PER_GROUP,
           select: {
@@ -108,12 +121,14 @@ export async function searchEverything(
     // People are a shared directory, readable by anyone signed in — inside their own company only
     // (same rule as /api/users). This is the one group in a search that is not reached through a
     // project, so it carries the organisation filter itself.
-    listUsers(actor, needle),
+    external ? [] : listUsers(actor, needle),
   ]);
 
   const [projects, mainTasks, documents] = await Promise.all([
-    buildProjectListItems(projectRows),
-    listMainTaskItems(mainTaskRows.map((row) => row.id)),
+    // The viewer rides along so a contractor's project card is the same narrowed card the projects
+    // page gives them — their own task counts and their own disciplines, never the project-wide ones.
+    buildProjectListItems(projectRows, actor),
+    listMainTaskItems(mainTaskRows.map((row) => row.id), actor),
     toDocumentDTOs(documentRows),
   ]);
 

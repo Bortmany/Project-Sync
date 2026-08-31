@@ -5,11 +5,13 @@
 
 import Link from "next/link";
 import { ActivityFeed, ActivitySkeleton } from "@/components/activity/activity-item";
+import { AnnouncementStrip } from "@/components/posts/announcement-strip";
 import { MyTaskGroups } from "@/components/tasks/my-task-rows";
 import { isManager, useDashboard, useMe } from "@/components/hooks/use-api";
 import { formatShortDate } from "@/components/format";
 import {
   Card,
+  CompanyBadge,
   DisciplineDot,
   EmptyState,
   ErrorBanner,
@@ -98,11 +100,24 @@ export function DashboardView() {
   // Who is signed in decides what the first-run panel says, so nothing is shown until that read
   // lands — otherwise an administrator sees the "your project manager will add you" wording flash.
   if (!loading && !failed && data && nothingToShow(data)) {
-    return me.isPending ? null : <FirstRun me={me.data} />;
+    // Even a workspace with no work in it yet can have company news waiting on it, so the strip
+    // stays above the first-run panel rather than disappearing with the rest of the page.
+    return me.isPending ? null : (
+      <div className="space-y-6">
+        <AnnouncementStrip />
+        <FirstRun me={me.data} />
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
+      {/*
+        Company news sits above somebody's own numbers: it is usually time-sensitive and somebody
+        else decided it mattered. It renders nothing at all when there is none, and fails silently.
+      */}
+      <AnnouncementStrip />
+
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         {TILES.map((tile) =>
           loading || !data ? (
@@ -118,6 +133,43 @@ export function DashboardView() {
           ),
         )}
       </div>
+
+      {/*
+        "Needs your sign-off" only appears when there is something in it, so a company that uses no
+        contractors never sees an empty card. A contractor never sees it at all — the queue comes
+        back empty for them by rule, not by chance.
+      */}
+      {!loading && data && data.awaitingMySignoff.length > 0 ? (
+        <Card title={`Needs your sign-off (${data.awaitingMySignoff.length})`}>
+          <ul className="divide-y divide-[var(--border)]">
+            {data.awaitingMySignoff.slice(0, 5).map((item) => (
+              <li key={item.id}>
+                <Link
+                  href={`/discipline-tasks/${item.id}`}
+                  className="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1 px-1 py-2 hover:bg-[var(--page-bg)]"
+                >
+                  <DisciplineDot colorHex={item.disciplineColorHex} code={item.disciplineCode} />
+                  <span className="min-w-0 flex-1 basis-40 truncate text-sm font-semibold text-[var(--brand-ink)]">
+                    {item.title}
+                  </span>
+                  {item.assigneeName ? (
+                    <span className="flex shrink-0 flex-wrap items-center gap-2 text-sm text-[var(--brand-text)]">
+                      {item.assigneeName}
+                      <CompanyBadge companyName={item.assigneeCompanyName} />
+                    </span>
+                  ) : null}
+                  <span
+                    className="shrink-0 text-sm"
+                    style={{ color: item.isOverdue ? "var(--status-blocked)" : "var(--brand-text)" }}
+                  >
+                    {formatShortDate(item.deadline)}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card

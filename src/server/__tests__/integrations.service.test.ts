@@ -173,6 +173,8 @@ describe("what the admin screen is told", () => {
       statusChange: true,
       overdueReminder: false,
       gateOverride: true,
+      announcements: false,
+
       dailyBrief: false,
     };
     await setEventToggles(fixture.adminActor, { kind: "SLACK", eventToggles: chosen });
@@ -195,8 +197,9 @@ describe("what the admin screen is told", () => {
       statusChange: true,
       overdueReminder: true,
       gateOverride: true,
-      // The daily digest is a scheduled post into somebody's channel, so it only ever happens
-      // because an administrator asked for it.
+      // The announcement copy and the daily digest are both posts into somebody's channel that
+      // nobody asked for yet, so both only ever happen because an administrator switched them on.
+      announcements: false,
       dailyBrief: false,
     });
   });
@@ -242,6 +245,8 @@ describe("the audit trail", () => {
         statusChange: true,
         overdueReminder: true,
         gateOverride: true,
+        announcements: false,
+
         dailyBrief: false,
       },
     });
@@ -327,6 +332,7 @@ describe("which events actually go out", () => {
         statusChange: true,
         overdueReminder: true,
         gateOverride: true,
+        announcements: false,
         dailyBrief: false,
       },
     });
@@ -348,6 +354,60 @@ describe("which events actually go out", () => {
 
     await deliverToOrgWebhooks(fixture.orgId, { ...ASSIGNED_EVENT, type: "COMMENT_ADDED" });
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("carries an announcement only once the company switches announcements on", async () => {
+    const fetchSpy = mockFetchOk();
+    await connect("SLACK", SLACK_URL);
+
+    // The toggle is off by default, so company news does not walk into a chat channel by itself.
+    expect(toggleForType("ANNOUNCEMENT")).toBe("announcements");
+    await deliverToOrgWebhooks(fixture.orgId, { ...ASSIGNED_EVENT, type: "ANNOUNCEMENT" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    await setEventToggles(fixture.adminActor, {
+      kind: "SLACK",
+      eventToggles: {
+        taskAssigned: true,
+        mention: true,
+        statusChange: true,
+        overdueReminder: true,
+        gateOverride: true,
+        announcements: true,
+        dailyBrief: false,
+      },
+    });
+
+    await deliverToOrgWebhooks(fixture.orgId, { ...ASSIGNED_EVENT, type: "ANNOUNCEMENT" });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][0]).toBe(SLACK_URL);
+  });
+
+  it("escapes a title somebody typed into an announcement, in both payload shapes", async () => {
+    const nasty = {
+      ...ASSIGNED_EVENT,
+      type: "ANNOUNCEMENT" as const,
+      title: "Notice <https://evil.example|Reset your password>",
+      body: "See <https://evil.example|this> and [Reset your password](https://evil.example)",
+    };
+
+    // The mrkdwn fields and the fallback text are escaped; Slack's plain_text header deliberately
+    // is not, because Slack never parses that field (docs/CONVENTIONS.md, "Chat delivery").
+    const slack = JSON.stringify(buildPayload("SLACK", nasty, "Announcement"));
+    expect(slack).toContain("&lt;https://evil.example");
+    const blocks = (buildPayload("SLACK", nasty, "Announcement") as {
+      blocks: { type: string; text: { type: string; text: string } }[];
+    }).blocks;
+    for (const block of blocks) {
+      if (block.text?.type === "mrkdwn") expect(block.text.text).not.toContain("<https://");
+    }
+
+    const teams = buildPayload("TEAMS", nasty, "Announcement") as {
+      attachments: { content: { body: { text: string }[] } }[];
+    };
+    // A markdown link in a Teams card becomes a real, clickable link unless the brackets are
+    // escaped — so a title somebody typed can never point the company's channel at their website.
+    expect(teams.attachments[0].content.body[1].text).toContain("\\[Reset your password\\]");
   });
 
   it("sends both reminder kinds through the one overdue toggle", async () => {

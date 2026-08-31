@@ -154,6 +154,23 @@ export function StatTile({
   );
 }
 
+/**
+ * "«Company» · External" — who a contractor works for, wherever their name appears: an assignee
+ * row, a comment, a document, the admin table. Nothing is drawn for a colleague, so the badge only
+ * ever appears where somebody from outside the company did the work.
+ */
+export function CompanyBadge({ companyName }: { companyName?: string | null }) {
+  if (!companyName) return null;
+  return (
+    <span
+      className="inline-flex items-center rounded-full border border-[var(--border)] bg-[var(--page-bg)] px-2 py-0.5 text-xs font-medium text-[var(--brand-text)]"
+      title={`${companyName} — an external contractor, not a colleague`}
+    >
+      {companyName} · External
+    </span>
+  );
+}
+
 /** Turns "Aisha Al Hinai" into "AA". */
 export function initialsOf(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);

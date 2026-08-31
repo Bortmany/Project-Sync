@@ -7,7 +7,9 @@ import { z } from "zod";
 import type { ActionResult, DisciplineTaskDTO } from "@/lib/zod-schemas";
 import {
   AddDependencyInput,
+  ConfirmReviewInput,
   CreateDisciplineTaskInput,
+  RejectReviewInput,
   UpdateDisciplineTaskInput,
   UpdateTaskStatusInput,
   toFieldErrors,
@@ -112,6 +114,47 @@ export async function reopenDisciplineTask(input: {
     return { ok: true, data: task };
   } catch (error) {
     return toFailure(error, { action: "reopenDisciplineTask" });
+  }
+}
+
+/**
+ * Signing a contractor's work off. This does not skip the completion gate — it runs it: required
+ * documents, open dependencies and the stage gate are all judged exactly as usual, in the service.
+ */
+export async function confirmDisciplineTaskReview(
+  input: ConfirmReviewInput,
+): Promise<ActionResult<DisciplineTaskDTO>> {
+  const parsed = ConfirmReviewInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: CHECK_FIELDS, fieldErrors: toFieldErrors(parsed.error) };
+
+  const guard = await beginMutation("confirm-discipline-task-review", 120);
+  if (guard.failure) return guard.failure;
+
+  try {
+    const task = await tasks.confirmDisciplineTaskReview(guard.actor, parsed.data);
+    revalidateTask(task.projectId, task.mainTaskId, task.id);
+    return { ok: true, data: task };
+  } catch (error) {
+    return toFailure(error, { action: "confirmDisciplineTaskReview" });
+  }
+}
+
+/** Sending it back instead, with a note saying what needs changing. */
+export async function rejectDisciplineTaskReview(
+  input: RejectReviewInput,
+): Promise<ActionResult<DisciplineTaskDTO>> {
+  const parsed = RejectReviewInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: CHECK_FIELDS, fieldErrors: toFieldErrors(parsed.error) };
+
+  const guard = await beginMutation("reject-discipline-task-review", 120);
+  if (guard.failure) return guard.failure;
+
+  try {
+    const task = await tasks.rejectDisciplineTaskReview(guard.actor, parsed.data);
+    revalidateTask(task.projectId, task.mainTaskId, task.id);
+    return { ok: true, data: task };
+  } catch (error) {
+    return toFailure(error, { action: "rejectDisciplineTaskReview" });
   }
 }
 

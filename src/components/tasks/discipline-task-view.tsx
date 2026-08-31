@@ -8,6 +8,8 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   completeDisciplineTask,
+  confirmDisciplineTaskReview,
+  rejectDisciplineTaskReview,
   reopenDisciplineTask,
   updateDisciplineTask,
   updateDisciplineTaskStatus,
@@ -18,6 +20,7 @@ import { DisciplineTaskDocuments } from "@/components/documents/discipline-task-
 import { RequiredDocsChecklist } from "@/components/documents/required-docs-checklist";
 import { useAction } from "@/components/hooks/use-action";
 import {
+  isExternalUser,
   isLeadOrAboveOn,
   isManagerOn,
   useDisciplineTask,
@@ -31,6 +34,7 @@ import {
   Breadcrumb,
   Button,
   Card,
+  CompanyBadge,
   ErrorBanner,
   Field,
   Modal,
@@ -42,7 +46,21 @@ import {
   Tabs,
   Textarea,
 } from "@/components/ui";
+import {
+  completeButtonFor,
+  statusChoicesFor,
+  submitsForSignoff,
+  type TaskActionContext,
+} from "@/lib/task-actions";
 import type { RequiredDocumentDTO, TaskStatusName } from "@/lib/zod-schemas";
+
+const STATUS_LABEL: Record<TaskStatusName, string> = {
+  NOT_STARTED: "Not started",
+  IN_PROGRESS: "In progress",
+  BLOCKED: "Blocked",
+  AWAITING_REVIEW: "Awaiting review",
+  COMPLETED: "Completed",
+};
 
 /**
  * The one-line count on the "What's required" card. Mandatory documents lead, because they are what
@@ -122,6 +140,10 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
   // leads their own discipline. The server checks the same thing again before anything changes.
   const leadsThisWork = isLeadOrAboveOn(me.data, project.data, data.disciplineId);
   const canControl = leadsThisWork || me.data?.id === data.assigneeId;
+  // The sign-off panel: only somebody inside the company who leads this work, and never the
+  // contractor who did it — the server refuses that too, whoever presses the button.
+  const canSignOff =
+    leadsThisWork && !isExternalUser(me.data) && data.status === "AWAITING_REVIEW";
   const canReassign = leadsThisWork;
   const canDeleteDocuments = isManagerOn(me.data, project.data);
   const teammates = (project.data?.members ?? []).filter(
@@ -131,6 +153,20 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
     userId: member.userId,
     userName: member.userName,
   }));
+
+  // The action bar's two halves, decided together so they can never say different things: a
+  // contractor on a sign-off project submits their work instead of completing it, and the "Awaiting
+  // review" status is not theirs to set by hand. Default to asking for a sign-off while the project
+  // is still loading — the safer of the two, and the server decides in the end anyway.
+  const actionContext: TaskActionContext = {
+    isExternal: isExternalUser(me.data),
+    signoffRequired: project.data?.externalSignoffRequired ?? true,
+    status: data.status,
+    canComplete: data.canComplete,
+  };
+  const statusChoices = statusChoicesFor(actionContext);
+  const completeButton = completeButtonFor(actionContext);
+  const handingIn = submitsForSignoff(actionContext);
 
   function setStatus(status: TaskStatusName, note?: string) {
     run(() => updateDisciplineTaskStatus({ id: data.id, status, note }), {
@@ -198,6 +234,8 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
         </p>
       </header>
 
+      {canSignOff ? <SignOffPanel taskId={data.id} title={data.title} onDone={refresh} /> : null}
+
       {/*
         The action bar. Everything about finishing this piece of work — the status control, the
         Mark complete button, and the plain-English reason when it is refused — sits here, directly
@@ -226,13 +264,11 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
                       setStatus(next);
                     }}
                   >
-                    <option value="NOT_STARTED">Not started</option>
-                    <option value="IN_PROGRESS">In progress</option>
-                    <option value="BLOCKED">Blocked</option>
-                    <option value="AWAITING_REVIEW">Awaiting review</option>
-                    {data.status === "COMPLETED" ? (
-                      <option value="COMPLETED">Completed</option>
-                    ) : null}
+                    {statusChoices.map((status) => (
+                      <option key={status} value={status}>
+                        {STATUS_LABEL[status]}
+                      </option>
+                    ))}
                   </Select>
                 </div>
               </>
@@ -242,16 +278,18 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
               <Button
                 className="min-h-11 w-full sm:ml-auto sm:w-auto"
                 loading={pending}
-                disabled={!data.canComplete || pending}
+                disabled={completeButton.disabled || pending}
                 onClick={() =>
                   run(() => completeDisciplineTask({ id: data.id }), {
-                    success: "Marked complete.",
-                    failure: "Couldn't mark this complete. Try again.",
+                    success: handingIn ? "Sent for sign-off." : "Marked complete.",
+                    failure: handingIn
+                      ? "Couldn't send this for sign-off. Try again."
+                      : "Couldn't mark this complete. Try again.",
                     onSuccess: refresh,
                   })
                 }
               >
-                Mark complete
+                {completeButton.label}
               </Button>
             ) : null}
 
@@ -270,7 +308,14 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
           {canControl && data.status !== "COMPLETED" && !data.canComplete ? (
             <p className="text-sm text-[var(--brand-text)]">
               {/* Each blocker is already a full sentence with its own full stop — don't add another. */}
-              You can&apos;t mark this complete yet: {data.blockers.join(" ")}
+              {handingIn ? (
+                <>
+                  You can still send this for sign-off. The person reviewing it will need:{" "}
+                  {data.blockers.join(" ")}
+                </>
+              ) : (
+                <>You can&apos;t mark this complete yet: {data.blockers.join(" ")}</>
+              )}
             </p>
           ) : null}
 
@@ -394,9 +439,10 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
                       ))}
                     </Select>
                   ) : data.assigneeName ? (
-                    <span className="flex items-center gap-2 text-[var(--brand-ink)]">
+                    <span className="flex flex-wrap items-center gap-2 text-[var(--brand-ink)]">
                       <Avatar name={data.assigneeName} size={24} />
                       {data.assigneeName}
+                      <CompanyBadge companyName={data.assigneeCompanyName} />
                     </span>
                   ) : (
                     <span className="text-[var(--brand-gray)]">No one yet</span>
@@ -504,6 +550,109 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
           <Textarea
             value={reopenReason}
             onChange={(event) => setReopenReason(event.target.value)}
+          />
+        </Field>
+      </Modal>
+    </div>
+  );
+}
+
+/**
+ * "Needs your sign-off": what a discipline lead or manager sees on work a contractor has handed in.
+ *
+ * Confirming runs the REAL completion gate on the server — required documents, open dependencies
+ * and the stage gate are all still judged, so this button can be refused in plain English exactly
+ * as "Mark complete" can. Sending it back always carries a note saying what needs changing.
+ */
+function SignOffPanel({
+  taskId,
+  title,
+  onDone,
+}: {
+  taskId: string;
+  title: string;
+  onDone: () => void;
+}) {
+  const { run, pending, error } = useAction();
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const noteTooShort = note.trim().length < 5;
+
+  return (
+    <div className="space-y-3 rounded-[var(--radius)] border border-[var(--status-awaiting-review)] bg-white p-4">
+      <div>
+        <h2 className="text-sm font-semibold text-[var(--brand-ink)]">Needs your sign-off</h2>
+        <p className="mt-1 text-sm text-[var(--brand-text)]">
+          The contractor says this work is finished. Confirm it to complete the task, or send it back
+          with a note saying what still needs doing.
+        </p>
+      </div>
+
+      {error ? <ErrorBanner message={error} /> : null}
+
+      <div className="flex flex-wrap gap-3">
+        <Button
+          className="min-h-11"
+          loading={pending}
+          disabled={pending}
+          onClick={() =>
+            run(() => confirmDisciplineTaskReview({ id: taskId }), {
+              success: "Signed off and marked complete.",
+              failure: "Couldn't sign this off. Try again.",
+              onSuccess: onDone,
+            })
+          }
+        >
+          Confirm and complete
+        </Button>
+        <Button
+          variant="secondary"
+          className="min-h-11"
+          disabled={pending}
+          onClick={() => setRejectOpen(true)}
+        >
+          Send back
+        </Button>
+      </div>
+
+      <Modal
+        open={rejectOpen}
+        title={`Send back "${title}"`}
+        onClose={() => setRejectOpen(false)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setRejectOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              loading={pending}
+              disabled={noteTooShort || pending}
+              onClick={() =>
+                run(() => rejectDisciplineTaskReview({ id: taskId, note: note.trim() }), {
+                  success: "Sent back to the contractor.",
+                  failure: "Couldn't send this back. Try again.",
+                  onSuccess: () => {
+                    setRejectOpen(false);
+                    setNote("");
+                    onDone();
+                  },
+                })
+              }
+            >
+              Send back
+            </Button>
+          </>
+        }
+      >
+        <Field
+          label="What needs changing?"
+          hint="The contractor sees this, so be specific. At least 5 characters."
+          error={note.length > 0 && noteTooShort ? "Write at least 5 characters." : undefined}
+        >
+          <Textarea
+            value={note}
+            placeholder="e.g. The pressure test report is missing page 2."
+            onChange={(event) => setNote(event.target.value)}
           />
         </Field>
       </Modal>

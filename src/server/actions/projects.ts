@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { ActionResult, ProjectDTO, ProjectDisciplineDTO, ProjectMemberDTO } from "@/lib/zod-schemas";
 import {
   CreateProjectInput,
+  SetExternalSignoffInput,
   UpdateProjectInput,
   UpsertMemberInput,
   UpsertProjectDisciplineInput,
@@ -53,6 +54,25 @@ export async function updateProject(input: UpdateProjectInput): Promise<ActionRe
     return { ok: true, data: project };
   } catch (error) {
     return toFailure(error, { action: "updateProject" });
+  }
+}
+
+/** The project setting: does a contractor's finished work wait for somebody here to sign it off? */
+export async function setExternalSignoffRequired(
+  input: SetExternalSignoffInput,
+): Promise<ActionResult<ProjectDTO>> {
+  const parsed = SetExternalSignoffInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: CHECK_FIELDS, fieldErrors: toFieldErrors(parsed.error) };
+
+  const guard = await beginMutation("set-external-signoff");
+  if (guard.failure) return guard.failure;
+
+  try {
+    const project = await projects.setExternalSignoffRequired(guard.actor, parsed.data);
+    revalidateProject(project.id);
+    return { ok: true, data: project };
+  } catch (error) {
+    return toFailure(error, { action: "setExternalSignoffRequired" });
   }
 }
 

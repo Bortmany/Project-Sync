@@ -29,11 +29,12 @@ import {
   BriefDTO as BriefSchema,
   ProjectBriefDTO as ProjectBriefSchema,
 } from "@/lib/zod-schemas";
-import type { ActorContext } from "@/server/actor";
+import { isExternal, type ActorContext } from "@/server/actor";
 import { NotFoundError } from "@/server/errors";
 import { checkDto } from "@/server/serialize";
 import { ACTIVITY } from "@/server/services/activity";
 import { phaseStatesFor } from "@/server/services/phases";
+import { listAnnouncementsForUser } from "@/server/services/posts";
 import { assertCanViewProject, visibleProjects } from "@/server/services/projects";
 import type { ChatMessage } from "@/server/services/webhooks";
 
@@ -215,6 +216,9 @@ export async function personBrief(actor: ActorContext, now: Date = new Date()): 
         newlyUnblocked: emptySection(),
         mentions: await mentionsSection(actor, since),
         awaitingReview: emptySection(),
+        // Somebody on no project at all still hears the company's news, so this section is filled
+        // in on this path too rather than left empty with the task ones.
+        announcements: await announcementsSection(actor, now),
       },
       "BriefDTO",
     );
@@ -308,9 +312,39 @@ export async function personBrief(actor: ActorContext, now: Date = new Date()): 
       })),
       total: reviewTotal,
     },
+    announcements: await announcementsSection(actor, now),
   };
 
   return checkDto(BriefSchema, dto, "BriefDTO");
+}
+
+/**
+ * The announcements still running for this person's audiences. Read through the noticeboard service
+ * so the audience rule is written down once: company-wide, their projects, their department(s).
+ *
+ * A brief line has no project of its own here, so `projectCode` carries the audience label — the
+ * same chip the noticeboard shows — and `deadline` carries the day it stops showing. Dismissing one
+ * on the dashboard does not hide it here: this is what is running, not what is unread. A contractor
+ * has no noticeboard at all, so the section is simply empty for them rather than an error.
+ */
+async function announcementsSection(actor: ActorContext, now: Date): Promise<BriefSectionDTO> {
+  if (isExternal(actor)) return emptySection();
+
+  const announcements = await listAnnouncementsForUser(actor, now);
+  return {
+    items: announcements.slice(0, SECTION_LIMIT).map((post) => ({
+      id: post.id,
+      title: post.title ?? post.body.slice(0, 120),
+      linkUrl: `/messages?tab=${post.audience.key}`,
+      projectCode: post.audience.label,
+      disciplineCode: null,
+      deadline: post.expiresAt,
+      daysOverdue: null,
+      note: `Posted by ${post.authorName}`,
+      at: post.createdAt,
+    })),
+    total: announcements.length,
+  };
 }
 
 /**
@@ -532,6 +566,11 @@ export async function projectBrief(
   projectId: string,
   now: Date = new Date(),
 ): Promise<ProjectBriefDTO> {
+  // "Where we stand" is the whole project's story — its blockers, its gates, everybody's progress.
+  // That is a company briefing, so for a contractor it does not exist. Their own day still works:
+  // /api/my-tasks/brief is per person and needs no narrowing.
+  if (isExternal(actor)) throw new NotFoundError("We could not find that project.");
+
   await assertCanViewProject(actor, projectId);
 
   const project = await prisma.project.findFirst({

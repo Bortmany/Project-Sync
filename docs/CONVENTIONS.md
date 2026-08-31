@@ -41,6 +41,52 @@ other model reaches its organisation through one of them. In practice:
 **Any change touching this area adds or extends a test in
 `src/server/__tests__/org-isolation.service.test.ts` in the same change.**
 
+## THE EXTERNAL RULE (the tenant rule, one level in)
+
+> An EXTERNAL contractor sees the discipline tasks assigned to them and the smallest amount of
+> parent context needed to understand them — never another person's task, never the team roster,
+> never a project they hold no work on. A miss is **not found**, never "forbidden".
+
+- `Role.EXTERNAL` is answered in `can()` **before** every other rule and never falls through to
+  them (`canExternal` in `src/lib/permissions.ts`). Their four actions —
+  `UPDATE_DISCIPLINE_TASK_STATUS`, `COMPLETE_DISCIPLINE_TASK`, `UPLOAD_DOCUMENT`, `COMMENT` — each
+  need `ctx.assigneeId === actor.userId`. `COMMENT` is therefore **tighter** than it is for a
+  colleague, who may comment anywhere on a project they belong to.
+- **A project role never widens a contractor.** `effectiveRole()` returns `EXTERNAL` whatever the
+  `ProjectMember` row says, and `upsertMember`/`createProject` refuse to write any other project
+  role for one (or that role for anybody else).
+- `VIEW_PROJECT` is only half the answer: `assertCanViewProject()` additionally requires **at least
+  one live discipline task assigned to them on that project**, checked before the permission rules
+  so the refusal is always "not found".
+- **The read side threads two helpers** — `isExternal(actor)` and `externalTaskScope(actor)` in
+  `src/server/actor.ts` (plus `activeProjectsForExternal` in `src/lib/db.ts` and
+  `projectsVisibleTo(actor)` in `projects.ts`) — through the project list and detail, main-task and
+  discipline-task loaders, both Gantt reads, documents (listing, versions and download), search,
+  the directory (empty for them), the dashboard, favorites and the comment/activity feeds. The
+  project brief and the project- and main-task-level activity feeds are refused outright; the
+  personal "your day" brief and My tasks are per-person already and work unchanged.
+- **A project-wide fan-out leaves contractors out.** `projectAudience()` (tasks.ts and phases.ts)
+  filters `role: { not: "EXTERNAL" }`: an override notification names work a contractor may not see,
+  and a notification body is the one door read scoping cannot close. Their own notifications —
+  assigned, status changed, sent back for more work — are unaffected. **An announcement's fan-out
+  carries the same filter** (`announcementRecipients()` in posts.ts), **and so do comment and
+  mention fan-outs** (`notifiableRecipients()` in comments.ts — a contractor hears about a comment
+  only on a discipline task assigned to them).
+- **They have no noticeboard.** No Messages row in the sidebar, `/messages` answers "not found", and
+  every announcement and board read or write in `posts.ts` refuses them not-found-style. Their daily
+  brief keeps working with an empty announcements section.
+- **The sign-off.** With `Project.externalSignoffRequired` on (the default), a contractor's
+  completion becomes `AWAITING_REVIEW` with a `SUBMITTED_FOR_REVIEW` audit row and a notification to
+  the discipline lead and the project's managers. `confirmDisciplineTaskReview()` runs the **real**
+  `completeDisciplineTask()` — required documents, dependencies and the stage gate are all still
+  judged — and `rejectDisciplineTaskReview()` returns it to `IN_PROGRESS` with a note of at least 5
+  characters. **A contractor can never confirm or reject a review, including their own.** With the
+  setting off, their completion behaves exactly like an engineer's, gate included.
+
+**Any change touching this area adds or extends a test in
+`src/server/__tests__/external-scoping.service.test.ts` in the same change** (and the tenant half in
+`org-isolation.service.test.ts`, which now also probes from a contractor's seat).
+
 ## THE GOLDEN RULE (the core guarantee)
 
 > A main task's status and progress are always the truth of its discipline tasks — completion can
@@ -240,6 +286,24 @@ In practice:
     connection at all. The generated migration's five trigram `DropIndex` lines were deleted by
     hand.)
 
+  - `20260831073453_external_access_and_posts` (limited external access, plus the noticeboard's
+    schema so the two builds share one migration). **Additive only** — nothing is dropped, renamed
+    or made stricter, so it is safe on a populated database. `Role` gains `EXTERNAL` and
+    `NotificationType` gains `ANNOUNCEMENT` (two `ALTER TYPE ... ADD VALUE` statements, safe inside
+    the migration's transaction because neither new value is *used* in the same migration);
+    `User.companyName` is nullable (a contractor's employer, shown as the badge beside their name —
+    the privacy page was updated in the same change); `Project.externalSignoffRequired` defaults to
+    **true**, the safe direction, so every existing project asks for a sign-off from day one; and
+    `Organization.broadcastPolicy` defaults to `"ADMIN_PM"`. Two new models: `Post` (the
+    noticeboard — `kind` is a **plain string validated by zod** (`PostKindSchema`), not a Prisma
+    enum, the same choice `OrgIntegration.kind` made; cascading from `Organization`, `Project` and
+    `Discipline`, a one-level self-relation for replies cascading from the parent post, an author
+    relation that is **Restrict** exactly as a `Comment`'s is because nobody is ever hard-deleted,
+    and indexes on `[orgId, kind, createdAt desc]`, `[orgId, disciplineId]`, `[orgId, projectId]`
+    and `parentId`) and `PostDismissal` (`@@unique([postId, userId])`, cascading from both the post
+    and the person). The generated migration's five trigram `DropIndex` lines were deleted by hand,
+    and `pg_indexes` was checked on both databases afterwards.)
+
 - **Careful with `prisma migrate dev`:** the trigram search indexes are hand-written raw SQL that the
   Prisma schema does not know about, so the generated migration will try to DROP them. Delete those
   `DropIndex` lines from the generated `migration.sql` before it goes anywhere near a real database.
@@ -274,7 +338,7 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/notifications` | GET | — | `NotificationDTO[]` (the signed-in person's own, newest first, 100 max, read and unread together) |
 | `/api/notifications/unread-count` | GET | — | `{ unread: number }` (the bell's badge — its own tiny route so the topbar can poll it every 60 seconds without pulling the list) |
 | `/api/search?q=` | GET | `q` | `SearchResultsDTO` |
-| `/api/dashboard` | GET | — | `DashboardDTO` |
+| `/api/dashboard` | GET | — | `DashboardDTO` (adds `awaitingMySignoff` — the contractor work THIS person may sign off, empty for everybody who reviews nothing and always empty for a contractor) |
 | `/api/uploads` | POST | multipart: `file`, `projectId`, `mainTaskId?` \| `disciplineTaskId?`, `documentId?`, `requiredDocumentId?`, `title?`, `category?`, `note?` (validated by `UploadMeta`) | `DocumentVersionDTO` |
 | `/api/documents/versions/[versionId]/download` | GET | — | file stream |
 | `/api/auth/signup` | POST | `SignupInput` | `SignupResultDTO` + session cookie (public; `byIp` limited to 5 an hour) |
@@ -294,6 +358,9 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/my-tasks/gantt` | GET | — | `GanttDTO` (only the signed-in person's discipline tasks, grouped under their main tasks; bounded — open work plus work whose deadline fell inside the last 90 days, 300 bars max) |
 | `/api/favorites` | GET | — | `FavoriteDTO[]` (the signed-in person's own shortcuts, newest first, 50 max; deleted targets and anything in a project they may no longer see are skipped) |
 | `/api/personal-tasks` | GET | — | `PersonalTaskDTO[]` (the signed-in person's own list, open items first, then by `sortOrder` so newly added lines lead, 200 max) |
+| `/api/posts/announcements` | GET | — | `PostDTO[]` (the announcements still running for this person's audiences — company-wide, their projects, their department(s) — newest first, 50 max, each flagged `dismissed`. Not found for a contractor) |
+| `/api/posts/audiences` | GET | — | `PostAudienceDTO[]` (the noticeboard tabs this person may read, each with `canPost` / `canModerate`. An ADMIN gets every project and discipline of their OWN company) |
+| `/api/posts/board` | GET | query: `tab` (`everyone` \| `project:<id>` \| `discipline:<id>`, default `everyone`) | `BoardPostDTO[]` (roots newest first, 50 max, each with its replies oldest first, 100 max; removed posts stay as tombstones. An audience this person does not belong to is **not found**) |
 
 Server actions live in `src/server/actions`. Each takes its `*Input` type and returns
 `ActionResult<*DTO>`:
@@ -302,6 +369,7 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 |---|---|---|
 | `createProject` | `CreateProjectInput` | `ActionResult<ProjectDTO>` |
 | `updateProject` | `UpdateProjectInput` | `ActionResult<ProjectDTO>` |
+| `setExternalSignoffRequired` (EDIT_PROJECT; audited like any other project setting) | `SetExternalSignoffInput` | `ActionResult<ProjectDTO>` |
 | `upsertMember` | `UpsertMemberInput` | `ActionResult<ProjectMemberDTO>` |
 | `removeMember` | `{ projectId, userId }` | `ActionResult<{ removed: true }>` |
 | `upsertProjectDiscipline` | `UpsertProjectDisciplineInput` | `ActionResult<ProjectDisciplineDTO>` |
@@ -320,6 +388,8 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `updateDisciplineTask` | `UpdateDisciplineTaskInput` | `ActionResult<DisciplineTaskDTO>` |
 | `updateDisciplineTaskStatus` | `UpdateTaskStatusInput` | `ActionResult<DisciplineTaskDTO>` |
 | `completeDisciplineTask` | `{ id }` | `ActionResult<DisciplineTaskDTO>` |
+| `confirmDisciplineTaskReview` (lead / PM / ADMIN, never an EXTERNAL; runs the real completion gate) | `ConfirmReviewInput` | `ActionResult<DisciplineTaskDTO>` |
+| `rejectDisciplineTaskReview` (same people; note of 5 characters minimum, notifies the contractor) | `RejectReviewInput` | `ActionResult<DisciplineTaskDTO>` |
 | `reopenDisciplineTask` | `{ id, reason }` | `ActionResult<DisciplineTaskDTO>` |
 | `addDependency` | `AddDependencyInput` | `ActionResult<DisciplineTaskDTO>` |
 | `removeDependency` | `AddDependencyInput` | `ActionResult<DisciplineTaskDTO>` |
@@ -345,6 +415,12 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `sendTestMessage` (ADMIN; rate limited hard — five a minute per person, because each press posts into a real channel) | `IntegrationKindInput` | `ActionResult<IntegrationTestResultDTO>` |
 | `deleteIntegration` (ADMIN; removes the address with the connection, audit rows stay) | `IntegrationKindInput` | `ActionResult<{ removed: true }>` |
 | `disconnectMicrosoft` (ADMIN; deletes the stored tokens, audit row stays. Connecting is a browser journey to Microsoft, so only this half can be an action) | — | `ActionResult<{ removed: true }>` |
+| `createPost` (`POST_ANNOUNCEMENT` / `POST_BOARD` by kind; exactly one audience; an announcement may carry an expiry and notifies its audience) | `CreatePostInput` | `ActionResult<PostDTO>` |
+| `replyToPost` (BOARD only, one level deep — a reply's parent is always a root post; anybody who may READ that board may reply) | `ReplyToPostInput` | `ActionResult<PostDTO>` |
+| `editPost` (author, or an ADMIN correcting one) | `EditPostInput` | `ActionResult<PostDTO>` |
+| `deletePost` (author, or whoever moderates that board; soft delete — the feed keeps a tombstone) | `DeletePostInput` | `ActionResult<{ removed: true }>` |
+| `dismissAnnouncement` (own dashboard only; **no audit row** — personal read state, like marking a notification read) | `DismissAnnouncementInput` | `ActionResult<{ dismissed: true }>` |
+| `setBroadcastPolicy` (ADMIN in their own company; audited with `BROADCAST_POLICY_CHANGED`) | `SetBroadcastPolicyInput` | `ActionResult<BroadcastSettingDTO>` |
 
 ## Notifications and the deadline sweep
 
@@ -357,6 +433,9 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
   to house rule 1.
 - **A daily brief writes nothing at all.** Both briefs are reads: no notification, no audit row, no
   stored snapshot. See "Chat delivery" below for the digest's own deviation.
+- **Dismissing an announcement writes no `ActivityLog` row either** — hiding a notice from your own
+  dashboard is personal read state, exactly like marking a notification read. Posting, replying,
+  editing, removing and changing the broadcast setting all append one, inside the same transaction.
 - **Favorites and personal to-do items write no `ActivityLog` row either**, for exactly the same
   reason: starring a project and jotting a private reminder are personal preferences, not project
   work. Same documented exception, same rule — everything else in `src/server/services` still
@@ -378,6 +457,56 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
   - `SWEEP_DISABLED=1` stops the scheduler (the tests set it). `runSweepOnce()` itself ignores the
     flag so tests can call it directly.
 
+## The noticeboard (announcements and the department board)
+
+> A post has exactly ONE audience — the whole company, one project, or one discipline — and you see
+> the audiences you belong to. An audience you do not belong to is **not found**, never "forbidden".
+
+- **The audience is the pair of nullable ids on `Post`**: neither set is company-wide, `projectId`
+  set is that project, `disciplineId` set is that department. Both set at once is refused in
+  `can()` *and* in the service — there is no combined audience, so nobody has to guess which rule
+  applies. `Post.kind` ("ANNOUNCEMENT" or "BOARD") is a plain string validated by `PostKindSchema`,
+  the same choice `OrgIntegration.kind` made.
+- **Who may START a post** is `POST_ANNOUNCEMENT` / `POST_BOARD` in `src/lib/permissions.ts`, and the
+  two answer identically in this round: an ADMIN anywhere in their own company; a PROJECT_MANAGER on
+  a project they belong to; a DISCIPLINE_LEAD in a discipline they hold a seat for (read from their
+  memberships — the only place the app records who leads what). An ENGINEER posts nowhere and an
+  EXTERNAL is refused before every other rule, as always.
+- **The company-wide audience is additionally gated by `Organization.broadcastPolicy`**
+  ("ADMIN_ONLY" / "ADMIN_PM" — the default — / "ADMIN_PM_LEAD"), and the policy is **passed into
+  `can()` on the context** (`ctx.broadcastPolicy`) rather than looked up there, so the permission
+  rules stay pure and touch no database. `broadcastPolicyOf()` reads an unrecognised stored value as
+  the default instead of breaking, the same defensiveness `dailyBrief` carries.
+- **Reading is not gated by role at all** — it is gated by audience. Everybody in the company reads
+  the company-wide board; `listAudiences()` gives each person the projects they are a member of and
+  the discipline(s) they work in (an ADMIN gets every project and discipline **of their own
+  company**, which is the tenant rule, not an exception to it).
+- **Replying is not `POST_BOARD`.** Anybody who may read a board may reply on it — that is what makes
+  it a board rather than a broadcast — and a reply is **one level deep, always**: its parent must be
+  a root BOARD post, checked in the service rather than trusted from the browser.
+- **Nothing is hard-deleted.** A removed post keeps its place as a "Post removed" tombstone so the
+  replies under it still read, exactly like a comment. Moderation follows the audience: a project
+  manager removes anything on their project's board, a lead on their department's, an administrator
+  anywhere — and **the company-wide board is moderated by administrators only**, even by a manager
+  who may post to it.
+- **An announcement notifies its audience; a board post notifies nobody.** The fan-out excludes
+  contractors (`role: { not: "EXTERNAL" }`, the same filter `projectAudience()` carries) and goes
+  through `notify()`, so it cannot leave the company. **A direct reply notifies the post's author
+  only**, borrowing `COMMENT_ADDED` — which maps to no chat toggle and therefore stays in the app,
+  where a reply belongs. Only `ANNOUNCEMENT` reaches chat, through its own `announcements` toggle,
+  **off by default**.
+- **A contractor has no noticeboard at all.** Every read and every write answers "not found", the
+  sidebar has no Messages row, `/messages` is a 404 for them, and their daily brief simply carries an
+  empty announcements section.
+- **"Running" is derived, never stored**: not removed, and either no expiry or an expiry still ahead.
+  A dismissal hides an announcement from that one person's **dashboard strip** only — the Messages
+  page still shows what is running, and nobody can see what anybody else has hidden.
+
+**Any change touching this area adds or extends a test in
+`src/server/__tests__/posts.service.test.ts` in the same change** — and the tenant and contractor
+halves in `org-isolation.service.test.ts` and `external-scoping.service.test.ts`, which both probe
+the noticeboard.
+
 ## Chat delivery (Slack and Microsoft Teams)
 
 - **Text somebody typed is never allowed to become a link in a chat channel.** A Slack mrkdwn field
@@ -393,9 +522,13 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
   inside it — capped at 20 per company per run **and** at a 30-second budget for the whole chat step
   (checked after each send, so one message always goes). Anything held back is a nudge; the
   notification rows are already committed.
-- **Only enabled + toggled events are delivered.** Each `NotificationType` maps to one of the five
-  toggles (`taskAssigned`, `mention`, `statusChange`, `overdueReminder`, `gateOverride`);
-  `DOCUMENT_UPLOADED` and `COMMENT_ADDED` map to nothing and stay in the app.
+- **Only enabled + toggled events are delivered.** Each `NotificationType` maps to one of the six
+  toggles (`taskAssigned`, `mention`, `statusChange`, `overdueReminder`, `gateOverride`,
+  `announcements`); `DOCUMENT_UPLOADED` and `COMMENT_ADDED` map to nothing and stay in the app —
+  which is also what keeps a noticeboard REPLY in the app, since a reply is a `COMMENT_ADDED`.
+  `announcements` carries a zod `.default(false)` for the same reason `dailyBrief` does: a toggle
+  map saved before announcements existed keeps parsing, and reads as "off" rather than silently
+  switching a company's whole chat delivery off.
 - **The fan-out cannot leave the company**, for the same reason `notify()` cannot: the lookup is
   `where: { orgId, enabled: true }`, and the `orgId` is the actor's (or, in the sweep, the
   recipient's, who is always a member of that task's project).
@@ -518,11 +651,14 @@ About the two seed steps:
 2. **Golden-rule violations** — a status or progress value written by hand, a completion that skips a
    mandatory document or open dependency, an override without a recorded reason, an updated or
    deleted `DocumentVersion` / `ActivityLog` row.
-3. **Missing server-side authorisation or scoping** — a route without `assertCan`, a query that is
+3. **External leaks** — a listing, loader or raw query reached by an `EXTERNAL` that is not narrowed
+   by `externalTaskScope(actor)` (or an equivalent filter), and any refusal that answers "forbidden"
+   where the external rule says "not found".
+4. **Missing server-side authorisation or scoping** — a route without `assertCan`, a query that is
    not limited to the signed-in person's projects.
-4. **Unvalidated input** — a body, query or form read without a zod parse; an upload trusted by name.
-5. **Audit-log gaps** — a mutation that does not append an `ActivityLog` row in the same transaction.
-6. **Conventions drift** — redefined DTO types, raw `findMany` in a listing, `console.log`, new hex
+5. **Unvalidated input** — a body, query or form read without a zod parse; an upload trusted by name.
+6. **Audit-log gaps** — a mutation that does not append an `ActivityLog` row in the same transaction.
+7. **Conventions drift** — redefined DTO types, raw `findMany` in a listing, `console.log`, new hex
    colours, a schema change after Milestone 1.
 
 ## Notes

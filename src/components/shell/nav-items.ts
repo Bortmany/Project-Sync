@@ -36,12 +36,16 @@ const MAIN_NAV: NavItem[] = [
       { href: "/my-tasks?due=today", label: "Due today" },
       { href: "/my-tasks?due=week", label: "This week" },
       { href: "/my-tasks?due=overdue", label: "Overdue" },
+      { href: "/my-tasks?status=AWAITING_REVIEW", label: "Awaiting review" },
       { href: "/my-tasks/brief", label: "Your day" },
       { href: "/my-tasks?view=timeline", label: "Timeline" },
       { href: "/my-tasks/personal", label: "Personal list" },
     ],
   },
   { href: "/notifications", label: "Notifications", icon: BellIcon },
+  // The company noticeboard. Named "Messages" deliberately: a project already has a "Team" tab of
+  // its own (its roster), and two different things called Team in one app is one too many.
+  { href: "/messages", label: "Messages", icon: PeopleIcon },
 ];
 
 // Administrators only — nobody else sees these three rows at all.
@@ -51,8 +55,39 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/admin/integrations", label: "Integrations", icon: IntegrationsIcon },
 ];
 
+/**
+ * A contractor's menu is trimmed to the three things they actually have: their own tasks, the
+ * projects they hold work on and their notifications. My tasks leads, because it is their home —
+ * the dashboard is a company overview and they hold no company view. The people directory, the
+ * project team, the noticeboard and the whole Admin section are not rows they are given and not
+ * pages they can read — the server answers "not found" either way.
+ */
+const EXTERNAL_ORDER = ["/my-tasks", "/projects", "/notifications"];
+
+const EXTERNAL_NAV: NavItem[] = EXTERNAL_ORDER.flatMap((href) => {
+  const item = MAIN_NAV.find((row) => row.href === href);
+  if (!item) return [];
+  if (item.href !== "/my-tasks") return [item];
+  return [
+    {
+      ...item,
+      children: (item.children ?? []).filter((child) => child.href !== "/my-tasks/personal"),
+    },
+  ];
+});
+
 export function navItemsFor(role: RoleName): NavItem[] {
+  if (role === "EXTERNAL") return EXTERNAL_NAV;
   return role === "ADMIN" ? [...MAIN_NAV, ...ADMIN_NAV] : MAIN_NAV;
+}
+
+/**
+ * Where signing in lands, and where /dashboard sends somebody who has no dashboard: the first row
+ * of that person's own menu. A contractor's home is My tasks — the same page their sidebar leads
+ * with — so the two can never disagree.
+ */
+export function homePathFor(role: RoleName): string {
+  return navItemsFor(role)[0]?.href ?? "/dashboard";
 }
 
 /**

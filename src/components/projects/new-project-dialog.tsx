@@ -71,7 +71,13 @@ export function NewProjectDialog({
         : [
             {
               key: newKey(),
-              user: { id: me.id, name: me.name, email: me.email },
+              user: {
+                id: me.id,
+                name: me.name,
+                email: me.email,
+                role: me.role,
+                disciplineId: me.disciplineId ?? null,
+              },
               projectRole: "PROJECT_MANAGER",
               disciplineId: "",
             },

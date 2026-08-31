@@ -12,6 +12,8 @@ import { actorForUser, type ActorContext } from "@/server/actor";
 const TABLES = [
   "ActivityLog",
   "Notification",
+  "PostDismissal",
+  "Post",
   "Favorite",
   "PersonalTask",
   "TaskDependency",

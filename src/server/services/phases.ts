@@ -402,10 +402,15 @@ export async function overridePhaseLock(
   return buildPhaseDTO(existing.id);
 }
 
-/** Everyone on the project except the person who did it — the same audience tasks.ts notifies. */
+/**
+ * Everyone on a project, for the rare change that concerns all of them — EXCEPT the external
+ * contractors. A project-wide announcement ("X overrode the status of «some other task»") names
+ * work a contractor may not see, so a fan-out that included them would leak through the one door
+ * the read scoping cannot close.
+ */
 async function projectAudience(projectId: string, exceptUserId: string): Promise<string[]> {
   const members = await prisma.projectMember.findMany({
-    where: { projectId },
+    where: { projectId, user: { role: { not: "EXTERNAL" } } },
     select: { userId: true },
   });
   return members.map((member) => member.userId).filter((userId) => userId !== exceptUserId);

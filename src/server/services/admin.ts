@@ -34,6 +34,7 @@ const USER_SELECT = {
   role: true,
   disciplineId: true,
   jobTitle: true,
+  companyName: true,
   isActive: true,
   lastLoginAt: true,
   createdAt: true,
@@ -47,6 +48,7 @@ type UserRow = {
   role: RoleName;
   disciplineId: string | null;
   jobTitle: string | null;
+  companyName: string | null;
   isActive: boolean;
   lastLoginAt: Date | null;
   createdAt: Date;
@@ -62,6 +64,7 @@ function toUserDTO(row: UserRow): UserDTO {
     disciplineId: row.disciplineId,
     disciplineCode: row.discipline?.code ?? null,
     jobTitle: row.jobTitle,
+    companyName: row.companyName,
     isActive: row.isActive,
     lastLoginAt: row.lastLoginAt,
     createdAt: row.createdAt,
@@ -128,6 +131,22 @@ async function assertDisciplineChoice(
 }
 
 /**
+ * A contractor must say whose contractor they are: the company badge beside their name on every
+ * task, comment and document is the whole point of the role, and it cannot be blank.
+ * Nobody else carries one, so it is cleared when somebody stops being external.
+ */
+function companyNameFor(role: RoleName, companyName: string | null | undefined): string | null {
+  if (role !== "EXTERNAL") return null;
+  const trimmed = companyName?.trim();
+  if (!trimmed) {
+    throw new ServiceError("Give the contractor's company name.", {
+      companyName: ["Give the contractor's company name."],
+    });
+  }
+  return trimmed;
+}
+
+/**
  * Creates an account inside the administrator's own company. Signup creates the FIRST person in a
  * company; this is how every colleague after them gets in. The new account's orgId is taken from
  * the actor, never from the form — there is no way to add someone to another organisation.
@@ -145,6 +164,7 @@ export async function createUser(actor: ActorContext, input: CreateUserInput): P
   }
 
   await assertDisciplineChoice(actor, input.role, input.disciplineId);
+  const companyName = companyNameFor(input.role, input.companyName);
   const passwordHash = await hashPassword(input.password);
 
   const created = await prisma.$transaction(async (tx) => {
@@ -157,6 +177,7 @@ export async function createUser(actor: ActorContext, input: CreateUserInput): P
         role: input.role,
         disciplineId: input.disciplineId ?? null,
         jobTitle: input.jobTitle ?? null,
+        companyName,
       },
       select: USER_SELECT,
     });
@@ -167,8 +188,10 @@ export async function createUser(actor: ActorContext, input: CreateUserInput): P
       entityType: "User",
       entityId: user.id,
       action: ACTIVITY.USER_CREATED,
-      summary: `${actor.name} created an account for ${user.name}`,
-      metadata: { role: user.role, disciplineId: user.disciplineId },
+      summary:
+        `${actor.name} created an account for ${user.name}` +
+        (user.companyName ? ` of ${user.companyName}` : ""),
+      metadata: { role: user.role, disciplineId: user.disciplineId, companyName: user.companyName },
     });
 
     return user;
@@ -191,6 +214,10 @@ export async function updateUser(actor: ActorContext, input: UpdateUserInput): P
   const nextDisciplineId =
     input.disciplineId === undefined ? existing.disciplineId : input.disciplineId;
   await assertDisciplineChoice(actor, nextRole, nextDisciplineId);
+  const nextCompanyName = companyNameFor(
+    nextRole,
+    input.companyName === undefined ? existing.companyName : input.companyName,
+  );
 
   // Nobody locks themselves out: neither by dropping their own administrator role...
   if (existing.id === actor.userId && nextRole !== "ADMIN") {
@@ -225,6 +252,7 @@ export async function updateUser(actor: ActorContext, input: UpdateUserInput): P
         role: input.role ?? undefined,
         disciplineId: input.disciplineId === undefined ? undefined : input.disciplineId,
         jobTitle: input.jobTitle === undefined ? undefined : input.jobTitle,
+        companyName: nextCompanyName,
         isActive: input.isActive ?? undefined,
         passwordHash,
       },
@@ -240,6 +268,7 @@ export async function updateUser(actor: ActorContext, input: UpdateUserInput): P
         ? "discipline"
         : null,
       input.jobTitle !== undefined && input.jobTitle !== existing.jobTitle ? "job title" : null,
+      nextCompanyName !== existing.companyName ? "company" : null,
       input.isActive !== undefined && input.isActive !== existing.isActive ? "sign-in access" : null,
       passwordHash ? "password" : null,
     ].filter((field): field is string => field !== null);

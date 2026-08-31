@@ -16,10 +16,12 @@ import {
   setEventToggles,
   setIntegrationEnabled,
 } from "@/components/actions";
+import { AdminBroadcastCard } from "@/components/admin/admin-broadcast-card";
 import { AdminMicrosoftCard } from "@/components/admin/admin-microsoft-card";
 import { fieldError, useAction } from "@/components/hooks/use-action";
 import { Badge, Button, Card, ErrorBanner, Field, Input, Modal, useToast } from "@/components/ui";
 import type {
+  BroadcastPolicyName,
   IntegrationEventName,
   IntegrationEventToggles,
   IntegrationKindName,
@@ -323,10 +325,13 @@ export function AdminIntegrationsView({
   integrations,
   microsoft,
   microsoftOutcome,
+  broadcastPolicy,
 }: {
   integrations: OrgIntegrationDTO[];
   microsoft: MicrosoftConnectionDTO;
   microsoftOutcome?: string;
+  /** The company's noticeboard setting — who may start a post to the whole company. */
+  broadcastPolicy: BroadcastPolicyName;
 }) {
   return (
     <div className="space-y-4">
@@ -345,6 +350,9 @@ export function AdminIntegrationsView({
         ))}
         {/* Renders nothing at all while no Azure app is registered on this Tielora. */}
         <AdminMicrosoftCard connection={microsoft} outcome={microsoftOutcome} />
+
+        {/* Not a chat tool, but the same shape of thing: one company-wide setting, saved instantly. */}
+        <AdminBroadcastCard policy={broadcastPolicy} />
       </div>
     </div>
   );
