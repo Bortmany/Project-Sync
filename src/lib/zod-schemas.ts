@@ -1466,6 +1466,23 @@ export const MicrosoftConnectionDTO = z.object({
 });
 export type MicrosoftConnectionDTO = z.infer<typeof MicrosoftConnectionDTO>;
 
+/**
+ * What `/api/integrations/microsoft/status` answers. Two shapes, told apart by `configured`:
+ *
+ * - `{ configured: false }` — this Tielora has no Azure app registered, so the feature is dormant.
+ *   It is a perfectly normal answer, not a failure, which is why the route sends it with a 200: a
+ *   404 made every browser console log an error on a page that was working exactly as intended.
+ * - `configured: true` plus the connection itself, byte for byte the shape the Admin card reads.
+ *
+ * The upload dialog hides its "Attach from OneDrive or SharePoint" tab in both the dormant case and
+ * the unconnected one, so what a person sees is unchanged either way.
+ */
+export const MicrosoftStatusDTO = z.discriminatedUnion("configured", [
+  z.object({ configured: z.literal(false) }),
+  MicrosoftConnectionDTO.extend({ configured: z.literal(true) }),
+]);
+export type MicrosoftStatusDTO = z.infer<typeof MicrosoftStatusDTO>;
+
 /** One place files live: the person's own OneDrive, or a SharePoint document library. */
 export const MicrosoftDriveDTO = z.object({
   id: graphId,

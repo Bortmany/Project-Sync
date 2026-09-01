@@ -389,10 +389,11 @@ set — see "Switching payments on" below.
 - [ ] **The real numbers.** The FREE limits (1 project, 10 people, 500 MB) and the PRO storage cap
       (10 GB) are placeholders in `src/lib/plan-limits.ts`. Setting the real ones is an edit to that
       one file — no migration, no re-wording, no test rewrite.
-- [ ] **The real price.** `$29/month` is a placeholder — `PRO_PRICE` in `src/lib/plan-limits.ts`,
-      beside the limits — and the Billing screen says so in a footnote under the plans table. It is
-      shown in two places now, Admin → Billing and the public `/pricing` page, and both read that
-      one constant. Set the price, then remove the asterisk and the footnote.
+- [x] **The real price — DONE, 1 September 2026.** Pro is **USD $249/month**: `PRO_PRICE` in
+      `src/lib/plan-limits.ts`, beside the limits. It is shown in three places — Admin → Billing,
+      the public `/pricing` page and the landing page's teaser — and all three read that one
+      constant, so the change was that one line. The Billing screen's asterisk and "placeholder
+      price" footnote have been removed with it.
 - [ ] Whether Pro ever gets an annual option (out of scope so far). The public pricing page exists:
       `/pricing`, built from `PLANS` and `PRO_PRICE`.
 
@@ -432,8 +433,9 @@ payouts should be treated in your own filings.
    dashboard, its own keys and its own product and price ids. Nothing there is a real charge.
 3. **Create the product and the price.** Dashboard → Catalog → Products → a "Tielora Pro" product,
    then a recurring monthly price on it. Copy the price id (`pri_…`) — that is
-   `PADDLE_PRICE_ID_PRO`. Set the real number first: the `$29/month` on the Billing page is a
-   placeholder (see the checklist above).
+   `PADDLE_PRICE_ID_PRO`. **Make Paddle's price match the app's**: the Billing page shows
+   `USD $249/month` (`PRO_PRICE`, see the checklist above), so the recurring monthly price you
+   create here must be the same number.
 4. **Create the API key.** Dashboard → Developer tools → Authentication → new API key. That is
    `PADDLE_API_KEY`. It is a real secret and is shown once.
 5. **Register the webhook.** Dashboard → Developer tools → Notifications → new destination, pointed

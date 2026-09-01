@@ -164,9 +164,11 @@ export function UploadDropzone({
   const isNewRevision = Boolean(target.documentId);
 
   // The second tab only exists when this company has actually connected Microsoft 365 and the
-  // connection is healthy. Dormant, unconnected or stale: the dialog is exactly what it always was.
+  // connection is healthy. Dormant (`configured: false`, which is what a Tielora with no Azure app
+  // registered answers), unconnected or stale: the dialog is exactly what it always was.
+  const status = microsoft.data;
   const canAttachFromMicrosoft = Boolean(
-    microsoft.data?.available && microsoft.data.connected && !microsoft.data.needsReconnect,
+    status?.configured && status.available && status.connected && !status.needsReconnect,
   );
 
   function choose(next: File | null | undefined) {
