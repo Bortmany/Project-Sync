@@ -5,7 +5,13 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createUser, deactivateUser, resendInvite, updateUser } from "@/components/actions";
+import {
+  adminResetTwoFactor,
+  createUser,
+  deactivateUser,
+  resendInvite,
+  updateUser,
+} from "@/components/actions";
 import { fieldError, useAction } from "@/components/hooks/use-action";
 import { formatDate, formatDateUtc, toUtcDateInputValue } from "@/components/format";
 import {
@@ -556,6 +562,92 @@ function DeactivateDialog({ user, onClose }: { user: UserDTO; onClose: () => voi
   );
 }
 
+/**
+ * Turning somebody else's two-factor off — the one door left when the phone is gone.
+ *
+ * An administrator's OWN row opens the same dialog and is told where to go instead, rather than
+ * having the link hidden: this app explains a refusal, it does not remove the control. The server
+ * refuses it too, and that refusal is the one that counts.
+ */
+function TurnOffTwoFactorDialog({
+  user,
+  isSelf,
+  onClose,
+}: {
+  user: UserDTO;
+  isSelf: boolean;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const { run, pending, error } = useAction();
+
+  if (isSelf) {
+    return (
+      <Modal
+        open
+        size="sm"
+        title="Turn off two-factor"
+        onClose={onClose}
+        footer={
+          <Button
+            onClick={() => {
+              onClose();
+              router.push("/account");
+            }}
+          >
+            Go to your account
+          </Button>
+        }
+      >
+        <p>
+          You can&apos;t turn off two-factor for your own account from here — go to Your account to
+          do that yourself.
+        </p>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal
+      open
+      size="sm"
+      title={`Turn off two-factor for ${user.name}?`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            loading={pending}
+            onClick={() =>
+              run(() => adminResetTwoFactor({ id: user.id }), {
+                success: `Two-factor turned off for ${user.name}.`,
+                failure: "Couldn't turn off two-factor for this person. Try again.",
+                onSuccess: () => {
+                  router.refresh();
+                  onClose();
+                },
+              })
+            }
+          >
+            {pending ? "Turning off…" : "Turn off two-factor"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        {error ? <ErrorBanner message={error} /> : null}
+        <p>
+          {user.name} will be signed in with just a password from now on. They can turn two-factor
+          on again for themselves at any time.
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
 function ReactivateButton({ user }: { user: UserDTO }) {
   const router = useRouter();
   const { run, pending } = useAction();
@@ -582,16 +674,20 @@ export function AdminUsersView({
   users,
   disciplines,
   inviteAvailable = false,
+  currentUserId,
 }: {
   users: UserDTO[];
   disciplines: DisciplineDTO[];
   /** Whether this deployment can send email. False means the screen looks exactly as it always has. */
   inviteAvailable?: boolean;
+  /** The signed-in administrator, so their own row explains the one thing they may not do here. */
+  currentUserId?: string;
 }) {
   const [search, setSearch] = useState("");
   const [newOpen, setNewOpen] = useState(false);
   const [editing, setEditing] = useState<UserDTO | null>(null);
   const [deactivating, setDeactivating] = useState<UserDTO | null>(null);
+  const [resettingTwoFactor, setResettingTwoFactor] = useState<UserDTO | null>(null);
   const [filters, setFilters] = useState<ActiveFilters>({ role: [], discipline: [], status: [] });
 
   const disciplineName = useMemo(
@@ -754,11 +850,17 @@ export function AdminUsersView({
                       {user.lastLoginAt ? formatDate(user.lastLoginAt) : "Never"}
                     </td>
                     <td className="px-3">
-                      {user.isActive ? (
-                        <Badge color="var(--status-completed)">Active</Badge>
-                      ) : (
-                        <Badge color="var(--brand-gray)">Deactivated</Badge>
-                      )}
+                      <span className="flex flex-col items-start gap-1">
+                        {user.isActive ? (
+                          <Badge color="var(--status-completed)">Active</Badge>
+                        ) : (
+                          <Badge color="var(--brand-gray)">Deactivated</Badge>
+                        )}
+                        {/* Nothing renders when it is off — the table stays as clean as it is. */}
+                        {user.twoFactorEnabled ? (
+                          <Badge color="var(--status-completed)">Two-factor on</Badge>
+                        ) : null}
+                      </span>
                     </td>
                     <td className="px-3">
                       <span className="flex items-center gap-3">
@@ -780,6 +882,15 @@ export function AdminUsersView({
                         ) : (
                           <ReactivateButton user={user} />
                         )}
+                        {user.twoFactorEnabled ? (
+                          <button
+                            type="button"
+                            onClick={() => setResettingTwoFactor(user)}
+                            className="text-xs font-semibold text-[var(--status-blocked)] hover:underline"
+                          >
+                            Turn off their two-factor
+                          </button>
+                        ) : null}
                       </span>
                     </td>
                   </tr>
@@ -816,6 +927,13 @@ export function AdminUsersView({
       ) : null}
       {deactivating ? (
         <DeactivateDialog user={deactivating} onClose={() => setDeactivating(null)} />
+      ) : null}
+      {resettingTwoFactor ? (
+        <TurnOffTwoFactorDialog
+          user={resettingTwoFactor}
+          isSelf={resettingTwoFactor.id === currentUserId}
+          onClose={() => setResettingTwoFactor(null)}
+        />
       ) : null}
     </div>
   );

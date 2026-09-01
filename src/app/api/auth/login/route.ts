@@ -1,4 +1,8 @@
 // Sign in: rate limited by IP and by account, validated with zod, and deliberately vague about which half was wrong.
+//
+// An account with two-factor sign-in switched on stops here with a five-minute pending token and
+// NOTHING else — no session row, no cookie, no LOGIN audit row and no lastLoginAt. The second step
+// is POST /api/auth/two-factor. An account without it behaves exactly as it always has.
 
 import { NextResponse } from "next/server";
 import {
@@ -13,6 +17,8 @@ import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { byIp, checkOnly, clearFailures, clientIp, limit, recordFailure } from "@/lib/rate-limit";
 import { LoginInput } from "@/lib/zod-schemas";
+import { EMAIL_TOKEN_TTL_MS, issueEmailToken } from "@/server/services/email-tokens";
+import { readableTotpSecret } from "@/server/services/two-factor";
 
 const GENERIC_FAILURE = "Incorrect email or password.";
 
@@ -76,6 +82,32 @@ export async function POST(request: Request) {
   }
   clearFailures(accountKey);
 
+  // THE PASSWORD IS ONLY HALF OF IT for anybody who has switched two-factor on. They get a
+  // single-use, five-minute ticket to the second screen and nothing else — no session row, no
+  // cookie, no audit row, no lastLoginAt. A ticket alone can never sign anybody in.
+  if (user.totpEnabledAt) {
+    const secret = await readableTotpSecret(user);
+    if (secret) {
+      const issued = await issueEmailToken(
+        user.id,
+        "TWOFA_PENDING",
+        EMAIL_TOKEN_TTL_MS.TWOFA_PENDING,
+      );
+      logger.info("Sign-in is waiting for a second factor", { userId: user.id });
+      return NextResponse.json({
+        ok: true,
+        data: {
+          status: "TWO_FACTOR_REQUIRED",
+          pendingToken: issued.rawToken,
+          expiresAt: issued.expiresAt,
+        },
+      });
+    }
+    // The saved secret could not be read — a rotated SESSION_SECRET looks exactly like this. It has
+    // just been switched off for them and they have been told so in the app; asking for a code no
+    // app can produce would lock them out of their own account instead. Carry on with the password.
+  }
+
   const ip = clientIp(request);
   const minted = mintSession();
 
@@ -98,7 +130,10 @@ export async function POST(request: Request) {
         entityId: user.id,
         action: "LOGIN",
         summary: `${user.name} signed in`,
-        metadata: { reportedIp: ip ?? null }, // reported by the client's proxy chain, not verified
+        // reportedIp comes from the client's proxy chain and is not verified. `twoFactor: false`
+        // says this sign-in was the password alone — the second-factor route writes the same row
+        // with true, so the trail always says which door somebody came through.
+        metadata: { reportedIp: ip ?? null, twoFactor: false },
       },
     }),
   ]);

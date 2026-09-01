@@ -8,8 +8,9 @@
 // Four things are deliberately NOT in the archive, and the README inside it says so:
 //  - `User.passwordHash` — an argon2 hash is still a credential, and an export is a file that gets
 //    emailed around and left on laptops.
-//  - `Session.tokenHash` and every `EmailToken` row — the same reason, one step stronger: these are
-//    live keys to somebody's account.
+//  - `Session.tokenHash`, every `EmailToken` row, and everything about two-factor sign-in (the
+//    sealed `User.totpSecretEnc` and every `TwoFactorRecoveryCode`) — the same reason, one step
+//    stronger: these are live keys to somebody's account.
 //  - A chat integration's `webhookUrl` and the whole Microsoft connection — a webhook address is a
 //    bearer secret and the Microsoft tokens can be exchanged for new credentials, so the export
 //    shows exactly what the admin screen shows: scheme and host, and nothing at all.
@@ -574,6 +575,8 @@ const README = (workspace: string, when: Date) =>
     "What is deliberately left out, and why",
     "  - Passwords. Only a scrambled form is ever stored, and even that is a credential.",
     "  - Sign-in sessions and one-time email links, for the same reason, one step stronger.",
+    "  - Two-factor secrets and recovery codes. They are stored encrypted or scrambled and they",
+    "    are the second half of somebody's sign-in, so they are never copied out of Tielora.",
     "  - The address of a connected Slack or Teams channel, and the Microsoft 365 connection.",
     "    A webhook address is a password for that channel and Microsoft's tokens can be swapped",
     "    for new ones, so this file shows only which service is connected and to which host.",

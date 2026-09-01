@@ -230,6 +230,19 @@ model User {
   /// they never have — which is what every account created before verification existed means, and
   /// it never restricts anybody: the app only ever nudges, it does not lock.
   emailVerifiedAt DateTime?
+  /// The TOTP secret behind two-factor sign-in, sealed with src/lib/secret-box.ts (AES-256-GCM under
+  /// a key derived from SESSION_SECRET) for the purpose "twofactor.totp-secret". NEVER plaintext,
+  /// never returned by a read, never in an audit row and never in a log line — the same rule the
+  /// Microsoft tokens follow. Null means this person has never started enrolling.
+  totpSecretEnc    String?
+  /// When two-factor sign-in was CONFIRMED with a working code. A secret with no date beside it is a
+  /// half-finished enrolment and gates nothing: the sign-in route asks for a code only when this is
+  /// set, so somebody who closed the enrolment dialog can still sign in with their password.
+  totpEnabledAt    DateTime?
+  /// The 30-second step number of the last code accepted for this account. A code is only accepted
+  /// when its step is HIGHER than this, which is what stops the same six digits being replayed
+  /// inside their own window. Null means no code has been used yet.
+  totpLastUsedStep Int?
   isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
@@ -261,6 +274,7 @@ model User {
   postDismissals        PostDismissal[]
   postAcks              PostAck[]
   emailTokens           EmailToken[]
+  recoveryCodes         TwoFactorRecoveryCode[]
   createdIntegrations   OrgIntegration[]    @relation("OrgIntegrationCreatedBy")
   microsoftConnections  MicrosoftConnection[] @relation("MicrosoftConnectionConnectedBy")
   requestedOrgDeletions Organization[]      @relation("OrganizationDeleteRequestedBy")
@@ -316,6 +330,32 @@ model EmailToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, purpose])
+}
+
+/// One of the eight single-use codes somebody is given when they switch two-factor sign-in on — the
+/// way back in when the phone with the authenticator app is lost, broken or wiped.
+///
+/// `codeHash` holds the SHA-256 hex of the code and nothing else, exactly the shape
+/// EmailToken.tokenHash and Session.tokenHash take. The codes themselves leave the server ONCE, on
+/// the screen that generated them, and are never stored, never returned by a second read, never
+/// written to an audit row and never logged: a copy of the database hands nobody a way past the
+/// second factor.
+/// `usedAt` is what makes a code single-use — spending one is a conditional update on
+/// (hash + not used), so two browsers racing the same code can only ever have one winner.
+/// Cascading from User is deliberate, the same reasoning EmailToken carries: these rows are
+/// worthless without the account they belong to and hold no audit value of their own — the
+/// ActivityLog row about two-factor being switched on is the record, and it stays.
+model TwoFactorRecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String    @unique
+  /// When this code was spent. Null means it still works.
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Discipline {

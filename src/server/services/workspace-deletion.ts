@@ -395,6 +395,7 @@ async function deleteEveryRow(
   count(await tx.favorite.deleteMany({ where: { user: { orgId } } }));
   count(await tx.personalTask.deleteMany({ where: { user: { orgId } } }));
   count(await tx.emailToken.deleteMany({ where: { user: { orgId } } }));
+  count(await tx.twoFactorRecoveryCode.deleteMany({ where: { user: { orgId } } }));
   count(await tx.session.deleteMany({ where: { user: { orgId } } }));
 
   // Project.createdById restricts a User, so projects go before people.

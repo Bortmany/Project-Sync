@@ -36,13 +36,14 @@ export default async function LoginPage({
   return (
     <AuthSplit>
       <h2 className="text-xl font-semibold text-[var(--brand-ink)]">Sign in</h2>
-      <p className="mt-1 text-sm text-[var(--brand-text)]">
-        Use your work email. Accounts are set up by your workspace administrator.
-      </p>
-      <div className="mt-6">
-        {done ? <GoodNews>{done}</GoodNews> : null}
-        <LoginForm />
-      </div>
+      {/* The subline and the form's own spacing live inside LoginForm: the line under the heading
+          changes when the form asks for a two-factor code, and one owner of that text is enough. */}
+      {done ? (
+        <div className="mt-6">
+          <GoodNews>{done}</GoodNews>
+        </div>
+      ) : null}
+      <LoginForm />
       <p className="mt-6 text-sm text-[var(--brand-text)]">
         Setting up a new company?{" "}
         <Link

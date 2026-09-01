@@ -28,6 +28,15 @@ async function main() {
   });
   if (!project) throw new Error(`The demo project ${PROJECT_CODE} is missing. Run npm run seed first.`);
 
+  // The demo workspace is on Pro on purpose: its team is bigger than the free plan's ten-person
+  // ceiling, so on FREE the first thing anybody tries — adding a user — would be refused and the
+  // demo would look broken. The free plan's limits are proved in billing-limits.service.test.ts,
+  // which is where a ceiling belongs.
+  const org = await prisma.organization.findUniqueOrThrow({
+    where: { id: project.orgId },
+    select: { plan: true },
+  });
+
   const tasks = await prisma.mainTask.findMany({ where: { projectId: project.id, deletedAt: null } });
   const byTitle = new Map(tasks.map((task) => [task.title, task]));
   const find = (title: string) => {
@@ -37,6 +46,12 @@ async function main() {
   };
 
   out(`Checking the seeded demo project ${PROJECT_CODE}:`);
+
+  check(
+    org.plan === "PRO",
+    "The demo workspace is on Pro, so its 21 people fit and nothing is refused while looking around",
+    `saw ${org.plan}`,
+  );
 
   const design = find("Complete Engineering Design Review");
   check(design.progressPct === 60, "Design review sits at 60%", `saw ${design.progressPct}%`);

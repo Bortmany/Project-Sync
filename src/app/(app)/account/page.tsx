@@ -7,8 +7,10 @@
 import { redirect } from "next/navigation";
 import { AccountView } from "@/components/account/account-view";
 import { DeleteAccountCard } from "@/components/account/delete-account-card";
+import { TwoFactorCard } from "@/components/account/two-factor-card";
 import { currentActor } from "@/server/session";
 import { accountDeletionOptions } from "@/server/services/account-deletion";
+import { twoFactorStatus } from "@/server/services/two-factor";
 
 export const metadata = { title: "Your account — Tielora" };
 export const dynamic = "force-dynamic";
@@ -21,6 +23,10 @@ export default async function AccountPage() {
   // service checks it again when the button is pressed, which is the check that actually refuses.
   const options = await accountDeletionOptions(actor);
 
+  // Read on the server, like the sole-administrator hint above it, so the card is right on the
+  // first paint rather than flickering from "off" to "on". Never the secret, never a code.
+  const twoFactor = await twoFactorStatus(actor);
+
   return (
     <div className="space-y-6">
       <div>
@@ -32,6 +38,11 @@ export default async function AccountPage() {
 
       <div className="max-w-2xl space-y-8">
         <AccountView />
+        <TwoFactorCard
+          enabled={twoFactor.enabled}
+          enabledAt={twoFactor.enabledAt}
+          recoveryCodesLeft={twoFactor.recoveryCodesLeft}
+        />
         {/* The danger zone, red-tinted and set apart by the space-y-8 gap above it. */}
         <DeleteAccountCard soleAdmin={options.soleAdmin} />
       </div>

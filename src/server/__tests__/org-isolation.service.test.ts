@@ -20,11 +20,18 @@ import { prisma } from "@/lib/db";
 import { searchEverything } from "@/lib/search";
 import { ForbiddenError } from "@/lib/permissions";
 import { seal } from "@/lib/secret-box";
+import { base32Decode, stepAt, totpCode } from "@/lib/totp";
 import { storeFile, validateUpload } from "@/lib/upload";
 import { readZip } from "@/lib/zip";
 import { actorForUser, type ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
-import { createUser, deactivateUser, listAllUsers, updateUser } from "@/server/services/admin";
+import {
+  adminResetTwoFactor,
+  createUser,
+  deactivateUser,
+  listAllUsers,
+  updateUser,
+} from "@/server/services/admin";
 import { billingStatus, processBillingWebhook } from "@/server/services/billing";
 import { createComment, listComments } from "@/server/services/comments";
 import { listUsers } from "@/server/services/directory";
@@ -37,6 +44,12 @@ import {
   uploadDocumentVersion,
 } from "@/server/services/documents";
 import { toggleFavorite } from "@/server/services/favorites";
+import {
+  beginTwoFactorEnrollment,
+  confirmTwoFactorEnrollment,
+  disableTwoFactor,
+  twoFactorStatus,
+} from "@/server/services/two-factor";
 import { deleteMyAccount, FORMER_MEMBER } from "@/server/services/account-deletion";
 import {
   cancelWorkspaceDeletion,
@@ -1297,5 +1310,69 @@ describe("a webhook only ever moves the company it names", () => {
     // Same status, so nobody outside can tell a real company id from an invented one.
     expect(inventedOutcome.httpStatus).toBe(realOutcome.httpStatus);
     expect(await planOf(rival.admin.orgId)).toBe("FREE");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Two-factor sign-in                                                  */
+/* ------------------------------------------------------------------ */
+//
+// A second factor is a credential, and an administrator administers their OWN company: the reset
+// that exists for somebody who has lost their phone must stop at the company door like every other
+// admin action, and one company's recovery codes must be worth nothing anywhere else.
+
+describe("two-factor sign-in stops at the company door", () => {
+  it("refuses another company's person as NOT FOUND, and leaves their second factor on", async () => {
+    const enrolment = await beginTwoFactorEnrollment(acme.engineer);
+    await confirmTwoFactorEnrollment(acme.engineer, {
+      code: totpCode(base32Decode(enrolment.manualKey), stepAt(Date.now())),
+    });
+
+    await expect(
+      adminResetTwoFactor(rival.admin, { id: acme.engineer.userId }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    expect((await twoFactorStatus(acme.engineer)).enabled).toBe(true);
+    // Nothing was recorded against the neighbour's person either.
+    const rows = await prisma.activityLog.findMany({
+      where: { entityId: acme.engineer.userId, action: "TWO_FACTOR_RESET_BY_ADMIN" },
+    });
+    expect(rows).toHaveLength(0);
+  });
+
+  it("keeps each company's recovery codes to itself", async () => {
+    const mine = await beginTwoFactorEnrollment(acme.engineer);
+    const { codes } = await confirmTwoFactorEnrollment(acme.engineer, {
+      code: totpCode(base32Decode(mine.manualKey), stepAt(Date.now())),
+    });
+
+    const theirs = await beginTwoFactorEnrollment(rival.engineer);
+    await confirmTwoFactorEnrollment(rival.engineer, {
+      code: totpCode(base32Decode(theirs.manualKey), stepAt(Date.now())),
+    });
+
+    // One company's code is worth nothing on the other company's account.
+    await expect(
+      disableTwoFactor(rival.engineer, { recoveryCode: codes[0] }),
+    ).rejects.toBeInstanceOf(ServiceError);
+
+    expect((await twoFactorStatus(rival.engineer)).enabled).toBe(true);
+    expect((await twoFactorStatus(acme.engineer)).recoveryCodesLeft).toBe(8);
+  });
+
+  it("never lets one company's administrator read anything about another's second factor", async () => {
+    const enrolment = await beginTwoFactorEnrollment(acme.engineer);
+    await confirmTwoFactorEnrollment(acme.engineer, {
+      code: totpCode(base32Decode(enrolment.manualKey), stepAt(Date.now())),
+    });
+
+    const theirList = await listAllUsers(rival.admin);
+    expect(theirList.some((person) => person.id === acme.engineer.userId)).toBe(false);
+
+    const ourList = await listAllUsers(acme.admin);
+    const enrolled = ourList.find((person) => person.id === acme.engineer.userId);
+    // The admin screen learns THAT it is on, and nothing else about it.
+    expect(enrolled?.twoFactorEnabled).toBe(true);
+    expect(JSON.stringify(ourList)).not.toContain(enrolment.manualKey);
   });
 });

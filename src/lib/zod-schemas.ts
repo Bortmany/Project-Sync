@@ -161,6 +161,12 @@ export const UserDTO = z.object({
    * it at read time (`isAccessExpired()` in src/lib/access-expiry.ts), never stored.
    */
   accessExpiresAt: dateOut.nullable().optional(),
+  /**
+   * Whether this person finished switching two-factor sign-in on. Admin screens only, like
+   * lastLoginAt — the pickers and mentionable lists must not carry it, and nothing about the secret
+   * or the recovery codes is ever in a DTO.
+   */
+  twoFactorEnabled: z.boolean().optional(),
   createdAt: dateOut,
 });
 export type UserDTO = z.infer<typeof UserDTO>;
@@ -1739,17 +1745,18 @@ export type BroadcastSettingDTO = z.infer<typeof BroadcastSettingDTO>;
  * same choice `IntegrationKindSchema` and `PostKindSchema` made, so a fifth kind needs no
  * migration.
  *
- * **"EXPORT" is the odd one out and is never emailed.** It is the download bearer for a finished
- * workspace export: the same hashed, expiring, per-person row an emailed link uses, handed to the
- * administrator who asked through the screen they are already looking at. `EmailedPurposeName`
- * below is what the email side takes, so the compiler refuses to let an EXPORT token reach an
- * inbox.
+ * **"EXPORT" and "TWOFA_PENDING" are the two that are never emailed.** EXPORT is the download
+ * bearer for a finished workspace export; TWOFA_PENDING is the short-lived proof that somebody's
+ * password was accepted a moment ago and they are now being asked for their six digits. Both are
+ * the same hashed, expiring, single-use, per-person row an emailed link uses, handed straight to
+ * the person on the screen they are already looking at. `EmailedPurposeName` below is what the
+ * email side takes, so the compiler refuses to let either of them reach an inbox.
  */
-export const EmailPurposeSchema = z.enum(["INVITE", "RESET", "VERIFY", "EXPORT"]);
+export const EmailPurposeSchema = z.enum(["INVITE", "RESET", "VERIFY", "EXPORT", "TWOFA_PENDING"]);
 export type EmailPurposeName = z.infer<typeof EmailPurposeSchema>;
 
-/** The purposes that really are sent by email. EXPORT is deliberately not one of them. */
-export type EmailedPurposeName = Exclude<EmailPurposeName, "EXPORT">;
+/** The purposes that really are sent by email. The other two are deliberately not among them. */
+export type EmailedPurposeName = Exclude<EmailPurposeName, "EXPORT" | "TWOFA_PENDING">;
 
 /**
  * The raw token out of a link, exactly as it was minted: 32 random bytes as lower-case hex. Parsing
@@ -1798,6 +1805,113 @@ export type PasswordChangedDTO = z.infer<typeof PasswordChangedDTO>;
 /** What the resend actions hand back: that we tried, and nothing about the link itself. */
 export const EmailSentDTO = z.object({ sent: z.literal(true) });
 export type EmailSentDTO = z.infer<typeof EmailSentDTO>;
+
+/* ------------------------------------------------------------------ */
+/* Two-factor sign-in                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The six digits an authenticator app shows. Spaces are stripped first, because people type them
+ * the way the app displays them ("123 456") and being told off for that is no security at all.
+ */
+export const TotpCodeSchema = z
+  .string()
+  .transform((value) => value.replace(/\s/g, ""))
+  .pipe(z.string().regex(/^\d{6}$/, "Enter the 6-digit code from your app."));
+
+/**
+ * One of the eight codes somebody was given to keep. Hyphens, spaces and lower case are all
+ * forgiven and the value is normalised to the exact form that was hashed when it was issued.
+ */
+export const RecoveryCodeSchema = z
+  .string()
+  .transform((value) => value.replace(/[\s-]/g, "").toUpperCase())
+  .pipe(z.string().regex(/^[A-Z0-9]{10}$/, "Enter one of your recovery codes."));
+
+/**
+ * What somebody is shown while they are setting two-factor sign-in up: the QR code to point their
+ * app at, the same key in letters for anyone who cannot scan it, and the address behind both.
+ *
+ * It is built fresh on every attempt and stored nowhere but the sealed column it came from — no
+ * audit row and no log line has ever carried any of it.
+ */
+export const TwoFactorEnrollmentDTO = z.object({
+  /** A PNG of the otpauth address, as a data: URI. Rendered on the server; no client JavaScript. */
+  qrDataUri: z.string(),
+  /** The same secret in base32, for typing in by hand. */
+  manualKey: z.string(),
+  otpauthUrl: z.string(),
+});
+export type TwoFactorEnrollmentDTO = z.infer<typeof TwoFactorEnrollmentDTO>;
+
+/**
+ * The recovery codes, in plain text. **This is the only time they are ever readable** — the
+ * database holds nothing but their SHA-256 hashes, so a lost list is replaced rather than re-read.
+ */
+export const TwoFactorCodesDTO = z.object({
+  codes: z.array(z.string()).min(1),
+});
+export type TwoFactorCodesDTO = z.infer<typeof TwoFactorCodesDTO>;
+
+/** What the account page needs to draw the card. Never the secret, never a code. */
+export const TwoFactorStatusDTO = z.object({
+  enabled: z.boolean(),
+  enabledAt: dateOut.nullable(),
+  /** How many unused recovery codes are left. The screen warns at two or fewer. */
+  recoveryCodesLeft: z.number().int().nonnegative(),
+});
+export type TwoFactorStatusDTO = z.infer<typeof TwoFactorStatusDTO>;
+
+/** Finishing enrolment: the first working code out of the app, which is the proof it is set up. */
+export const ConfirmTwoFactorInput = z.object({ code: TotpCodeSchema });
+export type ConfirmTwoFactorInput = z.infer<typeof ConfirmTwoFactorInput>;
+
+/**
+ * Proof of the second factor, for switching it off or replacing the recovery codes: a live code
+ * from the app **or** an unused recovery code, and exactly one of the two. A password alone is
+ * never enough — somebody who has walked up to an unlocked laptop has the password.
+ */
+export const TwoFactorProofInput = z
+  .object({
+    code: TotpCodeSchema.optional(),
+    recoveryCode: RecoveryCodeSchema.optional(),
+  })
+  .refine((value) => Boolean(value.code) !== Boolean(value.recoveryCode), {
+    message: "Enter a code from your app, or one of your recovery codes.",
+  });
+export type TwoFactorProofInput = z.infer<typeof TwoFactorProofInput>;
+
+/**
+ * The second half of signing in: the pending token the password step handed back, plus one of the
+ * two kinds of proof. The token is the same 32-random-byte, hashed, single-use row an emailed link
+ * uses, and it is never a session on its own.
+ */
+export const TwoFactorChallengeInput = z
+  .object({
+    pendingToken: EmailTokenSchema,
+    code: TotpCodeSchema.optional(),
+    recoveryCode: RecoveryCodeSchema.optional(),
+  })
+  .refine((value) => Boolean(value.code) !== Boolean(value.recoveryCode), {
+    message: "Enter a code from your app, or one of your recovery codes.",
+  });
+export type TwoFactorChallengeInput = z.infer<typeof TwoFactorChallengeInput>;
+
+/**
+ * What the sign-in route answers when the password was right and the account has two-factor on.
+ * **There is no session and no cookie in this answer** — only a five-minute ticket to the second
+ * step.
+ */
+export const TwoFactorChallengeDTO = z.object({
+  status: z.literal("TWO_FACTOR_REQUIRED"),
+  pendingToken: z.string(),
+  expiresAt: dateOut,
+});
+export type TwoFactorChallengeDTO = z.infer<typeof TwoFactorChallengeDTO>;
+
+/** An administrator turning somebody else's two-factor off, when the phone is gone for good. */
+export const AdminResetTwoFactorInput = z.object({ id: id });
+export type AdminResetTwoFactorInput = z.infer<typeof AdminResetTwoFactorInput>;
 
 /* ------------------------------------------------------------------ */
 /* Data rights: taking a copy of your data out                         */

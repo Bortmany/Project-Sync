@@ -31,6 +31,7 @@ const TABLES = [
   "OrgIntegration",
   "MicrosoftConnection",
   "EmailToken",
+  "TwoFactorRecoveryCode",
   "Session",
   "User",
   "Discipline",

@@ -11,6 +11,7 @@ import { prisma } from "@/lib/db";
 import { DISCIPLINE_PALETTE, isPaletteColor } from "@/lib/discipline-colors";
 import { assertCan } from "@/lib/permissions";
 import type {
+  AdminResetTwoFactorInput,
   CreateDisciplineInput,
   CreateUserInput,
   DisciplineDTO,
@@ -32,6 +33,9 @@ import {
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
 import { assertUserRoom } from "@/server/services/billing";
 import { emailAvailable } from "@/server/services/email";
+import { retireSignInTickets } from "@/server/services/email-tokens";
+import { notify } from "@/server/services/notify";
+import { clearTwoFactor } from "@/server/services/two-factor";
 
 /** The roles whose work always belongs to one discipline. */
 const DISCIPLINE_ROLES: RoleName[] = ["DISCIPLINE_LEAD", "ENGINEER"];
@@ -45,6 +49,8 @@ const USER_SELECT = {
   jobTitle: true,
   companyName: true,
   accessExpiresAt: true,
+  // Only whether two-factor is finished, never the secret, the step or anything about the codes.
+  totpEnabledAt: true,
   isActive: true,
   lastLoginAt: true,
   createdAt: true,
@@ -60,6 +66,7 @@ type UserRow = {
   jobTitle: string | null;
   companyName: string | null;
   accessExpiresAt: Date | null;
+  totpEnabledAt: Date | null;
   isActive: boolean;
   lastLoginAt: Date | null;
   createdAt: Date;
@@ -77,6 +84,7 @@ function toUserDTO(row: UserRow): UserDTO {
     jobTitle: row.jobTitle,
     companyName: row.companyName,
     accessExpiresAt: row.accessExpiresAt,
+    twoFactorEnabled: row.totpEnabledAt !== null,
     isActive: row.isActive,
     lastLoginAt: row.lastLoginAt,
     createdAt: row.createdAt,
@@ -343,6 +351,10 @@ export async function updateUser(actor: ActorContext, input: UpdateUserInput): P
   const passwordHash = input.password ? await hashPassword(input.password) : undefined;
 
   const updated = await prisma.$transaction(async (tx) => {
+    // A new password from an administrator is a credential change like any other: any sign-in
+    // ticket waiting for a two-factor code was proved by the OLD password and is retired here.
+    if (passwordHash) await retireSignInTickets(tx, existing.id);
+
     const user = await tx.user.update({
       where: { id: existing.id },
       data: {
@@ -419,6 +431,8 @@ export async function deactivateUser(actor: ActorContext, input: { id: string })
       select: USER_SELECT,
     });
     await tx.session.deleteMany({ where: { userId: existing.id } });
+    // Sign-in tickets go with the sessions: this account cannot sign in at all any more.
+    await retireSignInTickets(tx, existing.id);
 
     await appendActivity(tx, {
       actorId: actor.userId,
@@ -433,6 +447,72 @@ export async function deactivateUser(actor: ActorContext, input: { id: string })
   });
 
   return checkDto(UserSchema, toUserDTO(updated), "UserDTO");
+}
+
+/**
+ * Switches somebody else's two-factor sign-in off — the one door left when the phone with the
+ * authenticator app is gone and the recovery codes with it.
+ *
+ * Their OWN account is deliberately refused: an administrator holding a working code turns it off
+ * from their own account page like everybody else, and one who is not holding a code has exactly
+ * the problem this action exists to solve for other people — which another administrator solves for
+ * them. A company with one administrator and no code needs the deployment's owner, and that is the
+ * honest answer rather than a self-service back door past the second factor.
+ *
+ * The reset is audited and the person is told in the app. Their sessions are deliberately left
+ * alone: nothing about who they are has changed, and signing somebody out of their work because an
+ * administrator helped them would be a punishment for losing a phone.
+ */
+export async function adminResetTwoFactor(
+  actor: ActorContext,
+  input: AdminResetTwoFactorInput,
+): Promise<void> {
+  assertCan(actor, "MANAGE_USERS");
+
+  if (input.id === actor.userId) {
+    throw new ServiceError(
+      "You cannot reset your own two-factor this way — turn it off from your account page instead.",
+    );
+  }
+
+  // Another company's person is NOT FOUND rather than forbidden, like every other cross-company miss.
+  const target = await prisma.user.findFirst({
+    where: { id: input.id, orgId: actor.orgId },
+    select: { id: true, name: true, totpEnabledAt: true },
+  });
+  if (!target) throw new NotFoundError("We could not find that person.");
+  if (!target.totpEnabledAt) {
+    throw new ServiceError("Two-factor sign-in is not on for this person.");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await clearTwoFactor(tx, target.id);
+    // The second factor is gone, so a ticket still waiting for one must not be able to walk
+    // through the door it leaves open.
+    await retireSignInTickets(tx, target.id);
+
+    await appendActivity(tx, {
+      actorId: actor.userId,
+      projectId: null,
+      entityType: "User",
+      entityId: target.id,
+      action: ACTIVITY.TWO_FACTOR_RESET_BY_ADMIN,
+      summary: `${actor.name} switched two-factor sign-in off for ${target.name}`,
+    });
+  });
+
+  // After the commit, and never a chat copy: this is one person's account security, not company news.
+  await notify(
+    actor,
+    [target.id],
+    "ANNOUNCEMENT",
+    {
+      title: "Two-factor sign-in was switched off",
+      body: `${actor.name} switched two-factor sign-in off for your account. Set it up again from Your account.`,
+      linkUrl: "/account",
+    },
+    { chatCopy: false },
+  );
 }
 
 /* ------------------------------------------------------------------ */

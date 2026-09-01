@@ -45,6 +45,9 @@ const DISCIPLINES = [
 const ORG_NAME = "Meridian Energy Demo";
 const ORG_SLUG = "meridian-energy-demo";
 const ORG_TEMPLATE = "OIL_AND_GAS";
+// The demo workspace is on Pro — see seedOrganization() for why: a 21-person demo on the free
+// plan's ten-person ceiling would refuse the first thing anybody tries.
+const DEMO_PLAN = "PRO";
 
 // Demo credentials for local development only — never use these anywhere real.
 const ADMIN_EMAIL = "admin@tielora.example";
@@ -426,12 +429,22 @@ async function main() {
   await report();
 }
 
-/** The demo company itself. Everything else the seed writes belongs to it. */
+/**
+ * The demo company itself. Everything else the seed writes belongs to it.
+ *
+ * **It is on PRO deliberately.** The demo team is 21 people and the free plan has room for ten, so
+ * on FREE the very first thing anybody tries on a fresh checkout — Admin → Users, "+ New user" —
+ * is refused by the plan limit, and the demo looks broken rather than generous. The demo data
+ * exists to show what the app does; the free plan's ceilings have their own tests
+ * (`billing-limits.service.test.ts`, which sets the plan it means with `setPlan()`), and that is
+ * where a limit belongs — not in the way of somebody looking around for the first time. The plan is
+ * written on every run, not only on the first, so a workspace seeded before this reads PRO too.
+ */
 async function seedOrganization(): Promise<{ id: string }> {
   const org = await prisma.organization.upsert({
     where: { slug: ORG_SLUG },
-    update: { name: ORG_NAME },
-    create: { name: ORG_NAME, slug: ORG_SLUG, industryTemplate: ORG_TEMPLATE },
+    update: { name: ORG_NAME, plan: DEMO_PLAN },
+    create: { name: ORG_NAME, slug: ORG_SLUG, industryTemplate: ORG_TEMPLATE, plan: DEMO_PLAN },
     select: { id: true },
   });
   return org;
