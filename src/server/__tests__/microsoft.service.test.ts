@@ -1020,10 +1020,36 @@ describe("dormancy", () => {
     );
   });
 
-  it("answers a plain 'not set up' from the routes, without even looking at the session", async () => {
+  it("answers the status route 'not configured' with a 200, without even looking at the session", async () => {
+    // Dormant is a normal answer, not a failure: this route is asked on every page that can upload
+    // a file, so a 404 planted an error in every visitor's browser console. The tab stays hidden
+    // because `configured` is false, exactly as it used to stay hidden because the call failed.
     const response = await statusRoute();
-    expect(response.status).toBe(404);
-    expect(await response.json()).toEqual({ ok: false, error: MICROSOFT_NOT_CONFIGURED });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, data: { configured: false } });
+  });
+
+  it("carries the whole connection once the app IS registered, under configured: true", async () => {
+    process.env.MS_GRAPH_CLIENT_ID = CLIENT_ID;
+    process.env.MS_GRAPH_CLIENT_SECRET = CLIENT_SECRET;
+    await connectDirectly(fixture.orgId);
+    session.actor = fixture.adminActor;
+
+    const response = await statusRoute();
+    session.actor = null;
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { ok: boolean; data: Record<string, unknown> };
+    expect(body.ok).toBe(true);
+    expect(body.data).toMatchObject({
+      configured: true,
+      available: true,
+      connected: true,
+      tenantDomain: "contoso.com",
+      needsReconnect: false,
+    });
+    // Still no token, no tenant id, no secret of any kind on the way out.
+    expect(JSON.stringify(body.data)).not.toContain("SECRET");
   });
 
   it("reports dormant on the health check, and configured once the app is registered", async () => {

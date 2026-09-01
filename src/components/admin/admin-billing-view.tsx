@@ -243,11 +243,8 @@ function PlansCard({ plan }: { plan: BillingStatusDTO["plan"] }) {
           pro={limitShort("documentBytes", PLANS.PRO.documentBytes)}
         />
         {/* On Pro, the Pro column says so instead of repeating a price nobody is about to pay. */}
-        <PlansRow label="Price" free="Free" pro={plan === "PRO" ? "Your plan" : `${PRO_PRICE}*`} />
+        <PlansRow label="Price" free="Free" pro={plan === "PRO" ? "Your plan" : PRO_PRICE} />
       </div>
-      <p className="mt-3 text-xs text-[var(--brand-gray)]">
-        * Placeholder price — the owner sets the real number before this goes live.
-      </p>
     </Card>
   );
 }

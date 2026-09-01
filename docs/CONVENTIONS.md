@@ -208,7 +208,12 @@ In practice:
       optional `MS_GRAPH_REDIRECT_PATH`, and `APP_BASE_URL` for the callback address); each company's
       administrator then connects their own Microsoft tenant in Admin → Integrations. Unset env means
       **invisible**: no card, no upload tab, and every `/api/integrations/microsoft/...` route answers
-      a plain "not set up". `/api/health` reports
+      a plain "not set up" — **with one deliberate exception**. `/api/integrations/microsoft/status`
+      is asked by every upload dialog in the app, so being switched off is an ordinary answer there
+      rather than a failure: it returns **200 `{ configured: false }`**, and the dialog hides the tab
+      on that flag. It used to answer 404, which hid the tab just as well but planted a red error in
+      every visitor's browser console on a perfectly healthy page. **Invisible still means invisible**
+      — nothing about what a person sees changed. `/api/health` reports
       `"microsoft": {"status": "dormant" | "configured", "connectedOrgs": n}`.
     - **Transactional email is per deployment and nothing else**: `RESEND_API_KEY` (a real secret)
       and `EMAIL_FROM`, plus `APP_BASE_URL`, which email needs the way Microsoft needs it. Unset
@@ -497,7 +502,7 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/billing/webhook` | POST | the provider's raw JSON body, with a `Paddle-Signature` header | `{ received: true }` — **public, and nobody signs in for it**: the signature IS the authentication, checked over the raw body before anything is parsed and before any database read. 200 for anything handled, recorded or already seen (an unknown company included — never a 404); 400 for a signature that is missing, wrong or stale; 503 while the provider is not set up; 500 on anything unexpected, so the provider retries. `byIp` limited generously (600 a minute) because webhooks arrive in bursts |
 | `/api/integrations/microsoft/connect` | GET | — | 302 to Microsoft's sign-in (ADMIN; signed `state` binds the attempt to this person and company) |
 | `/api/integrations/microsoft/callback` | GET | query: `code`, `state` (or `error`) | 302 back to `/admin/integrations?microsoft=connected\|denied\|failed\|setup` |
-| `/api/integrations/microsoft/status` | GET | — | `MicrosoftConnectionDTO` (404 "not set up" while dormant, which is how the upload tab stays hidden) |
+| `/api/integrations/microsoft/status` | GET | — | `MicrosoftStatusDTO` — **200 either way**: `{ configured: false }` while dormant (no session read, no error, and the upload tab stays hidden on that flag), or the `MicrosoftConnectionDTO` shape plus `configured: true` once the Azure app is registered |
 | `/api/integrations/microsoft/drives` | GET | query: the upload target (`projectId` + one of `mainTaskId`/`disciplineTaskId`/`documentId`) | `MicrosoftDriveDTO[]` |
 | `/api/integrations/microsoft/items` | GET | query: upload target + `driveId`, `itemId?` | `MicrosoftListingDTO` |
 | `/api/integrations/microsoft/search` | GET | query: upload target + `driveId`, `q` | `MicrosoftListingDTO` |
@@ -1454,10 +1459,11 @@ second, and the second company's files are still on disk.
 - **ONE FILE HOLDS THE NUMBERS.** `src/lib/plan-limits.ts` carries `PLANS` (the three ceilings per
   plan), `planOf()`, the plain-English helpers and the refusal wording. There is no second copy in a
   component, a message, a route or a database column — changing a limit is an edit to that one file,
-  and the screens and the services both change with it. **The numbers there are the roadmap's
-  placeholders, and so is the `$29/month` price (`PRO_PRICE`, in that same file): the owner sets
-  the real numbers and the real price at the pause point before launch.** The Billing screen says so
-  under the plans table until they do, and the public `/pricing` page reads the same constant.
+  and the screens and the services both change with it. **The three ceilings are still the roadmap's
+  placeholders — the owner sets the real numbers at the pause point before launch. The price is
+  settled**: `PRO_PRICE` in that same file is **USD $249/month, owner-approved on 1 September 2026**,
+  so the Billing screen no longer carries the "placeholder price" footnote, and Admin → Billing, the
+  public `/pricing` page and the landing page's teaser all read that one constant.
 - **`null` means unlimited** — never 0 and never a very large number, so "no ceiling" can never be
   confused with "a ceiling nobody has reached yet".
 - **An unrecognised plan reads as FREE.** `planOf()` is the same defensiveness `broadcastPolicyOf()`
@@ -1677,8 +1683,8 @@ verified webhook only ever moves the company its payload names.
   practically no JavaScript. The five feature vignettes are decorative markup — no props, no data, no image
   files, brand and status tokens only, never a screenshot.
 - **`PRO_PRICE` lives in `src/lib/plan-limits.ts`** with the limits, not in a component. Admin →
-  Billing, `/pricing` and the landing page's pricing teaser all import that one constant — it is
-  still the owner's placeholder price. The teaser shows the price and nothing else (a plan name,
+  Billing, `/pricing` and the landing page's pricing teaser all import that one constant — now the
+  owner's real, approved price rather than a placeholder. The teaser shows the price and nothing else (a plan name,
   `$0` for Free, and a link onwards); **every allowance on `/pricing` is a live read of `PLANS`**
   through `limitAmount` / `formatBytes`, with no number typed out. The test changes a limit and
   asserts the page changes with it.

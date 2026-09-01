@@ -18,7 +18,7 @@ import {
   GanttDTO,
   MainTaskDTO,
   MainTaskListItemDTO,
-  MicrosoftConnectionDTO,
+  MicrosoftStatusDTO,
   MyTasksDTO,
   PersonalTaskDTO,
   PhaseDTO,
@@ -462,16 +462,19 @@ export function useDisciplineTaskComments(taskId: string): UseQueryResult<Commen
 /* ------------------------------------------------------------------ */
 
 /**
- * Is "Attach from OneDrive or SharePoint" available to this person? Answers null while the feature
- * is dormant (no Azure app registered) or the route refuses — which is what keeps the tab out of
- * sight rather than showing a broken one. Cached for five minutes: it changes about once a year.
+ * Is "Attach from OneDrive or SharePoint" available to this person? The route answers
+ * `{ configured: false }` with a 200 while the feature is dormant (no Azure app registered), so the
+ * ordinary "nobody has switched this on" case is read like any other answer instead of being caught
+ * as an error. The catch is still here for a genuine problem — offline, a 401, a 429 — and answers
+ * null, which keeps the tab out of sight rather than showing a broken one. Cached for five minutes:
+ * it changes about once a year.
  */
-export function useMicrosoftStatus(): UseQueryResult<MicrosoftConnectionDTO | null> {
+export function useMicrosoftStatus(): UseQueryResult<MicrosoftStatusDTO | null> {
   return useQuery({
     queryKey: ["microsoft-status"],
     queryFn: async () => {
       try {
-        return await readRoute("/api/integrations/microsoft/status", MicrosoftConnectionDTO);
+        return await readRoute("/api/integrations/microsoft/status", MicrosoftStatusDTO);
       } catch {
         return null;
       }

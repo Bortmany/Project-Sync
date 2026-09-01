@@ -7,7 +7,9 @@
 //
 // THREE RULES:
 //  1. **Dormant until configured** (house rule 11). With MS_GRAPH_CLIENT_ID / MS_GRAPH_CLIENT_SECRET
-//     unset there is no card, no tab, no route that answers anything but "not set up".
+//     unset there is no card and no tab, and every route refuses with "not set up" — except the
+//     status route, which every upload dialog asks and which therefore answers the plain fact,
+//     200 `{ configured: false }`, rather than an error the browser console would shout about.
 //  2. **Two hosts, ever.** graph.microsoft.com and login.microsoftonline.com. Every outbound call
 //     goes through a checker; a download redirect is checked separately against Microsoft's own
 //     content hosts before it is followed.

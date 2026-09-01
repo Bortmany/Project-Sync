@@ -5,11 +5,12 @@
 // draws its meters from the same numbers. Change a number here and the whole app changes with it —
 // there is no second copy in a component, a message or a database column.
 //
-// PLACEHOLDER NUMBERS. The three FREE limits, the PRO storage cap and the price (`PRO_PRICE`,
-// below) are the roadmap's placeholders. THE OWNER SETS THE REAL NUMBERS AND THE REAL PRICE at the
-// pause point before this goes live; changing them is an edit to THIS FILE and nothing else — no
-// migration, no re-wording, no test rewrite. The Billing screen and the public pricing page both
-// read them from here.
+// PLACEHOLDER NUMBERS — with one exception. The three FREE limits and the PRO storage cap are
+// still the roadmap's placeholders; THE OWNER SETS THE REAL NUMBERS at the pause point before this
+// goes live. **The price is settled**: `PRO_PRICE` below is the owner's approved figure (approved
+// 1 September 2026), not a placeholder any more. Changing any of these is an edit to THIS FILE and
+// nothing else — no migration, no re-wording, no test rewrite. The Billing screen and the public
+// pricing page both read them from here.
 //
 // Nothing about usage is stored. Projects, people and stored bytes are counted from the rows
 // themselves at write time and at read time, the same way OVERDUE and a locked phase are derived.
@@ -34,16 +35,16 @@ export const PLANS: Record<PlanName, PlanLimitsDTO> = {
 };
 
 /**
- * What Pro costs, written once. **Still the owner's placeholder**, exactly like the limits above:
- * the real price is set at the pause point before launch, and setting it is an edit to this line
+ * What Pro costs, written once. **Owner-approved on 1 September 2026** — this is the real price,
+ * no longer the placeholder the limits above still are. Changing it later is an edit to this line
  * and nothing else.
  *
- * It lives here rather than in a component because two screens now show it — Admin → Billing and
- * the public `/pricing` page — and this file's own law is the reason: the whole app changes with
- * the number, there is no second copy. The string carries its own period ("/month"), so a screen
- * shows it as it is and never adds one.
+ * It lives here rather than in a component because three screens show it — Admin → Billing, the
+ * public `/pricing` page and the landing page's pricing teaser — and this file's own law is the
+ * reason: the whole app changes with the number, there is no second copy. The string carries its
+ * own period ("/month"), so a screen shows it as it is and never adds one.
  */
-export const PRO_PRICE = "USD $29/month";
+export const PRO_PRICE = "USD $249/month";
 
 /** What a company gets before anybody pays for anything — the column's own default. */
 export const DEFAULT_PLAN: PlanName = "FREE";
