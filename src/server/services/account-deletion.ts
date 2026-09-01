@@ -48,6 +48,7 @@ import type { ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
 import { checkDto } from "@/server/serialize";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
+import { clearTwoFactor } from "@/server/services/two-factor";
 
 /** The name every screen shows in place of somebody who has deleted their account. */
 export const FORMER_MEMBER = "Former member";
@@ -191,9 +192,12 @@ export async function deleteMyAccount(
       },
     });
 
-    // Every way back in, closed in the same transaction as the change itself.
+    // Every way back in, closed in the same transaction as the change itself — the two-factor
+    // secret and its recovery codes among them, because a credential belongs to the person who is
+    // leaving and nothing about it is any part of the company's project record.
     await tx.session.deleteMany({ where: { userId: me.id } });
     await tx.emailToken.deleteMany({ where: { userId: me.id } });
+    await clearTwoFactor(tx, me.id);
 
     // Personal preference data — theirs alone, read by nobody else, never project work.
     await tx.favorite.deleteMany({ where: { userId: me.id } });

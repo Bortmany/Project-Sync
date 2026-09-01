@@ -45,6 +45,7 @@ import {
   consumeEmailToken,
   hashEmailToken,
   issueEmailToken,
+  retireSignInTickets,
 } from "@/server/services/email-tokens";
 
 /* ------------------------------------------------------------------ */
@@ -140,6 +141,9 @@ export async function resetPassword(input: ResetPasswordInput): Promise<Password
 
     await tx.user.update({ where: { id: user.id }, data: { passwordHash } });
     await tx.session.deleteMany({ where: { userId: user.id } });
+    // The password this ticket proved no longer exists, so any sign-in waiting on a two-factor
+    // code dies with it — the same reason every session goes.
+    await retireSignInTickets(tx, user.id);
 
     await appendActivity(tx, {
       actorId: user.id,
@@ -264,6 +268,7 @@ export async function acceptInvite(input: SetPasswordInput): Promise<PasswordCha
       data: { passwordHash, emailVerifiedAt: user.emailVerifiedAt ?? new Date() },
     });
     await tx.session.deleteMany({ where: { userId: user.id } });
+    await retireSignInTickets(tx, user.id);
 
     await appendActivity(tx, {
       actorId: user.id,

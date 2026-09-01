@@ -27,6 +27,9 @@ export default async function AdminUsersPage() {
       users={users}
       disciplines={disciplines}
       inviteAvailable={emailAvailable()}
+      // Who is looking, so the screen can explain — rather than hide — the one row an administrator
+      // may not reset two-factor on: their own.
+      currentUserId={actor.userId}
     />
   );
 }

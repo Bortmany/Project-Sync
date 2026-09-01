@@ -74,6 +74,16 @@ export default function PrivacyPage() {
             confirm it, nothing is taken away from you — it is only a reminder.
           </li>
           <li>
+            <strong>Two-factor sign-in, if you switch it on:</strong> the secret your authenticator
+            app uses is stored encrypted — never in readable form, never shown again after you have
+            scanned it, and never included in any copy of your data. We also store when you switched
+            it on and a marker of the last code you used, which is what stops the same code being
+            used twice. Your eight recovery codes are stored only as scrambled copies, so nobody —
+            including us — can read them back; if you lose them, you generate new ones and the old
+            ones stop working. Turning two-factor off, an administrator resetting it for you, or
+            deleting your account removes all of it.
+          </li>
+          <li>
             <strong>Work:</strong> projects, tasks, comments, uploaded documents and every revision of
             them, and an audit trail of who did what and when.
           </li>
@@ -227,8 +237,8 @@ export default function PrivacyPage() {
           Your workspace administrator has the equivalent for the company as a whole, in{" "}
           <strong>Admin → Data &amp; privacy</strong>: a copy of everything the workspace holds, as
           data files plus every uploaded document and revision. It never contains anybody&apos;s
-          password, any sign-in session, any one-time email link, or the address of a connected chat
-          channel. That copy is prepared on our server, can be downloaded for one day using a link
+          password, any sign-in session, any one-time email link, anybody&apos;s two-factor secret or
+          recovery codes, or the address of a connected chat channel. That copy is prepared on our server, can be downloaded for one day using a link
           only an administrator of your own company can use, and is deleted from our server two days
           after it was made.
         </p>

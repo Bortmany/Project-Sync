@@ -102,3 +102,13 @@ export {
   togglePersonalTask,
   deletePersonalTask,
 } from "@/server/actions/personal-tasks";
+
+// Two-factor sign-in. The QR code and the manual key come back once, from the first of these; the
+// recovery codes come back once, from the second or the fourth. Nothing here ever returns a secret.
+export {
+  beginTwoFactorEnrollment,
+  confirmTwoFactorEnrollment,
+  disableTwoFactor,
+  regenerateRecoveryCodes,
+  adminResetTwoFactor,
+} from "@/server/actions/two-factor";

@@ -23,15 +23,18 @@ import type { EmailedPurposeName, EmailPurposeName } from "@/lib/zod-schemas";
  * at their keyboard), a day for a verification, a week for an invitation (a new colleague may be
  * away when it lands).
  *
- * EXPORT is the one that is never emailed: it is the download bearer for a finished workspace
- * export, and a day is long enough to fetch a large file without leaving a way into a company's
- * whole record lying around all week.
+ * EXPORT and TWOFA_PENDING are the two that are never emailed. EXPORT is the download bearer for a
+ * finished workspace export, and a day is long enough to fetch a large file without leaving a way
+ * into a company's whole record lying around all week. TWOFA_PENDING is the ticket between the
+ * password step and the six-digit step of one sign-in: five minutes is long enough to find a phone
+ * and short enough that a copied ticket is worth nothing by the time anybody could use it.
  */
 export const EMAIL_TOKEN_TTL_MS: Record<EmailPurposeName, number> = {
   RESET: 60 * 60 * 1000, // 1 hour
   VERIFY: 24 * 60 * 60 * 1000, // 24 hours
   INVITE: 7 * 24 * 60 * 60 * 1000, // 7 days
   EXPORT: 24 * 60 * 60 * 1000, // 24 hours
+  TWOFA_PENDING: 5 * 60 * 1000, // 5 minutes
 };
 
 /**
@@ -110,6 +113,27 @@ export async function issueEmailToken(
   });
 
   return { rawToken, expiresAt };
+}
+
+/**
+ * Retires every sign-in ticket this person is holding: their unused `TWOFA_PENDING` rows are marked
+ * used, so none of them can finish a sign-in any more.
+ *
+ * **The rule it keeps: any change to a credential or to the second factor retires outstanding
+ * sign-in tickets.** A ticket says "this account's password was accepted a moment ago" — the moment
+ * that password is replaced, or the second factor it was waiting for is taken off, that sentence is
+ * no longer true, and a ticket left alive would be a five-minute window in which the OLD password's
+ * proof still opened the door. Called inside the caller's transaction, so the ticket dies with the
+ * change rather than after it.
+ */
+export async function retireSignInTickets(
+  tx: Prisma.TransactionClient,
+  userId: string,
+): Promise<void> {
+  await tx.emailToken.updateMany({
+    where: { userId, purpose: "TWOFA_PENDING", usedAt: null },
+    data: { usedAt: new Date() },
+  });
 }
 
 /**

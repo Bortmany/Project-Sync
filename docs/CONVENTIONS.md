@@ -430,6 +430,24 @@ In practice:
     The generated migration's five trigram `DropIndex` lines were deleted by hand, and `pg_indexes`
     was checked on both databases afterwards — five rows each.)
 
+  - `20260901054713_two_factor_authentication` (two-factor sign-in. THREE nullable columns on `User`
+    — `totpSecretEnc` (the authenticator secret, **AES-256-GCM ciphertext under a key derived from
+    `SESSION_SECRET` with HKDF**, `src/lib/secret-box.ts`, purpose `"twofactor.totp-secret"`, exactly
+    the shape the Microsoft tokens take — never plaintext, never returned, never audited, never
+    logged), `totpEnabledAt` (when it was CONFIRMED with a working code; a secret with no date beside
+    it is a half-finished enrolment and gates nothing) and `totpLastUsedStep` (the 30-second step of
+    the last code accepted — the replay guard, since the same six digits are valid for a good ninety
+    seconds). Plus one new model, `TwoFactorRecoveryCode` — `userId` (Cascade, **the same reasoning
+    `EmailToken` carries**: worthless without the account, and the `ActivityLog` row is the record),
+    a unique `codeHash` holding the SHA-256 hex and nothing else, a nullable `usedAt` that makes each
+    code single-use through a conditional update, `createdAt` and `@@index([userId])`. Additive only:
+    no existing model, field, enum value or index was changed, and null on all three columns — which
+    is what every existing account means — reads as "two-factor was never set up", so nobody's
+    sign-in changes when it is applied. **Nothing derived is stored**: "how many recovery codes are
+    left" is counted at read time, exactly as OVERDUE and a locked phase are. The generated
+    migration's five trigram `DropIndex` lines were deleted by hand, and `pg_indexes` was checked on
+    both databases afterwards — five rows each.)
+
 - **Careful with `prisma migrate dev`:** the trigram search indexes are hand-written raw SQL that the
   Prisma schema does not know about, so the generated migration will try to DROP them. Delete those
   `DropIndex` lines from the generated `migration.sql` before it goes anywhere near a real database.
@@ -468,7 +486,8 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/uploads` | POST | multipart: `file`, `projectId`, `mainTaskId?` \| `disciplineTaskId?`, `documentId?`, `requiredDocumentId?`, `title?`, `category?`, `note?` (validated by `UploadMeta`) | `DocumentVersionDTO` — refused with the plan's plain-English storage message when the company's stored bytes plus this file would go past its cap. The Microsoft attach route is refused the same way, in the same place |
 | `/api/documents/versions/[versionId]/download` | GET | — | file stream |
 | `/api/auth/signup` | POST | `SignupInput` | `SignupResultDTO` + session cookie (public; `byIp` limited to 5 an hour) |
-| `/api/auth/login` | POST | `LoginInput` | session cookie |
+| `/api/auth/login` | POST | `LoginInput` | session cookie — **unless that account has two-factor on**, in which case `TwoFactorChallengeDTO` (`status: "TWO_FACTOR_REQUIRED"`, a five-minute `pendingToken`, `expiresAt`) and **no session, no cookie, no `LOGIN` audit row and no `lastLoginAt`**. An account without it behaves byte for byte as it always has |
+| `/api/auth/two-factor` | POST | `TwoFactorChallengeInput` (the pending token plus **exactly one** of `code` / `recoveryCode`) | the same body the password sign-in returns, plus `recoveryCodesLeft` when a recovery code was spent, and the session cookie (public; `byIp` limited, plus five tries per ticket and eight per account — see "Two-factor sign-in") |
 | `/api/auth/forgot-password` | POST | `ForgotPasswordInput` | `{ sent: true }` — **the same body, status and bytes whatever the address was**: with an account, without one, deactivated, or a contractor whose access has run out. Public; `byIp` limited to 3 an hour **and** 3 an hour per address asked about. Answers the dormant sentence (503) while email is not set up, and sends nothing |
 | `/api/auth/reset-password` | POST | `ResetPasswordInput` | `PasswordChangedDTO` — **no session, no cookie** (public; `byIp` limited to 10 an hour) |
 | `/api/auth/set-password` | POST | `SetPasswordInput` | `PasswordChangedDTO` — accepting an invitation; also marks the address verified. **No session, no cookie** (public; `byIp` limited to 10 an hour) |
@@ -537,6 +556,11 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `deactivateUser` | `{ id }` | `ActionResult<UserDTO>` |
 | `resendInvite` (ADMIN in their own company; only for somebody who has never signed in — `lastLoginAt` null — and only while email is configured. Re-issuing retires the link already in their inbox; audited with a second `EMAIL_SENT` row. Three a minute per person) | `ResendInviteInput` | `ActionResult<EmailSentDTO>` |
 | `resendVerificationEmail` (the banner's action; your OWN address and nobody else's, three a minute per person. An address that is already verified answers the same `{ sent: true }` rather than an error) | — | `ActionResult<EmailSentDTO>` |
+| `beginTwoFactorEnrollment` (your own account; no input at all. Mints a fresh secret, seals it and returns the QR code, the manual key and the `otpauth://` address **once**. Switches nothing on and writes no audit row — nobody has attested to anything yet — and pressing it again simply overwrites a half-finished enrolment) | — | `ActionResult<TwoFactorEnrollmentDTO>` |
+| `confirmTwoFactorEnrollment` (the first working code is the proof the app is really set up. One transaction: the enabled date, the step that code spent, eight recovery codes and `TWO_FACTOR_ENABLED`. The codes come back **once**) | `ConfirmTwoFactorInput` | `ActionResult<TwoFactorCodesDTO>` |
+| `regenerateRecoveryCodes` (needs a live code or an unused recovery code; replaces all eight, so every old one stops working, and audits `TWO_FACTOR_CODES_REPLACED`) | `TwoFactorProofInput` | `ActionResult<TwoFactorCodesDTO>` |
+| `disableTwoFactor` (**a live code or an unused recovery code, never the password alone**; clears the three columns, deletes every code, audits `TWO_FACTOR_DISABLED`) | `TwoFactorProofInput` | `ActionResult<TwoFactorStatusDTO>` |
+| `adminResetTwoFactor` (ADMIN, `MANAGE_USERS`, in their OWN company — another company's person is not found. **Their own account is refused**, in plain English, pointing at Your account. Audited with `TWO_FACTOR_RESET_BY_ADMIN`, notifies the person in-app with no chat copy, and never touches their sessions) | `AdminResetTwoFactorInput` | `ActionResult<{ reset: true }>` |
 | `createDiscipline` | `CreateDisciplineInput` | `ActionResult<DisciplineDTO>` |
 | `updateDiscipline` | `UpdateDisciplineInput` | `ActionResult<DisciplineDTO>` |
 | `updateTaskDates` (Gantt drag) | `UpdateTaskDatesInput` | `ActionResult<MainTaskDTO \| DisciplineTaskDTO>` |
@@ -1068,6 +1092,103 @@ network: `global.fetch` is mocked.**
 `src/server/__tests__/email.service.test.ts` (the delivery half) or
 `src/server/__tests__/email-flows.service.test.ts` (the flows on top) in the same change — and the
 tests never touch the network: `global.fetch` is mocked.**
+
+## Two-factor sign-in
+
+> A second factor is a code from an app on somebody's phone, and four rules hold the whole feature
+> up. **No pending token ever mints a session on its own. A miss never says why. Turning it off needs
+> proof of the second factor, never the password alone. An administrator's reset is audited, notifies
+> the person, and is the only door once the phone is gone.**
+
+- **Two files, and one of them is pure.** `src/lib/totp.ts` is RFC 6238 written out — HMAC-SHA1, six
+  digits, a 30-second step, RFC 4648 base32 and the `otpauth://` builder — with no database, no
+  clock it cannot be handed and no dependency, proved against the RFC's own published vectors in
+  `src/lib/__tests__/totp.test.ts`. It never decides anything: it says which step a code belongs to,
+  or nothing. Everything else — replay, lockouts, audit rows, notifications — is
+  `src/server/services/two-factor.ts`.
+- **The QR code is the one new dependency, and it is server-side only.** `qrcode` renders the
+  `otpauth://` address to a `data:image/png` URI inside the service, so the browser loads no
+  library, the strict Content-Security-Policy needed no change, and the alternative — a hand-written
+  Reed-Solomon encoder — would be hundreds of lines of error-correcting maths for one picture, which
+  is exactly the trade `src/lib/zip.ts` made in the other direction.
+- **The secret is sealed and never leaves.** `User.totpSecretEnc` holds AES-256-GCM ciphertext under
+  purpose `"twofactor.totp-secret"` (`src/lib/secret-box.ts`). It is never in a DTO, an audit row, a
+  log line, a notification or either export. The QR code and the manual key leave the server once,
+  at the moment somebody is setting the app up; the eight recovery codes leave once, on the screen
+  that generated them.
+- **A recovery code is stored as an HMAC, not a plain hash** — HMAC-SHA256 under a key derived from
+  `SESSION_SECRET` for the purpose `"twofactor.recovery-code"`. This is the one place the app
+  deliberately differs from `EmailToken.tokenHash`, and the reason is the input: an emailed token is
+  32 random bytes, while a recovery code is ten readable characters somebody has to copy off a
+  printout — 50 bits, which a plain SHA-256 table hands to anybody holding a stolen database. Keying
+  it means the database alone is not enough. **The coupling that creates costs nothing new**:
+  rotating `SESSION_SECRET` already makes the sealed secret unreadable, which switches two-factor
+  off for that account and deletes its recovery codes in the same transaction, so unreadable codes
+  can never outlive the secret they belong to.
+- **A half-finished enrolment gates nothing.** A secret with no `totpEnabledAt` is somebody who
+  opened the dialog and closed it again: they sign in with their password exactly as before. That is
+  why "on" is the date rather than the secret.
+- **The same code never works twice, and the WRITE is what proves it.** A code is valid for a good
+  ninety seconds across the ±1-step window, so the step it matched is claimed with a **conditional**
+  `updateMany` on (`totpLastUsedStep` null OR lower than this step) inside the sign-in transaction,
+  and a count of zero is treated as a miss. Checking the column and then writing it unconditionally
+  would let two requests carrying the same six digits on two tickets both pass in the same
+  millisecond; only one of them can be the update that moves the step forward. A recovery code is
+  single-use through the same shape of conditional `updateMany` on (hash + unused), which is the
+  lock `consumeEmailToken` uses.
+- **The pending ticket is an `EmailToken`, not a new table.** `EmailPurposeSchema` gains
+  `"TWOFA_PENDING"` (five minutes) and it is the second purpose that is **never emailed** —
+  `EmailedPurposeName` excludes it alongside `"EXPORT"`, so the compiler refuses to let one reach an
+  inbox and `EMAIL_TOKEN_TTL_WORDS` needs no entry for it. It says one thing only: this person's
+  password was accepted less than five minutes ago.
+- **Three limiters, and none of them is the password's.** `byIp` on the route; five wrong tries
+  against ONE ticket, whose exhaustion **marks the ticket used** so the only way on is the password
+  again; and eight wrong tries per account per fifteen minutes (`twoFactorAccountKey(userId)`).
+  Both are keyed away from `login-account:<email>` on purpose — somebody guessing codes must never be
+  able to lock the real owner out of the sign-in form. The ticket's own budget is checked before a
+  single row is read, because its key is the hash of what arrived.
+- **The account budget is ONE budget, and the account page shares it.** `disableTwoFactor` and
+  `regenerateRecoveryCodes` count their wrong-proof refusals against the same
+  `twofa-account:<userId>` key the sign-in route uses, and refuse with the house "too many attempts"
+  sentence once it is spent. Without it a stolen session could grind guesses at "turn it off" all
+  day, which is the same attack as guessing at the sign-in screen through a different door. A
+  success forgives the count, exactly as a correct password does; only a wrong-proof refusal is
+  counted, so a database failure or a "two-factor is not on" refusal never spends anybody's budget.
+- **A miss is one sentence.** A wrong code, a spent recovery code, an expired ticket, a ticket that
+  was already used and one that never existed all answer the same words with the same status — the
+  same discretion an emailed link's "this link no longer works" carries.
+- **A ROTATED `SESSION_SECRET` MUST NOT LOCK ANYBODY OUT.** Rotating it makes every sealed secret
+  unreadable. When that is discovered — only ever after a password has already been accepted —
+  two-factor is switched off for that account there and then, `TWO_FACTOR_RESET_SYSTEM` is written
+  with the reason `"secret-unreadable-after-rotation"` and never the secret, the person is told in
+  their own notifications, and the password-only sign-in carries on. A missing or too-short
+  `SESSION_SECRET` is deliberately NOT treated this way — that is a deployment fault rather than a
+  rotation, and it re-throws instead of quietly disarming everybody's second factor.
+- **The administrator's reset is the only door once the phone is gone**, and it is
+  `adminResetTwoFactor` in `src/server/services/admin.ts`, beside the other people-administration
+  writes. Their OWN account is refused in plain English: an administrator holding a code turns it off
+  from their own account page, and one who is not holding a code has exactly the problem this action
+  solves for other people, which another administrator solves for them. It never revokes sessions —
+  nothing about who that person is has changed.
+- **ANY CHANGE TO A CREDENTIAL OR TO THE SECOND FACTOR RETIRES OUTSTANDING SIGN-IN TICKETS.**
+  `retireSignInTickets()` (`email-tokens.ts`) marks that person's unused `TWOFA_PENDING` rows used,
+  inside the transaction that makes the change. A ticket says "this account's password was accepted a
+  moment ago"; the moment that password is replaced or the second factor it was waiting for is taken
+  away, that sentence is false, and a live ticket would be a five-minute window in which the OLD
+  password's proof still opened the door. The callers are every place either thing moves: a password
+  reset and an accepted invitation (`account.ts`), a password set by an administrator and a
+  deactivation (`admin.ts`), and `disableTwoFactor` / `adminResetTwoFactor`. Deleting an account
+  deletes every `EmailToken` outright, which is the same rule taken further.
+- **Deleting an account takes its second factor with it** (`clearTwoFactor()` in the same
+  transaction as the anonymisation), and deleting a workspace empties the table with the sessions and
+  the email tokens. Neither export carries a recovery-code row, for the same reason neither carries a
+  `Session` or an `EmailToken`.
+
+**Any change touching this area adds or extends a test in
+`src/server/__tests__/two-factor.service.test.ts` (the service) or
+`src/server/__tests__/two-factor-signin.route.test.ts` (both halves of signing in) in the same
+change** — and the tenant half in `org-isolation.service.test.ts`, which proves one company's
+administrator can neither reset nor read anything about another company's second factor.
 
 ## Data rights, part 1: taking a copy out
 

@@ -32,6 +32,10 @@ publicly reachable with no sign-in, following what this app *actually* stores:
   readable), whether the account is active.
 - **Sessions:** a hashed session token, the IP address and browser user-agent of each sign-in, and
   when the session expires.
+- **Two-factor sign-in (only for people who switch it on):** the authenticator secret, encrypted at
+  rest and never readable again; when it was switched on; a marker of the last code used, which is
+  what stops a code being replayed; and the eight recovery codes as SHA-256 hashes only. All of it
+  goes when two-factor is switched off, reset by an administrator, or the account is deleted.
 - **Work:** projects, tasks, comments, uploaded documents and every revision of them, plus an
   append-only audit trail of who did what and when. Audit entries and document revisions are never
   edited or deleted — the pages say so plainly, because staff have a right to know their actions are
@@ -67,7 +71,7 @@ Set these in the Railway service's Variables tab — never in the repo, never in
 
 | Variable | Required | Notes |
 |---|---|---|
-| `SESSION_SECRET` | **Yes** | 32 characters minimum. Generate with `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`. **Needed at build time as well as at run time** — the build renders pages, which loads the session code, so a build with no secret fails. Changing it signs everyone out — that is the intended emergency action if it ever leaks. |
+| `SESSION_SECRET` | **Yes** | 32 characters minimum. Generate with `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`. **Needed at build time as well as at run time** — the build renders pages, which loads the session code, so a build with no secret fails. Changing it signs everyone out — that is the intended emergency action if it ever leaks. **Rotating it also silently switches off everyone's two-factor sign-in**, because the authenticator secrets are encrypted under a key derived from it: each person is told in the app the next time they sign in and re-enrols from Your account in about a minute, and nobody is ever locked out by it. The same rotation makes every company reconnect Microsoft 365. |
 | `DATABASE_URL` | **Yes** | Railway's Postgres connection string. Use the pooled one if the app is ever run on more than one instance. |
 | `DATA_DIR` | **Yes** | `/data` — must match the mounted volume (section 4). **Run time only:** it is not checked during the build, because no volume is mounted then. A running server refuses to start if it is unset or unwritable, and `/api/health` answers `503`. |
 | `SENTRY_DSN` | Optional | Server-side error tracking. Leave unset and it stays completely inert (`/api/health` reports `"sentry": {"server": "dormant", ...}`). Set it and server errors go to Sentry (`"server": "configured"`). **Set it before the build**, because the Content-Security-Policy that lets the browser reach Sentry is baked into the build. |
@@ -88,7 +92,10 @@ Set these in the Railway service's Variables tab — never in the repo, never in
 | `DATABASE_URL_TEST` | No | Local and CI only. Never set it in production — the tests empty that database. |
 
 Never paste a secret into a commit, a log or a chat. If one leaks: rotate it in Railway, redeploy,
-and (for `SESSION_SECRET`) accept that everyone is signed out.
+and (for `SESSION_SECRET`) accept three knock-on effects, all of them intended: everyone is signed
+out, every company has to reconnect Microsoft 365, and **everyone who had two-factor sign-in on has
+it switched off** — each person is notified in the app and sets it up again in a minute, which is far
+better than a workspace full of people locked out by a secret they never saw.
 
 ---
 

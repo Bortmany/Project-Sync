@@ -88,6 +88,22 @@ export const ACTIVITY = {
   INVITE_ACCEPTED: "INVITE_ACCEPTED",
   /** Somebody proved an address is theirs. A nudge finished, never a permission granted. */
   EMAIL_VERIFIED: "EMAIL_VERIFIED",
+  // Two-factor sign-in. None of these rows ever carries the secret, a six-digit code or a recovery
+  // code — only that the account's second factor moved, who moved it, and when.
+  /** Somebody finished setting an authenticator app up and proved it with a working code. */
+  TWO_FACTOR_ENABLED: "TWO_FACTOR_ENABLED",
+  /** Somebody switched it off themselves, with a live code or a recovery code. */
+  TWO_FACTOR_DISABLED: "TWO_FACTOR_DISABLED",
+  /** Somebody replaced their eight recovery codes; every earlier one stopped working. */
+  TWO_FACTOR_CODES_REPLACED: "TWO_FACTOR_CODES_REPLACED",
+  /**
+   * The app switched it off itself because the saved secret could no longer be read — what a
+   * rotated SESSION_SECRET looks like from the inside. The reason is one word in the metadata and
+   * the secret is never any part of it.
+   */
+  TWO_FACTOR_RESET_SYSTEM: "TWO_FACTOR_RESET_SYSTEM",
+  /** An administrator switched it off for somebody whose phone is gone. */
+  TWO_FACTOR_RESET_BY_ADMIN: "TWO_FACTOR_RESET_BY_ADMIN",
   // Data rights. None of these rows ever carries the download token or where the file was written.
   /** An administrator asked for a full copy of their company's data. */
   EXPORT_STARTED: "EXPORT_STARTED",
