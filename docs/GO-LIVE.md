@@ -168,8 +168,9 @@ lets a clean Nixpacks checkout build at all — the generated Prisma client live
      `public/landing-hero.webp` (the hero photograph) and `public/og.png` (1200×630, the social
      preview) are not in the repository. Without them the hero renders as the brand's ink gradient
      with the words still white and readable, and a link shared on social shows no preview
-     thumbnail: nothing is broken and no image icon is ever shown. Add either file to `public/` and
-     redeploy — there is no code change and no setting.
+     thumbnail: nothing is broken, no image icon is ever shown, and **nothing is even requested** —
+     the hero asks the file system before it draws, so a visitor's console stays clean. Add either
+     file to `public/` and redeploy — there is no code change and no setting.
    - Open `https://<domain>/signup` and create the first company. Signing up creates the
      organisation and the disciplines that come with the industry template you pick, and makes the
      person who signed up that company's administrator. (Phases arrive later, per project, from the

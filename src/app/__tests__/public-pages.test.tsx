@@ -26,6 +26,18 @@ vi.mock("@/lib/auth", () => ({
   getSessionUser: async () => session.user,
 }));
 
+/** Whether the optional hero photograph is on disk, as the page's own existsSync would find it. */
+const heroFile = { present: false };
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    existsSync: (target: Parameters<typeof actual.existsSync>[0]) =>
+      String(target).endsWith("landing-hero.webp") ? heroFile.present : actual.existsSync(target),
+  };
+});
+
 const { default: LandingPage } = await import("@/app/(public)/page");
 const { default: PricingPage } = await import("@/app/(public)/pricing/page");
 const { default: PrivacyPage } = await import("@/app/(public)/privacy/page");
@@ -50,6 +62,7 @@ async function redirectedTo(run: () => Promise<unknown>): Promise<string> {
 
 beforeEach(() => {
   session.user = null;
+  heroFile.present = false;
 });
 
 describe("the landing page, signed out", () => {
@@ -92,6 +105,25 @@ describe("the landing page, signed out", () => {
     expect(html).toContain(PRO_PRICE);
     expect(html).toContain("Compare plans");
     expect(html).toContain('href="/pricing"');
+  });
+
+  it("asks for no photograph at all while the file is not there", async () => {
+    // The hero is the ink gradient on its own. An <Image> for a file that does not exist would
+    // still be fetched, still 400 at the image optimiser and still log errors in the console.
+    const html = await landingHtml();
+
+    expect(html).not.toContain("landing-hero");
+    expect(html).not.toContain("<img");
+    // The gradient — the hero's floor — is server-rendered and always present.
+    expect(html).toContain("var(--brand-ink)");
+  });
+
+  it("lays the photograph on top the moment the file is really there", async () => {
+    heroFile.present = true;
+    const html = await landingHtml();
+
+    expect(html).toContain("landing-hero.webp");
+    expect(html).toContain("<img");
   });
 
   it("leaks nothing from inside the app", async () => {

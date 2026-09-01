@@ -1671,11 +1671,10 @@ verified webhook only ever moves the company its payload names.
   already uses Tielora never sees the pitch for it, and a contractor still lands on My tasks.
   Signed out is the only state that renders the marketing page. Pinned in
   `src/app/__tests__/public-pages.test.tsx`.
-- **Server components, and one exception each.** The only client code out here is the phone menu
-  (`public-mobile-nav.tsx`, the same mechanics `MobileNav` uses) and the hero photograph
-  (`landing-hero-image.tsx`, the same `onError` pattern `LoginHero` uses). A CTA is a `<Link>` in a
-  button's clothes (`link-button.tsx`) rather than the client `Button`, so these pages ship almost
-  no JavaScript. The five feature vignettes are decorative markup — no props, no data, no image
+- **Server components, and ONE exception in the whole public tree**: the phone menu
+  (`public-mobile-nav.tsx`, the same mechanics `MobileNav` uses). A CTA is a `<Link>` in a
+  button's clothes (`link-button.tsx`) rather than the client `Button`, so these pages ship
+  practically no JavaScript. The five feature vignettes are decorative markup — no props, no data, no image
   files, brand and status tokens only, never a screenshot.
 - **`PRO_PRICE` lives in `src/lib/plan-limits.ts`** with the limits, not in a component. Admin →
   Billing, `/pricing` and the landing page's pricing teaser all import that one constant — it is
@@ -1689,9 +1688,13 @@ verified webhook only ever moves the company its payload names.
   when it is usable and `http://localhost:3000` when it is not — it deliberately does not reuse
   `appBaseUrl()` from the chat service, which would drag Prisma into `/robots.txt`.
 - **Two image files are optional and are not in the repository**: `public/landing-hero.webp` (the
-  hero) and `public/og.png` (the social preview). The hero renders as the `AuthSplit` ink gradient
-  with the words still white and legible when the file is absent, and a missing OG image simply
-  shows no preview thumbnail. See `docs/GO-LIVE.md`, first-deploy checks.
+  hero) and `public/og.png` (the social preview). **The hero's existence is decided on the SERVER**
+  — one `existsSync` per render in `src/app/(public)/page.tsx` — and the `<Image>` is rendered only
+  when the file is really there. An `<Image>` for a missing file still asks for it, still takes a
+  400 back from the image optimiser and still logs errors in a visitor's console; asking the disk
+  costs a `stat` and asks the honest question. Without the file the hero is the `AuthSplit` ink
+  gradient, words still white and legible; a missing OG image simply shows no preview thumbnail.
+  See `docs/GO-LIVE.md`, first-deploy checks.
 
 ## Verify recipe (run in this order, all must pass)
 

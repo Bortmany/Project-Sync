@@ -7,13 +7,22 @@
 // and now gets the landing page.
 //
 // Everything below the redirect is static server-rendered copy: no data fetch, no per-user
-// content, so there is no loading, error or empty state to design for. The one client component on
-// the whole page is the hero photograph, which has to be able to remove itself if the file is not
-// there (LandingHeroImage) — the ink gradient behind it is server-rendered and always present.
+// content, so there is no loading, error or empty state to design for — and NOT ONE LINE OF CLIENT
+// JAVASCRIPT, the phone menu in the shell excepted.
+//
+// THE HERO PHOTOGRAPH IS DECIDED HERE, ON THE SERVER, by asking the file system whether it exists.
+// That is the honest question: "is there a picture?" is a fact about the disk, not something to
+// discover in a browser. Rendering an <Image> for a file that is not there makes every visitor
+// fetch it, take a 400 back from the image optimiser and log two errors in the console for a
+// picture nobody was promised. So the ink gradient is the hero, always, and the photograph is laid
+// on top only when `public/landing-hero.webp` is really there.
 //
 // EVERY PLAN NUMBER ON THIS PAGE IS READ FROM src/lib/plan-limits.ts. Nothing here is typed out.
 
+import { existsSync } from "node:fs";
+import path from "node:path";
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
@@ -27,7 +36,6 @@ import {
   DocumentHistoryVignette,
   TemplatesVignette,
 } from "@/components/public/feature-vignettes";
-import { LandingHeroImage } from "@/components/public/landing-hero-image";
 import { LinkButton } from "@/components/public/link-button";
 
 export const metadata: Metadata = {
@@ -51,6 +59,18 @@ const SUBLINE =
 /** The AuthSplit panel's gradient — the hero's floor, and its whole appearance without the photo. */
 const INK_GRADIENT = "linear-gradient(150deg, var(--brand-ink) 0%, var(--brand-mid) 100%)";
 
+/** The optional hero photograph. Not in the repository — the owner drops it in. */
+const HERO_IMAGE = "/landing-hero.webp";
+
+/**
+ * Is the picture actually on disk? Asked once per render rather than once per process: a `stat` is
+ * nothing next to a page render, and it means the photograph appears the moment the file is added
+ * without anybody having to remember to restart the server.
+ */
+function heroImageExists(): boolean {
+  return existsSync(path.join(process.cwd(), "public", HERO_IMAGE.slice(1)));
+}
+
 export default async function LandingPage() {
   const user = await getSessionUser();
   if (user) redirect(homePathFor(user.role));
@@ -64,7 +84,19 @@ export default async function LandingPage() {
         className="relative flex min-h-48 flex-col justify-end overflow-hidden md:min-h-[560px] md:justify-center"
         style={{ background: INK_GRADIENT }}
       >
-        <LandingHeroImage />
+        {/* Only when the file is really there — see the note at the top of this file. `priority`
+            is safe here for the same reason: nothing is preloaded that does not exist. */}
+        {heroImageExists() ? (
+          <Image
+            src={HERO_IMAGE}
+            alt=""
+            fill
+            priority
+            sizes="100vw"
+            // Left of centre: the picture's dark side stays under the headline as the window narrows.
+            className="pointer-events-none object-cover object-left"
+          />
+        ) : null}
         {/* The safety net: bottom-heavy on a phone, left-to-right on a wide screen, so the words
             stay readable however the picture is cropped or recompressed. */}
         <div
