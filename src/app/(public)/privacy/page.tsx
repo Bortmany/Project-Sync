@@ -5,25 +5,23 @@
 // "Your rights" describes both halves of self-service data rights: downloading a copy, and deleting
 // — your own account, or (for an administrator) the whole workspace. Every sentence there is meant
 // to be literally true of what the code does, so keep the two in step.
+//
+// It lives in the (public) route group, so the public nav and footer wrap it. The group adds
+// nothing to the address: this page is still /privacy.
 
-import Link from "next/link";
+import { LegalPage } from "@/components/public/legal-page";
 
 export const metadata = { title: "Privacy notice — Tielora" };
 
 export default function PrivacyPage() {
   return (
-    <main className="mx-auto max-w-3xl px-6 py-12 sm:px-8">
-      <p className="text-xs font-semibold uppercase tracking-[0.25em] text-[var(--brand-accent)]">
-        Tielora
-      </p>
-      <h1 className="mt-2 text-2xl font-semibold text-[var(--brand-ink)]">Privacy notice</h1>
-      <p className="mt-1 text-sm text-[var(--brand-gray)]">Last updated 31 Aug 2026</p>
-
-      <div className="mt-6 rounded-[var(--radius)] border border-[var(--brand-stone)] bg-[var(--brand-stone)]/40 p-4 text-sm text-[var(--brand-text)]">
-        This notice is a template written to describe the app honestly. It has not yet been reviewed
-        by a lawyer, and should be before the app is relied on for real projects.
-      </div>
-
+    <LegalPage
+      title="Privacy notice"
+      lastUpdated="31 Aug 2026"
+      notice="This notice is a template written to describe the app honestly. It has not yet been reviewed by a lawyer, and should be before the app is relied on for real projects."
+      otherHref="/terms"
+      otherLabel="Terms of use"
+    >
       <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
         <h2 className="text-base font-semibold text-[var(--brand-ink)]">Who this covers</h2>
         <p>
@@ -261,21 +259,6 @@ export default function PrivacyPage() {
           with your workspace administrator, who is the contact for your company&apos;s data.
         </p>
       </section>
-
-      <div className="mt-10 flex flex-wrap items-center gap-4 text-sm">
-        <Link
-          href="/terms"
-          className="font-medium text-[var(--brand-primary)] underline-offset-2 hover:underline"
-        >
-          Terms of use
-        </Link>
-        <Link
-          href="/dashboard"
-          className="font-medium text-[var(--brand-primary)] underline-offset-2 hover:underline"
-        >
-          Back to Tielora
-        </Link>
-      </div>
-    </main>
+    </LegalPage>
   );
 }

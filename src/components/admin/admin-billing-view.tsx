@@ -16,6 +16,7 @@ import { BillingButtons, BillingReturnStrip } from "@/components/admin/admin-bil
 import { Badge, Card, ProgressBar } from "@/components/ui";
 import {
   PLANS,
+  PRO_PRICE,
   formatBytes,
   isOverLimit,
   limitAmount,
@@ -24,13 +25,6 @@ import {
   type LimitKind,
 } from "@/lib/plan-limits";
 import type { BillingStatusDTO, PlanName } from "@/lib/zod-schemas";
-
-/**
- * PLACEHOLDER PRICE — the owner sets the real number before this goes live, and the footnote below
- * the table says so on the screen until they do. It sits beside the placeholder limits in
- * src/lib/plan-limits.ts, and changing it is an edit to this one line.
- */
-const PRO_PRICE = "USD $29/month";
 
 /**
  * What each plan includes, in the order the meters below run — BUILT FROM `PLANS`, never typed out.

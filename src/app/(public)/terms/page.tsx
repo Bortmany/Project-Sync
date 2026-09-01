@@ -1,23 +1,22 @@
 // Public terms-of-use page — no session required. Internal-use scope only; see docs/GO-LIVE.md gate 1.
+//
+// It lives in the (public) route group, so the public nav and footer wrap it. The group adds
+// nothing to the address: this page is still /terms.
 
 import Link from "next/link";
+import { LegalPage } from "@/components/public/legal-page";
 
 export const metadata = { title: "Terms of use — Tielora" };
 
 export default function TermsPage() {
   return (
-    <main className="mx-auto max-w-3xl px-6 py-12 sm:px-8">
-      <p className="text-xs font-semibold uppercase tracking-[0.25em] text-[var(--brand-accent)]">
-        Tielora
-      </p>
-      <h1 className="mt-2 text-2xl font-semibold text-[var(--brand-ink)]">Terms of use</h1>
-      <p className="mt-1 text-sm text-[var(--brand-gray)]">Last updated 31 Aug 2026</p>
-
-      <div className="mt-6 rounded-[var(--radius)] border border-[var(--brand-stone)] bg-[var(--brand-stone)]/40 p-4 text-sm text-[var(--brand-text)]">
-        This is a template written to describe the app honestly. It has not yet been reviewed by a
-        lawyer, and should be before the app is relied on for real projects.
-      </div>
-
+    <LegalPage
+      title="Terms of use"
+      lastUpdated="31 Aug 2026"
+      notice="This is a template written to describe the app honestly. It has not yet been reviewed by a lawyer, and should be before the app is relied on for real projects."
+      otherHref="/privacy"
+      otherLabel="Privacy notice"
+    >
       <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
         <h2 className="text-base font-semibold text-[var(--brand-ink)]">How access works</h2>
         <p>
@@ -96,21 +95,6 @@ export default function TermsPage() {
           <strong>your workspace administrator</strong>.
         </p>
       </section>
-
-      <div className="mt-10 flex flex-wrap items-center gap-4 text-sm">
-        <Link
-          href="/privacy"
-          className="font-medium text-[var(--brand-primary)] underline-offset-2 hover:underline"
-        >
-          Privacy notice
-        </Link>
-        <Link
-          href="/dashboard"
-          className="font-medium text-[var(--brand-primary)] underline-offset-2 hover:underline"
-        >
-          Back to Tielora
-        </Link>
-      </div>
-    </main>
+    </LegalPage>
   );
 }

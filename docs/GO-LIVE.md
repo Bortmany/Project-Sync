@@ -12,7 +12,7 @@ change that moved the code.
 
 | # | Gate | State today |
 |---|---|---|
-| 1 | **Privacy policy and terms pages written and linked** | ✅ `/privacy` and `/terms`, linked from the login page and every signed-in page footer — see below |
+| 1 | **Privacy policy and terms pages written and linked** | ✅ `/privacy` and `/terms`, linked from the login page, the public footer on every page a visitor can reach, and every signed-in page footer — see below |
 | 2 | Production secrets set and strong (`SESSION_SECRET` 32+, `DATABASE_URL`, `DATA_DIR`) | ✅ The app refuses to start without them |
 | 3 | Security headers and a Content-Security-Policy on every response | ✅ Verified against a running production build |
 | 4 | Error tracking decided: Sentry keyed, or knowingly left dormant | ✅ Dormant by default, one env var away |
@@ -73,7 +73,7 @@ Set these in the Railway service's Variables tab — never in the repo, never in
 | `SENTRY_DSN` | Optional | Server-side error tracking. Leave unset and it stays completely inert (`/api/health` reports `"sentry": {"server": "dormant", ...}`). Set it and server errors go to Sentry (`"server": "configured"`). **Set it before the build**, because the Content-Security-Policy that lets the browser reach Sentry is baked into the build. |
 | `NEXT_PUBLIC_SENTRY_DSN` | Optional | Only if you also want errors from people's browsers. Inlined at build time, and reported separately as `"sentry": {..., "browser": "configured"}`. |
 | `SENTRY_TRACES_SAMPLE_RATE` | Optional | `0` by default — errors only, no tracing quota spent. |
-| `APP_BASE_URL` | Optional | The address this deployment answers on, e.g. `https://tielora.up.railway.app`, with no trailing slash. Makes the link inside a Slack or Teams message clickable, and is **required** for Microsoft 365 attachments (it is what the callback address is built from) **and for email** (an invitation or reset email is nothing but a link, so with this unset no email is sent at all, whatever the two variables below say). Unset is safe for chat: messages name the page instead of linking to it. Not a secret. |
+| `APP_BASE_URL` | Optional | The address this deployment answers on, e.g. `https://tielora.up.railway.app`, with no trailing slash. Makes the link inside a Slack or Teams message clickable, and is **required** for Microsoft 365 attachments (it is what the callback address is built from) **and for email** (an invitation or reset email is nothing but a link, so with this unset no email is sent at all, whatever the two variables below say). Unset is safe for chat: messages name the page instead of linking to it. **It is also the address the public pages publish**: `/robots.txt`, `/sitemap.xml` and the social preview (`og:image`) are all built from it, and both of the first two read it fresh on every request. Unset, they answer with `http://localhost:3000`, which is harmless locally and wrong on a real domain — so set it before you hand the address to anybody, and set it **before the build** as well, since the prerendered pages resolve their preview image at build time. Not a secret. |
 | `RESEND_API_KEY` | Optional | **A real secret.** The API key from resend.com. Leave it unset and no email is ever sent: the forgot-password page tells people to ask their workspace administrator, the "email them an invite link" option is absent from Admin → Users, and `/api/health` reports `"email":"dormant"`. Nothing else in the app changes. |
 | `EMAIL_FROM` | Optional | The address emails come from, e.g. `Tielora <no-reply@yourdomain>`. Must be on a domain you have verified in Resend, or every send is refused. Not a secret, but email stays dormant until it and the key are **both** set. |
 | `MS_GRAPH_CLIENT_ID` | Optional | The Application (client) ID of the Azure app registration (section 6). Not a secret, but the feature stays completely dormant until it and the secret below are both set: no card, no tab, and every Microsoft route answers "not set up". `/api/health` reports `"microsoft": {"status": "dormant", "connectedOrgs": 0}` until then. |
@@ -152,6 +152,17 @@ lets a clean Nixpacks checkout build at all — the generated Prisma client live
    - `curl -sD - -o /dev/null https://<domain>/login` shows `Content-Security-Policy`,
      `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`,
      `Permissions-Policy` and `Strict-Transport-Security`.
+   - **Open `https://<domain>/` while signed out.** You should get the landing page — headline,
+     the five feature sections, the honesty band and the pricing teaser — with a working nav to
+     `/pricing`, `/privacy`, `/terms`, `/login` and `/signup`. Signed in, the same address still
+     takes you straight to your own home page, exactly as it always did. Check `/robots.txt` and
+     `/sitemap.xml` answer, and that the sitemap names those six addresses and nothing else.
+   - **Drop the two images in when they are ready — they are optional.**
+     `public/landing-hero.webp` (the hero photograph) and `public/og.png` (1200×630, the social
+     preview) are not in the repository. Without them the hero renders as the brand's ink gradient
+     with the words still white and readable, and a link shared on social shows no preview
+     thumbnail: nothing is broken and no image icon is ever shown. Add either file to `public/` and
+     redeploy — there is no code change and no setting.
    - Open `https://<domain>/signup` and create the first company. Signing up creates the
      organisation and the disciplines that come with the industry template you pick, and makes the
      person who signed up that company's administrator. (Phases arrive later, per project, from the
@@ -370,11 +381,12 @@ set — see "Switching payments on" below.
 - [ ] **The real numbers.** The FREE limits (1 project, 10 people, 500 MB) and the PRO storage cap
       (10 GB) are placeholders in `src/lib/plan-limits.ts`. Setting the real ones is an edit to that
       one file — no migration, no re-wording, no test rewrite.
-- [ ] **The real price.** `$29/month` is a placeholder in `admin-billing-view.tsx`, and the screen
-      says so in a footnote under the plans table. Set the price, then remove the asterisk and the
-      footnote.
-- [ ] Whether Pro ever gets an annual option (out of scope so far), and whether "Plans" ever becomes
-      a public pricing page (out of scope so far).
+- [ ] **The real price.** `$29/month` is a placeholder — `PRO_PRICE` in `src/lib/plan-limits.ts`,
+      beside the limits — and the Billing screen says so in a footnote under the plans table. It is
+      shown in two places now, Admin → Billing and the public `/pricing` page, and both read that
+      one constant. Set the price, then remove the asterisk and the footnote.
+- [ ] Whether Pro ever gets an annual option (out of scope so far). The public pricing page exists:
+      `/pricing`, built from `PLANS` and `PRO_PRICE`.
 
 **Taking the money is built, and it is switched off**
 

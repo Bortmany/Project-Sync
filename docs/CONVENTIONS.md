@@ -1334,9 +1334,9 @@ second, and the second company's files are still on disk.
   plan), `planOf()`, the plain-English helpers and the refusal wording. There is no second copy in a
   component, a message, a route or a database column — changing a limit is an edit to that one file,
   and the screens and the services both change with it. **The numbers there are the roadmap's
-  placeholders, and so is the `$29/month` on the Billing page (`PRO_PRICE` in
-  `admin-billing-view.tsx`): the owner sets the real numbers and the real price at the pause point
-  before launch.** The screen says so under the plans table until they do.
+  placeholders, and so is the `$29/month` price (`PRO_PRICE`, in that same file): the owner sets
+  the real numbers and the real price at the pause point before launch.** The Billing screen says so
+  under the plans table until they do, and the public `/pricing` page reads the same constant.
 - **`null` means unlimited** — never 0 and never a very large number, so "no ceiling" can never be
   confused with "a ceiling nobody has reached yet".
 - **An unrecognised plan reads as FREE.** `planOf()` is the same defensiveness `broadcastPolicyOf()`
@@ -1532,6 +1532,45 @@ towards another company's limits.
 stubbed and every webhook body is crafted and signed with a test secret, so no test ever reaches a
 real payment provider — and the tenant half in `org-isolation.service.test.ts`, which proves a
 verified webhook only ever moves the company its payload names.
+
+## The public pages (the front door)
+
+> Six addresses can be opened without a session — `/`, `/pricing`, `/privacy`, `/terms`, `/login`,
+> `/signup` — and that list lives in ONE place. Everything else in this app needs a session.
+
+- **One shell, `src/app/(public)/layout.tsx`**: the white top nav (the same `h-14` bar the signed-in
+  `Topbar` is, so the brand does not jump when somebody signs in) and the quiet three-group footer.
+  A route group adds nothing to a URL, so **`/privacy` and `/terms` did not move when their files
+  did** — that is asserted in `src/app/__tests__/public-routes.test.ts`. Their copy is unchanged;
+  the frame both had a copy of is now `src/components/public/legal-page.tsx`, and their "Back to
+  Tielora" link points at `/` instead of `/dashboard`, which used to send a visitor with no account
+  straight into a sign-in wall.
+- **The signed-in redirect is the landing page's first act**, inherited byte-for-byte from the old
+  `src/app/page.tsx`: `getSessionUser()` → `redirect(homePathFor(user.role))`. An engineer who
+  already uses Tielora never sees the pitch for it, and a contractor still lands on My tasks.
+  Signed out is the only state that renders the marketing page. Pinned in
+  `src/app/__tests__/public-pages.test.tsx`.
+- **Server components, and one exception each.** The only client code out here is the phone menu
+  (`public-mobile-nav.tsx`, the same mechanics `MobileNav` uses) and the hero photograph
+  (`landing-hero-image.tsx`, the same `onError` pattern `LoginHero` uses). A CTA is a `<Link>` in a
+  button's clothes (`link-button.tsx`) rather than the client `Button`, so these pages ship almost
+  no JavaScript. The five feature vignettes are decorative markup — no props, no data, no image
+  files, brand and status tokens only, never a screenshot.
+- **`PRO_PRICE` lives in `src/lib/plan-limits.ts`** with the limits, not in a component. Admin →
+  Billing, `/pricing` and the landing page's pricing teaser all import that one constant — it is
+  still the owner's placeholder price. The teaser shows the price and nothing else (a plan name,
+  `$0` for Free, and a link onwards); **every allowance on `/pricing` is a live read of `PLANS`**
+  through `limitAmount` / `formatBytes`, with no number typed out. The test changes a limit and
+  asserts the page changes with it.
+- **`PUBLIC_ROUTES` and the site's own address are `src/lib/site.ts`**, read by `src/app/robots.ts`,
+  `src/app/sitemap.ts` and the root layout's `metadataBase`. The sitemap lists those six and nothing
+  else; adding a page to it is a deliberate edit, not a side effect. `siteUrl()` is `APP_BASE_URL`
+  when it is usable and `http://localhost:3000` when it is not — it deliberately does not reuse
+  `appBaseUrl()` from the chat service, which would drag Prisma into `/robots.txt`.
+- **Two image files are optional and are not in the repository**: `public/landing-hero.webp` (the
+  hero) and `public/og.png` (the social preview). The hero renders as the `AuthSplit` ink gradient
+  with the words still white and legible when the file is absent, and a missing OG image simply
+  shows no preview thumbnail. See `docs/GO-LIVE.md`, first-deploy checks.
 
 ## Verify recipe (run in this order, all must pass)
 
