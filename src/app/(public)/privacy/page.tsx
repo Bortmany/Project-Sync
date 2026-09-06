@@ -10,10 +10,13 @@
 // nothing to the address: this page is still /privacy.
 
 import { LegalPage } from "@/components/public/legal-page";
+import { privacyContactEmail } from "@/lib/legal-contact";
 
 export const metadata = { title: "Privacy notice — Tielora" };
 
 export default function PrivacyPage() {
+  // Read on the server at render time (PRIVACY_CONTACT_EMAIL, or the owner's address by default).
+  const contactEmail = privacyContactEmail();
   return (
     <LegalPage
       title="Privacy notice"
@@ -267,6 +270,17 @@ export default function PrivacyPage() {
           This handling is intended to respect Oman&apos;s Personal Data Protection Law (Royal Decree
           6/2022). If you have a question or concern about how your information is handled, raise it
           with your workspace administrator, who is the contact for your company&apos;s data.
+        </p>
+        <p>
+          Contact the operator:{" "}
+          <a
+            href={`mailto:${contactEmail}`}
+            className="text-[var(--brand-primary)] underline-offset-2 hover:underline"
+          >
+            {contactEmail}
+          </a>
+          . This is the person who runs the Tielora service itself, for anything your workspace
+          administrator cannot answer.
         </p>
       </section>
     </LegalPage>

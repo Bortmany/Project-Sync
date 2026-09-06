@@ -5,10 +5,13 @@
 
 import Link from "next/link";
 import { LegalPage } from "@/components/public/legal-page";
+import { privacyContactEmail } from "@/lib/legal-contact";
 
 export const metadata = { title: "Terms of use — Tielora" };
 
 export default function TermsPage() {
+  // Read on the server at render time (PRIVACY_CONTACT_EMAIL, or the owner's address by default).
+  const contactEmail = privacyContactEmail();
   return (
     <LegalPage
       title="Terms of use"
@@ -93,6 +96,17 @@ export default function TermsPage() {
         <p>
           Questions about these terms, or about your account, go to{" "}
           <strong>your workspace administrator</strong>.
+        </p>
+        <p>
+          Contact the operator:{" "}
+          <a
+            href={`mailto:${contactEmail}`}
+            className="text-[var(--brand-primary)] underline-offset-2 hover:underline"
+          >
+            {contactEmail}
+          </a>
+          . This is the person who runs the Tielora service itself, for anything about these terms
+          that your workspace administrator cannot answer.
         </p>
       </section>
     </LegalPage>
