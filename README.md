@@ -90,6 +90,10 @@ sign-up is closed with neither set, invite-only with codes, and open to everybod
 the mode as `"signups"` and never a code. Joining an existing company is an administrator's
 invitation and is unaffected.
 
+`PRIVACY_CONTACT_EMAIL` (optional) is the operator's address printed on `/privacy` and `/terms` as
+"Contact the operator", alongside the "your workspace administrator" wording. Unset, it defaults to
+the owner's own address, `naeljam@hotmail.com`. Not a secret.
+
 In production the app **refuses to start** if `SESSION_SECRET` is missing or shorter than 32
 characters, or if `DATA_DIR` is unset or cannot be written to. The reason is printed in the logs.
 `SESSION_SECRET` is needed for the build as well (building renders pages); `DATA_DIR` is checked

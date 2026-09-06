@@ -213,6 +213,14 @@ describe("the legal pages", () => {
     expect(terms).toContain("How access works");
   });
 
+  it("name the operator beside the workspace administrator, as a mailto link", () => {
+    for (const html of [renderToStaticMarkup(PrivacyPage()), renderToStaticMarkup(TermsPage())]) {
+      expect(html).toContain("Contact the operator:");
+      expect(html).toContain('href="mailto:naeljam@hotmail.com"');
+      expect(html).toContain("your workspace administrator");
+    }
+  });
+
   it("point home at the landing page now, never at a sign-in wall", () => {
     for (const html of [renderToStaticMarkup(PrivacyPage()), renderToStaticMarkup(TermsPage())]) {
       expect(html).toContain("Back to Tielora");
