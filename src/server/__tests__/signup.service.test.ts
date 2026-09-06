@@ -282,6 +282,80 @@ describe("signing a company up", () => {
     lookup.mockRestore();
   });
 
+  // The door. In the test run the mode is "open" (NODE_ENV=test, no codes), which is what every
+  // other test in this file relies on; these set the codes for one test at a time and put the
+  // environment back afterwards. The mode is read per request, so no module reload is needed.
+  describe("invitation-only sign-up", () => {
+    const CODE = "northern-launch-2026";
+    const saved = { codes: process.env.SIGNUP_INVITE_CODES, open: process.env.SIGNUPS_OPEN };
+
+    beforeEach(() => {
+      process.env.SIGNUP_INVITE_CODES = `${CODE}, second-code-2026`;
+      delete process.env.SIGNUPS_OPEN;
+    });
+
+    afterEach(() => {
+      if (saved.codes === undefined) delete process.env.SIGNUP_INVITE_CODES;
+      else process.env.SIGNUP_INVITE_CODES = saved.codes;
+      if (saved.open === undefined) delete process.env.SIGNUPS_OPEN;
+      else process.env.SIGNUPS_OPEN = saved.open;
+    });
+
+    it("lets a valid code through and never keeps it", async () => {
+      const { status, body } = await post(form({ inviteCode: CODE }));
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(await prisma.organization.count()).toBe(1);
+      // Nothing about the code is written anywhere: not the company, not the audit trail.
+      const audit = await prisma.activityLog.findMany();
+      expect(JSON.stringify(audit)).not.toContain(CODE);
+    });
+
+    it("refuses a missing or wrong code with the one sentence, pointing at the field, and builds nothing", async () => {
+      const missing = await post(form());
+      expect(missing.status).toBe(403);
+      expect(missing.body.ok).toBe(false);
+      expect(missing.body.error).toBe("Sign-up is by invitation. Enter a valid invite code.");
+      expect(missing.body.fieldErrors.inviteCode[0]).toBe(missing.body.error);
+
+      const wrong = await post(form({ inviteCode: "northern-launch-2025" }));
+      expect(wrong.status).toBe(403);
+      expect(wrong.body.error).toBe(missing.body.error);
+      // The refusal names no code and no count.
+      expect(JSON.stringify(wrong.body)).not.toContain("northern-launch-2026");
+
+      expect(await prisma.organization.count()).toBe(0);
+      expect(await prisma.session.count()).toBe(0);
+      expect(jar.size).toBe(0);
+    });
+
+    it("stops one address guessing codes: ten wrong tries in fifteen minutes, then 429", async () => {
+      const ip = "198.51.100.90";
+      // The hourly sign-up limiter would refuse first (five an hour), so the guessing limiter is
+      // the one being proved here: its own key, its own count, failures only.
+      const { checkOnly, recordFailure } = await import("@/lib/rate-limit");
+      const key = `ip:signup-invite:${ip}`;
+      for (let attempt = 0; attempt < 10; attempt += 1) recordFailure(key, 15 * 60_000);
+      expect(checkOnly(key, 10).ok).toBe(false);
+
+      const blocked = await post(form({ inviteCode: CODE }), ip);
+      expect(blocked.status).toBe(429);
+      expect(blocked.body.error).toContain("invite code attempts");
+      expect(await prisma.organization.count()).toBe(0);
+
+      // A wrong try through the route counts against the same key.
+      const other = "198.51.100.91";
+      await post(form({ inviteCode: "not-it-at-all" }), other);
+      expect(checkOnly(`ip:signup-invite:${other}`, 1).ok).toBe(false);
+    });
+
+    it("opens to everybody when SIGNUPS_OPEN is \"true\", codes or no codes", async () => {
+      process.env.SIGNUPS_OPEN = "true";
+      const { status } = await post(form());
+      expect(status).toBe(200);
+    });
+  });
+
   it("stops one address signing companies up all day", async () => {
     const ip = "198.51.100.77";
     for (let attempt = 0; attempt < 5; attempt += 1) {
