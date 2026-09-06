@@ -6,9 +6,9 @@ node_modules/
 out/
 next-env.d.ts
 
-# environment
-.env
-.env.local
+# environment (every .env variant except the committed example)
+.env*
+!.env.example
 
 # uploaded files (local data volume)
 data/

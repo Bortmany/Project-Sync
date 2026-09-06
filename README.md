@@ -67,6 +67,10 @@ runs.
 Fourteen demo people are created in all — the four above are the ones worth signing in as. Every
 demo account shares the same password.
 
+**The seed guards itself against production.** With `NODE_ENV=production` it refuses to run at all
+and says why — nothing is written, no password is printed. The only override is `SEED_ALLOW_PROD=1`,
+which exists for a deliberate demo deployment and must never be set on a real database.
+
 Run `SEED_RESET=1 npm run seed` to rebuild the demo project from scratch. `npm run seed` on its own
 is safe to repeat — it refreshes the disciplines and people and leaves an existing demo project
 alone. Inside a workspace, accounts are created by that company's administrator; a new company

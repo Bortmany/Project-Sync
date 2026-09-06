@@ -2,6 +2,8 @@
 // channel (server and browser) is switched on, how the hourly deadline sweep is getting on, and
 // how many companies have each chat integration switched on, whether transactional email is
 // keyed up or dormant, and whether payments are set up on this deployment.
+//
+// Anonymous callers only ever learn { ok } (200 or 503). The detailed body needs a signed-in session.
 
 import { NextResponse } from "next/server";
 import { access, constants, mkdir } from "node:fs/promises";
@@ -13,6 +15,7 @@ import { billingHealth } from "@/server/services/billing";
 import { emailStatus } from "@/server/services/email";
 import { integrationCounts } from "@/server/services/integrations";
 import { microsoftHealth } from "@/server/services/microsoft";
+import { currentActor } from "@/server/session";
 import { sweepStatus } from "@/server/sweep";
 
 export const dynamic = "force-dynamic";
@@ -40,6 +43,15 @@ async function integrationCountsOrZero(dbUp: boolean): Promise<Record<string, nu
 export async function GET() {
   const [dbUp, dirWritable] = await Promise.all([pingDatabase(), dataDirWritable()]);
   const ok = dbUp && dirWritable;
+
+  // Anybody may ask "are you up?" — that is what a monitor needs, and it is the whole answer for
+  // an anonymous caller. The detailed body (which integrations are keyed, how the sweep is doing,
+  // uptime) is a map of the deployment and only goes to somebody signed in. There is no shared
+  // secret for this route, so a session is the only key.
+  const actor = await currentActor().catch(() => null);
+  if (!actor) {
+    return NextResponse.json({ ok }, { status: ok ? 200 : 503 });
+  }
 
   // Counts only, and only when the database answered. Nothing here identifies a company and
   // nothing here is a webhook address. With nothing configured it reads {"slack":0,"teams":0}.
