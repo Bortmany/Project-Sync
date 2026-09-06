@@ -14,12 +14,12 @@ change that moved the code.
 |---|---|---|
 | 1 | **Privacy policy and terms pages written and linked** | ✅ `/privacy` and `/terms`, linked from the login page, the public footer on every page a visitor can reach, and every signed-in page footer — see below |
 | 2 | Production secrets set and strong (`SESSION_SECRET` 32+, `DATABASE_URL`, `DATA_DIR`) | ✅ The app refuses to start without them |
-| 3 | Security headers and a Content-Security-Policy on every response | ✅ Verified against a running production build |
+| 3 | Security headers and a Content-Security-Policy on every response | ⚠️ In place and verified against a running production build — but the CSP is **nonce-less** and allows inline scripts today (`script-src 'unsafe-inline'`), so it limits where code and data can go rather than stopping cross-site scripting. Adding a per-request nonce is a later hardening, not a launch blocker; see "Security headers" in section 3 |
 | 4 | Error tracking decided: Sentry keyed, or knowingly left dormant | ✅ Dormant by default, one env var away |
 | 5 | Database automatic backups turned **on** in Railway **and one restore actually tested** | ❌ Do this before launch (section 5) |
 | 6 | `DATA_DIR` on a mounted volume, and a copy-out routine agreed | ❌ Do this at deploy time (section 4) |
 | 7 | Health check pointed at `/api/health` | ✅ Checked into `railway.json`; confirm it in the dashboard on first setup (section 3) |
-| 8 | Demo/seed accounts removed from the production database | ❌ Never run `npm run seed` against production |
+| 8 | Demo/seed accounts removed from the production database | ✅ Guarded automatically: with `NODE_ENV=production` the seed refuses to run at all and prints why. The only way past it is setting `SEED_ALLOW_PROD=1` on purpose — never do that on a real database |
 | 9 | The golden-rule tests green on the deployed commit (`npm run verify`) | ✅ Part of every change |
 | 10 | **Signup is open on purpose — an owner decision, not an oversight** | ⚠️ Anybody who reaches `/signup` can create their own company. That is what this product is; it is not a private tool with signups left open by mistake. It is limited to five signups an hour per address, each company is sealed off from every other (the tenant rule), and no company can be reached without signing in. If you would rather launch by invitation only, say so before launch — the change is to `/signup`, not to anything else. |
 
@@ -88,6 +88,7 @@ Set these in the Railway service's Variables tab — never in the repo, never in
 | `PADDLE_PRICE_ID_PRO` | Optional | The price id (`pri_…`) of the Pro subscription price. Not a secret. Sandbox and live have different ids. |
 | `PADDLE_ENV` | Optional | `sandbox` (the default, and what anything unrecognised reads as) or `live`. It chooses `sandbox-api.paddle.com` or `api.paddle.com`. Sandbox is deliberately the default: a sandbox key cannot charge anybody. |
 | `DB_POOL_MAX` | Optional | How many database connections **each copy of the app** keeps open. Defaults to `10`, which is right for one instance on Railway's Postgres. If the app is ever run on several instances, set this so `instances × DB_POOL_MAX` stays comfortably under the database's own `max_connections` (Railway's default is 100) — or point `DATABASE_URL` at the pooled connection string instead. |
+| `TRUST_PROXY` | **Yes, on Railway** | Set it to `1`. Railway sits in front of the app and appends the real visitor address to `X-Forwarded-For`; with this on, the rate limiter keys on the **last** address in that header — the one Railway added — so nobody can dodge a sign-in or signup limit by forging the front of it. Leave it unset anywhere the app faces the internet directly, and the header is ignored. Not a secret. |
 | `SWEEP_DISABLED` | Optional | `1` switches off the hourly "due soon / overdue" notification sweep. Safe: nothing depends on the sweep having run, because overdue is always worked out fresh when a page is read. Useful as a kill switch, or on extra instances. |
 | `DATABASE_URL_TEST` | No | Local and CI only. Never set it in production — the tests empty that database. |
 
@@ -183,7 +184,7 @@ lets a clean Nixpacks checkout build at all — the generated Prisma client live
 
 ### Security headers, and what to do if a page breaks
 
-Every response carries a Content-Security-Policy. The app is fully self-contained — no CDN, no
+Every response carries a Content-Security-Policy. It is **nonce-less** — it allows inline scripts today, and a per-request nonce is a later hardening. The app is fully self-contained — no CDN, no
 external fonts, no analytics — so the policy is `'self'` almost everywhere. Two allowances are
 deliberate and documented in `next.config.ts`: inline scripts (Next.js streams page data through
 inline `<script>` tags and this repo has no middleware to mint a nonce) and inline styles.

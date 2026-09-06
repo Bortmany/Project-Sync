@@ -85,22 +85,41 @@ export function clearFailures(key: string): void {
   store.reset(key);
 }
 
-/** Key for anonymous traffic: the first hop of x-forwarded-for, behind a proxy. */
-export function byIp(request: Request, scope = "global"): string {
-  const forwarded = request.headers.get("x-forwarded-for") ?? "";
-  const first = forwarded.split(",")[0]?.trim();
-  const ip = first || request.headers.get("x-real-ip") || "unknown";
-  return `ip:${scope}:${ip}`;
+/**
+ * Whether the app sits behind a proxy it trusts to append the real client address to
+ * X-Forwarded-For (Railway does). Set TRUST_PROXY=1 in that case. Off by default: without it the
+ * header is ignored, because anybody can send one.
+ */
+function trustProxy(env: Record<string, string | undefined> = process.env): boolean {
+  return env.TRUST_PROXY === "1" || env.TRUST_PROXY === "true";
+}
+
+/**
+ * The client's address, or undefined when nothing trustworthy is known.
+ *
+ * With TRUST_PROXY on, the address is the LAST entry in X-Forwarded-For — the one the trusted
+ * proxy itself appended. Anything before it was sent by the client and can be forged, so a spoofed
+ * first hop never changes the answer. With TRUST_PROXY off, X-Forwarded-For is ignored entirely and
+ * only x-real-ip (set by a platform that terminates the connection) is used.
+ */
+export function clientIp(request: Request, env: Record<string, string | undefined> = process.env): string | undefined {
+  if (trustProxy(env)) {
+    const hops = (request.headers.get("x-forwarded-for") ?? "")
+      .split(",")
+      .map((hop) => hop.trim())
+      .filter(Boolean);
+    const last = hops[hops.length - 1];
+    if (last) return last;
+  }
+  return request.headers.get("x-real-ip")?.trim() || undefined;
+}
+
+/** Key for anonymous traffic, from the client address `clientIp()` trusts. */
+export function byIp(request: Request, scope = "global", env: Record<string, string | undefined> = process.env): string {
+  return `ip:${scope}:${clientIp(request, env) ?? "unknown"}`;
 }
 
 /** Key for signed-in traffic. */
 export function byUser(userId: string, scope = "global"): string {
   return `user:${scope}:${userId}`;
-}
-
-/** The client IP as a plain string, for audit rows. */
-export function clientIp(request: Request): string | undefined {
-  const forwarded = request.headers.get("x-forwarded-for") ?? "";
-  const first = forwarded.split(",")[0]?.trim();
-  return first || request.headers.get("x-real-ip") || undefined;
 }

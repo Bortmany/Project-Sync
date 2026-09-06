@@ -276,6 +276,15 @@ const WORK: SeedMainTask[] = [
 const out = (line: string) => process.stdout.write(`${line}\n`);
 
 async function main() {
+  // Demo accounts must never land in a real database. In production the seed refuses to do
+  // anything at all unless SEED_ALLOW_PROD=1 is set on purpose — it does not touch the database,
+  // it does not print a password, it just stops.
+  if (process.env.NODE_ENV === "production" && process.env.SEED_ALLOW_PROD !== "1") {
+    throw new Error(
+      "Refusing to seed demo data with NODE_ENV=production. This creates demo accounts with a " +
+        "published password. If you really mean it, run again with SEED_ALLOW_PROD=1.",
+    );
+  }
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not set. Copy .env.example to .env.");
 
   const org = await seedOrganization();

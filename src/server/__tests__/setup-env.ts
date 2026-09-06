@@ -8,3 +8,8 @@ if (!process.env.DATABASE_URL_TEST) {
 }
 
 process.env.DATABASE_URL = process.env.DATABASE_URL_TEST;
+
+// The route tests hand in X-Forwarded-For to tell one caller from another, the way Railway does
+// in front of the real app. The rate limiter only reads that header behind a trusted proxy, so the
+// test run declares itself one. The limiter's own unit test passes its env explicitly and ignores this.
+if (!process.env.TRUST_PROXY) process.env.TRUST_PROXY = "1";
