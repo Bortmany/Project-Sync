@@ -83,6 +83,13 @@ it. The four that must always be set: `DATABASE_URL`, `DATABASE_URL_TEST` (local
 `DATA_DIR`, `SESSION_SECRET` (32+ characters). Everything else is optional and dormant until set:
 `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_TRACES_SAMPLE_RATE`, `SWEEP_DISABLED`.
 
+Who may create a **new company** at `/signup` is decided by two more: `SIGNUP_INVITE_CODES`
+(comma-separated codes, 8+ characters each, treated as secrets) and `SIGNUPS_OPEN`. In production
+sign-up is closed with neither set, invite-only with codes, and open to everybody only with
+`SIGNUPS_OPEN=true`; in development and test it is open unless codes are set. `/api/health` reports
+the mode as `"signups"` and never a code. Joining an existing company is an administrator's
+invitation and is unaffected.
+
 In production the app **refuses to start** if `SESSION_SECRET` is missing or shorter than 32
 characters, or if `DATA_DIR` is unset or cannot be written to. The reason is printed in the logs.
 `SESSION_SECRET` is needed for the build as well (building renders pages); `DATA_DIR` is checked

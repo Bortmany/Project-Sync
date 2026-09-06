@@ -117,6 +117,9 @@ export type IndustryTemplateName = z.infer<typeof IndustryTemplateSchema>;
 /**
  * Signing a new company up: the company itself and the person who will run it, in one form.
  * The password rule is the same 12-character minimum an administrator's "create user" form uses.
+ * `inviteCode` is optional HERE because the schema does not know the deployment's sign-up mode:
+ * whether one is required, and whether it is right, is decided by `src/lib/signup-mode.ts` in the
+ * route, so the wording of the refusal lives in one place. It is never stored.
  */
 export const SignupInput = z.object({
   organizationName: z.string().trim().min(2, "Tell us your company's name.").max(120),
@@ -124,6 +127,7 @@ export const SignupInput = z.object({
   name: z.string().trim().min(1, "Tell us your name.").max(200),
   email: z.string().trim().toLowerCase().email("Use an email address like name@company.com.").max(200),
   password: PasswordSchema,
+  inviteCode: z.string().trim().max(200).optional(),
 });
 export type SignupInput = z.infer<typeof SignupInput>;
 

@@ -10,6 +10,7 @@ import { access, constants, mkdir } from "node:fs/promises";
 import { pingDatabase } from "@/lib/db";
 import { sentryStatus } from "@/lib/error-reporting";
 import { isMicrosoftConfigured } from "@/lib/ms-graph";
+import { signupMode } from "@/lib/signup-mode";
 import { uploadsDir } from "@/lib/upload";
 import { billingHealth } from "@/server/services/billing";
 import { emailStatus } from "@/server/services/email";
@@ -82,6 +83,9 @@ export async function GET() {
       // Payments: "dormant" until all four provider variables are set, then "configured". A word
       // about configuration and nothing else — never a plan count, never a balance, never money.
       billing: billingHealth(),
+      // Who may create a new company here: "open", "invite" or "closed". The mode and nothing
+      // else — never a code, never how many there are.
+      signups: signupMode(),
       // Reporting only, and only about THIS copy of the app: the sweep is not something the app's
       // correctness depends on (overdue is always derived at read time), so a skipped or failed run
       // never makes the app unhealthy.

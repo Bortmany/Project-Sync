@@ -20,7 +20,10 @@ export type TemplateOption = {
 type Fields = Record<string, string[]>;
 
 /** The longest each field may be, straight from SignupInput in src/lib/zod-schemas.ts. */
-const MAX = { organizationName: 120, name: 200, email: 200, password: 200 } as const;
+const MAX = { organizationName: 120, name: 200, email: 200, password: 200, inviteCode: 200 } as const;
+
+/** The same sentence the route answers with — src/lib/signup-mode.ts is the owner of the wording. */
+const INVITE_MESSAGE = "Sign-up is by invitation. Enter a valid invite code.";
 
 /**
  * Mirrors SignupInput in src/lib/zod-schemas.ts, message for message — including its maximum
@@ -32,8 +35,13 @@ function checkStepOne(values: {
   name: string;
   email: string;
   password: string;
+  inviteCode: string;
+  inviteRequired: boolean;
 }): Fields {
   const errors: Fields = {};
+  if (values.inviteRequired && values.inviteCode.trim().length === 0) {
+    errors.inviteCode = [INVITE_MESSAGE];
+  }
   if (values.organizationName.trim().length < 2) {
     errors.organizationName = ["Tell us your company's name."];
   } else if (values.organizationName.trim().length > MAX.organizationName) {
@@ -61,9 +69,17 @@ function checkStepOne(values: {
   return errors;
 }
 
-export function SignupForm({ templates }: { templates: TemplateOption[] }) {
+export function SignupForm({
+  templates,
+  inviteRequired,
+}: {
+  templates: TemplateOption[];
+  /** Decided on the server from the deployment's sign-up mode; the form only draws the field. */
+  inviteRequired: boolean;
+}) {
   const router = useRouter();
   const [step, setStep] = useState<1 | 2>(1);
+  const [inviteCode, setInviteCode] = useState("");
   const [organizationName, setOrganizationName] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -78,7 +94,7 @@ export function SignupForm({ templates }: { templates: TemplateOption[] }) {
   function onContinue(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
-    const found = checkStepOne({ organizationName, name, email, password });
+    const found = checkStepOne({ organizationName, name, email, password, inviteCode, inviteRequired });
     setFieldErrors(found);
     if (Object.keys(found).length > 0) return;
     setStep(2);
@@ -100,6 +116,8 @@ export function SignupForm({ templates }: { templates: TemplateOption[] }) {
           email: email.trim(),
           password,
           industryTemplate: template,
+          // Only sent when the screen asked for one; an open door is not offered a code.
+          ...(inviteRequired ? { inviteCode: inviteCode.trim() } : {}),
         }),
       });
       const result = (await response.json()) as {
@@ -218,6 +236,24 @@ export function SignupForm({ templates }: { templates: TemplateOption[] }) {
       </p>
 
       <form onSubmit={onContinue} className="mt-6 space-y-4" noValidate>
+        {inviteRequired ? (
+          <Field
+            label="Invite code"
+            error={first("inviteCode")}
+            hint="Sign-up is by invitation for now. Enter the code you were given."
+          >
+            <Input
+              name="inviteCode"
+              autoComplete="off"
+              required
+              maxLength={MAX.inviteCode}
+              value={inviteCode}
+              onChange={(event) => setInviteCode(event.target.value)}
+              placeholder="Paste your invite code"
+            />
+          </Field>
+        ) : null}
+
         <Field label="Company name" error={first("organizationName")}>
           <Input
             name="organizationName"
