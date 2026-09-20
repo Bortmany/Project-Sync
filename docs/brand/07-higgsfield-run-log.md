@@ -62,7 +62,7 @@ Everything below was generated in the owner's Higgsfield account (Max plan) betw
 | Concept A | https://d2ol7oe51mr4n9.cloudfront.net/user_3I44NnAr9mhBunRliOSlYnsZgtz/7cdc8d5c-0355-4b26-b36e-6b91a32b9ce1.mp4 |
 | Concept B | https://d2ol7oe51mr4n9.cloudfront.net/user_3I44NnAr9mhBunRliOSlYnsZgtz/c78db62a-a68a-4545-b509-be558977bc03.mp4 |
 
-The Arabic versions carry the Arabic voiceover over the same footage; on-screen text stays English in this cut because the sandbox font stack has no Arabic shaping. The real app screens were NOT composited onto the blank phone and laptop screens in this pass: the captures for that are in docs/brand/ui/ and the compositing step is described in 06-production-ads.md.
+The Arabic versions carry the Arabic voiceover over the same footage; on-screen text stays English in this cut because the sandbox font stack has no Arabic shaping. The real app screens were NOT composited onto the blank phone and laptop screens in this pass. The captures for that were kept out of git (they are in the brand-factory-2026-09-20.zip sent to the owner, under the ui/ folder, and can be re-captured from the app at any time); the compositing step is described in 06-production-ads.md.
 
 All 40 concept SVGs: https://d2ol7oe51mr4n9.cloudfront.net/user_3I44NnAr9mhBunRliOSlYnsZgtz/561ecebd-64af-47e4-b268-066ff297f923.zip
 All 26 refinement SVGs: https://d2ol7oe51mr4n9.cloudfront.net/user_3I44NnAr9mhBunRliOSlYnsZgtz/abb8ce75-3460-4b11-94d3-ed8b5eb6829a.zip
