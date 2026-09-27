@@ -63,8 +63,11 @@ runs.
 | `layla.alriyami@tielora.example` | `Meridian!Demo2026` | Project manager |
 | `khalid.alfarsi@tielora.example` | `Meridian!Demo2026` | Discipline lead (Mechanical) |
 | `john.carter@tielora.example` | `Meridian!Demo2026` | Engineer (Mechanical) |
+| `rashid.albalushi@tielora.example` | `Meridian!Demo2026` | Outside contractor (Gulf Fabrication, Mechanical) |
+| `elena.petrova@tielora.example` | `Meridian!Demo2026` | Outside contractor (Coastal NDT, Inspection) |
+| `nora.hadid@tielora.example` | `Meridian!Demo2026` | Administrator of a second demo company, **Northbay Construction** |
 
-Fourteen demo people are created in all — the four above are the ones worth signing in as. Every
+Meridian also gets announcements and a noticeboard thread, and the two contractors get handed-over work with one item waiting for sign-off. Northbay Construction (five people, one project, free plan) exists so you can sign in as each company and see that neither can see the other's work. The people above are the ones worth signing in as. Every
 demo account shares the same password.
 
 **The seed guards itself against production.** With `NODE_ENV=production` it refuses to run at all
@@ -73,7 +76,8 @@ which exists for a deliberate demo deployment and must never be set on a real da
 
 Run `SEED_RESET=1 npm run seed` to rebuild the demo project from scratch. `npm run seed` on its own
 is safe to repeat — it refreshes the disciplines and people and leaves an existing demo project
-alone. Inside a workspace, accounts are created by that company's administrator; a new company
+alone, so on a database seeded before the contractors and noticeboard existed, run it once with
+`SEED_RESET=1` to get them. Inside a workspace, accounts are created by that company's administrator; a new company
 starts its own workspace at `/signup`.
 
 ## Environment
