@@ -1735,7 +1735,11 @@ About the two seed steps:
 - `npm run seed:check` proves the seeded data still obeys the golden rule: the design review sits at
   60% and in progress, the inspection close-out at 100% and complete, the vendor review is overdue by
   derivation, the HAZOP override is recorded with who, why and when, and the project has a real audit
-  trail. It fails loudly if any of that drifts.
+  trail. It also proves the wall between companies: a Meridian administrator does not see Northbay
+  Construction's project, opening it directly answers "not found", and Northbay's administrator sees
+  only their own project. It fails loudly if any of that drifts.
+- A database seeded before the contractors, noticeboard and Northbay existed needs one
+  `SEED_RESET=1 npm run seed` to get them; a plain re-run leaves the old demo project as it is.
 - The service tests (`npm test`) run against `DATABASE_URL_TEST` and empty it between tests, so they
   never touch the seeded development data.
 
