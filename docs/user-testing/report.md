@@ -1,5 +1,7 @@
 # Tielora — user-testing report (2026-09-07)
 
+> The screenshots referenced below are not stored in this repo (app screenshots stay out of git). They can be viewed on the original pull request, #13, on GitHub.
+
 **Verdict: Not ready** — six separate P1 problems were confirmed by an independent re-test, and at least four of them sit squarely on the main journey (the home dashboard, the "what's late" lists, the project Brief, and the My-tasks filters). The rule is mechanical: three or more confirmed P1 code bugs in the core loop means not ready. There were no P0 problems, and nothing was lost, leaked or corrupted.
 
 A first-time user can sign in, open a project, create a main task with discipline tasks and required documents, upload a drawing, comment on it, mark work complete and watch the parent task move itself to "in progress" or "complete" — the headline promise of the product genuinely works, on the desktop and on the phone. What they cannot do is trust a single number the app shows them: the six counters on the home screen disagree with the lists they link to, "Upcoming deadlines" is full of dates from July, and the same project reports one, three or four late items depending on which screen you are looking at.
