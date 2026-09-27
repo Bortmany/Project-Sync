@@ -1,0 +1,11 @@
+echo ""
+echo "Tielora: running the full verify recipe before this push goes to GitHub —"
+echo "migrations, demo data and its golden-rule check, lint, type check, the"
+echo "tests and the build. This can take a few minutes."
+echo ""
+if ! pg_isready -q; then
+  echo "Postgres is not running on this computer, so the check cannot run."
+  echo "Start it (for example: brew services start postgresql@16) and push again."
+  exit 1
+fi
+npm run verify
