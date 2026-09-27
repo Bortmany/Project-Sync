@@ -26,7 +26,7 @@ export type SeedDocumentsResult = { documents: number; revisions: number };
 /* ------------------------------------------------------------------ */
 
 /** A small but genuinely valid PDF: one A4 page of Helvetica lines. */
-function makePdf(title: string, lines: string[]): Buffer {
+export function makePdf(title: string, lines: string[]): Buffer {
   const escape = (line: string) => line.replace(/([\\()])/g, "\\$1");
   const text = [
     "BT",
@@ -138,7 +138,19 @@ function registerCsv(revision: number, rows: string[]): Buffer {
 
 const MASTER_REGISTER = "Master Engineering Review Register.csv";
 
-export async function seedDocuments(ctx: SeedDocumentsContext): Promise<SeedDocumentsResult> {
+/** Uploads a real file as a real person, exactly as the upload route does. */
+export type SeedUploader = (
+  email: string,
+  meta: Omit<UploadMeta, "projectId">,
+  filename: string,
+  bytes: Buffer,
+) => Promise<{ documentId: string }>;
+
+/**
+ * Builds the seed's upload helper for one project. Shared so every seeded company writes its
+ * documents the same way: real bytes, validateUpload(), storeFile(), then the document service.
+ */
+export function makeUploader(ctx: SeedDocumentsContext): SeedUploader {
   const actors = new Map<string, ActorContext>();
   const actorFor = async (email: string): Promise<ActorContext> => {
     const cached = actors.get(email);
@@ -150,6 +162,24 @@ export async function seedDocuments(ctx: SeedDocumentsContext): Promise<SeedDocu
     return actor;
   };
 
+  return async (email, meta, filename, bytes) => {
+    const checked = validateUpload(bytes, filename);
+    if (!checked.ok) throw new Error(`The seed built an unacceptable file (${filename}): ${checked.error}`);
+    const stored = await storeFile(bytes, checked.ext);
+
+    return uploadDocumentVersion(await actorFor(email), { ...meta, projectId: ctx.projectId }, {
+      buffer: bytes,
+      originalName: filename,
+      mimeType: checked.mimeType,
+      ext: checked.ext,
+      sizeBytes: stored.sizeBytes,
+      checksumSha256: stored.checksumSha256,
+      storedFilename: stored.storedFilename,
+    });
+  };
+}
+
+export async function seedDocuments(ctx: SeedDocumentsContext): Promise<SeedDocumentsResult> {
   const mainTaskId = async (title: string): Promise<string> => {
     const task = await prisma.mainTask.findFirst({
       where: { projectId: ctx.projectId, title, deletedAt: null },
@@ -168,27 +198,7 @@ export async function seedDocuments(ctx: SeedDocumentsContext): Promise<SeedDocu
     return task;
   };
 
-  /** Stores real bytes and records them through the service, exactly as the upload route does. */
-  const upload = async (
-    email: string,
-    meta: Omit<UploadMeta, "projectId">,
-    filename: string,
-    bytes: Buffer,
-  ) => {
-    const checked = validateUpload(bytes, filename);
-    if (!checked.ok) throw new Error(`The seed built an unacceptable file (${filename}): ${checked.error}`);
-    const stored = await storeFile(bytes, checked.ext);
-
-    return uploadDocumentVersion(await actorFor(email), { ...meta, projectId: ctx.projectId }, {
-      buffer: bytes,
-      originalName: filename,
-      mimeType: checked.mimeType,
-      ext: checked.ext,
-      sizeBytes: stored.sizeBytes,
-      checksumSha256: stored.checksumSha256,
-      storedFilename: stored.storedFilename,
-    });
-  };
+  const upload = makeUploader(ctx);
 
   let documents = 0;
   let revisions = 0;
@@ -304,6 +314,33 @@ export async function seedDocuments(ctx: SeedDocumentsContext): Promise<SeedDocu
       "",
       "The relief scenario was recalculated and the revised set points are in the",
       "process safeguarding memorandum issued with this report.",
+    ]),
+  );
+  documents += 1;
+  revisions += 1;
+
+  /* The contractor's own hand-in, on the task he has submitted for sign-off. It goes up through
+     exactly the same door a colleague's file does — the difference the demo shows is the company
+     badge beside his name on the revision. */
+  const datasheets = await disciplineTask("Mechanical datasheets compiled");
+  await upload(
+    "rashid.albalushi@tielora.example",
+    {
+      disciplineTaskId: datasheets.id,
+      title: "Exchanger Datasheet Pack",
+      category: "Datasheet",
+      note: "Rev B issued for sign-off. Nozzle loads updated to the frozen vendor figures.",
+    },
+    "Exchanger Datasheet Pack.pdf",
+    makePdf("Exchanger datasheet pack — Rev B", [
+      "Project: Sur LNG Expansion Project (SUR-EXP)",
+      "Package: Mechanical datasheets, Package A submission",
+      "Prepared by: Gulf Fabrication LLC",
+      "",
+      "Datasheets included: 14 (2 spare exchangers, 4 vessels, 8 pumps).",
+      "Nozzle loads updated to the frozen vendor figures issued on 12 Aug 2026.",
+      "",
+      "Submitted to the mechanical lead for sign-off.",
     ]),
   );
   documents += 1;
