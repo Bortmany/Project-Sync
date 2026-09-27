@@ -1,0 +1,30 @@
+# Safety first: this check changes the database it is pointed at (migrations,
+# test data), so it only ever runs against a database on this Mac. If any
+# database address in the environment or in .env / .env.local points somewhere
+# else (for example the live Railway database), the push stops here.
+for url in "$DATABASE_URL" "$TEST_DATABASE_URL" $(sed -n 's/^\(TEST_\)\{0,1\}DATABASE_URL=//p' .env .env.local 2>/dev/null | tr -d "\"'"); do
+  host=$(printf '%s' "$url" | sed -E 's#^[a-zA-Z+]+://([^@/]*@)?(\[[^]]*\]|[^:/?]*).*#\2#')
+  case "$url" in *host=*|*hostaddr=*) host="(set by a host= option)";; esac
+  case "$host" in
+    ""|localhost|127.0.0.1|"[::1]") ;;
+    *)
+      echo ""
+      echo "Push stopped: a database address points at \"$host\", not this Mac."
+      echo "This check changes the database it runs against, so it only runs on a local one."
+      echo "Point DATABASE_URL at your local Postgres and push again."
+      echo ""
+      exit 1 ;;
+  esac
+done
+
+echo ""
+echo "Tielora: running the full verify recipe before this push goes to GitHub —"
+echo "migrations, demo data and its golden-rule check, lint, type check, the"
+echo "tests and the build. This can take a few minutes."
+echo ""
+if ! pg_isready -q; then
+  echo "Postgres is not running on this computer, so the check cannot run."
+  echo "Start it (for example: brew services start postgresql@16) and push again."
+  exit 1
+fi
+npm run verify

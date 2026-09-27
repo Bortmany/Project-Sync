@@ -1,0 +1,107 @@
+# Tielora — automatic check on GitHub.
+#
+# Every pull request, and every push to main, gets the verify recipe from
+# docs/CONVENTIONS.md ("Verify recipe"): install, set up two throwaway databases,
+# apply the migrations, load the demo data and prove it still obeys the golden rule
+# and the wall between companies, then lint, type check, the tests and the build.
+# It also checks that the five search (trigram) indexes survived on both databases.
+# A red cross on GitHub means one of those steps failed.
+#
+# Everything here is a throwaway, CI-only value: the database lives only for the
+# length of the run, and the session secret is generated fresh each time. No real
+# key is ever used or needed. Email, payments, Microsoft 365 and Sentry stay
+# switched off because their settings are simply left empty.
+
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push to the same branch cancels the older, now-pointless run.
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        # The official image ships pg_trgm and unaccent, which the search migration needs.
+        image: postgres:16
+        env:
+          POSTGRES_USER: nexus
+          POSTGRES_PASSWORD: nexus_dev_pw
+          POSTGRES_DB: nexus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nexus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://nexus:nexus_dev_pw@localhost:5432/nexus
+      DATABASE_URL_TEST: postgresql://nexus:nexus_dev_pw@localhost:5432/nexus_test
+      APP_URL: http://localhost:3000
+      # Stops the hourly deadline sweep; nothing in the checks depends on it.
+      SWEEP_DISABLED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Make CI-only secrets and a scratch folder
+        run: |
+          echo "SESSION_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "DATA_DIR=$RUNNER_TEMP/tielora-data" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/tielora-data"
+
+      - name: Install
+        run: npm ci
+
+      - name: Generate the database client
+        run: npx prisma generate
+
+      - name: Create the test database
+        run: PGPASSWORD=nexus_dev_pw createdb -h localhost -U nexus nexus_test
+
+      - name: Apply migrations (test and development databases)
+        run: |
+          DATABASE_URL="$DATABASE_URL_TEST" npx prisma migrate deploy
+          npx prisma migrate deploy
+
+      - name: Check the five search indexes exist on both databases
+        run: |
+          for url in "$DATABASE_URL" "$DATABASE_URL_TEST"; do
+            count=$(psql "$url" -Atc "SELECT count(*) FROM pg_indexes WHERE indexname LIKE '%trgm%';")
+            echo "Search indexes found: $count"
+            test "$count" -eq 5
+          done
+
+      - name: Load the demo data
+        run: npm run seed
+
+      - name: Prove the demo data obeys the rules
+        run: npm run seed:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build

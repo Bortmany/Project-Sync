@@ -1743,6 +1743,19 @@ About the two seed steps:
 - The service tests (`npm test`) run against `DATABASE_URL_TEST` and empty it between tests, so they
   never touch the seeded development data.
 
+**It also runs by itself, twice over.**
+
+- **Before every push (on your computer).** A Husky hook at `.husky/pre-push`, wired up by
+  `npm install` through the `prepare` script, runs `npm run verify` before anything leaves for
+  GitHub, and refuses the push if any step fails. It first checks that Postgres is running
+  (`pg_isready`) and stops with a plain message if it is not. `git push --no-verify` skips the
+  hook — for emergencies only (a docs-only or revert push), never to get a real change past a red step.
+- **On GitHub (CI).** `.github/workflows/verify.yml` runs on every pull request and every push to
+  `main`: `npm ci`, a throwaway Postgres 16 with `nexus` and `nexus_test`, `npx prisma migrate deploy`
+  on both, the trigram-index check above, `seed`, `seed:check`, lint, type check, `npm test` and the
+  build. The session secret is generated fresh each run; no real key is ever involved. The repo is
+  private, so these runs use GitHub's free monthly allowance of Actions minutes for private repos.
+
 ## Review priorities for `code-reviewer`
 
 1. **Tenant leaks** — a query with no organisation filter, an `assertCan` given the actor's own
