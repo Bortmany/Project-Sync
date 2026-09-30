@@ -257,7 +257,7 @@ So:
   ordinary `id` key every model carries). One row per company per month.
 - **Cap in `plan-limits.ts`: `aiMonthlyUsd` per plan**, in the one file where every limit already
   lives. Starting values, **placeholders, to be set by the pricing decision (Step 1 and Step 5)**:
-  **FREE = 2** (dollars a month), **PRO = 30**. Unlike the other limits, `null` is **not allowed**
+  **FREE = 2** (dollars a month), **PRO = 25** (set by the owner's pricing decision, 30 Sep 2026). Unlike the other limits, `null` is **not allowed**
   here: AI costs real money per use, so no plan may be uncapped by accident. `0` means "this plan has
   no AI allowance". `planOf()` still reads an unrecognised plan as FREE, so an unreadable plan can
   never hand out a bigger allowance.
