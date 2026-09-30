@@ -3,7 +3,7 @@
 Companion to `docs/specs/align-2026-10/ai-assistant.md` (the behaviour, wording of refusals, and rules live there; this file only decides how it looks and feels). Same conventions as `ui-export-report.md`.
 Rules followed: `CONVENTIONS.md` house rules 6-8 (plain English, dates like "1 Nov 2026", brand tokens from `src/app/globals.css` only, no new hex) and THE EXTERNAL RULE (a contractor sees nothing, not even a gap).
 
-**Mobbin references:** no Mobbin access in this session, and I will not invent links. Before building, pull 2-3 flows for: "AI assistant bottom sheet / side panel in a work app (Asana, Notion, Linear)", "AI answer with a 'may be wrong' footer and a loading state", and "usage meter / allowance used up message". Cite each by `mobbin_url` at the bottom of this file. They inform, they do not replace the app's styling.
+**Mobbin references:** pulled by the orchestrator on 30 Sep 2026 — listed under "Prior art" at the bottom of this file. They inform, they do not replace the app's styling.
 
 **Proposed additions to the design system: one, small.** A sparkle icon added to `src/components/shell/icons.tsx` (same stroke style as the others) for the "Ask Tielora" buttons. No new colours, fonts or components otherwise. Reused: `Button`, `Card`, `Badge`, `Field`, `Textarea`, `Select` (`src/components/ui/primitives.tsx`), `Skeleton` (`ui/skeleton.tsx`), `useToast` (`ui/toast.tsx`), `Modal` (`ui/modal.tsx`), `ErrorBanner`, the menu open/close behaviour in `shell/topbar.tsx`, and the checkbox-row pattern in `admin/admin-integrations-view.tsx` (`EventToggleList`).
 
@@ -176,3 +176,12 @@ A blank line separates them. Plain text, escaped like every other line, so it ca
 4. **Amber vs red at the allowance.** The spec says the meter "turns amber", but the app has no amber and the live Billing meters use the red `--status-blocked`. I used the red. A new warning colour would be a design-system addition, so it is your call.
 5. **Showing the dollar allowance on the Billing "Plans" table** (FREE $2, PRO $30). Not added: those are placeholders until the pricing decision, and `/pricing` is unchanged in this round.
 6. **Meter wording.** The stored figure is a single request count, so the meter says "15 AI requests" rather than "questions and summaries" as the spec suggested.
+
+## Prior art (Mobbin, pulled 30 Sep 2026)
+
+- [Klaviyo — Composer AI panel](https://mobbin.com/screens/14bcd4a7-1d5f-408b-97fe-d8bf8bf44617): sparkle mark, "What can I help you with?", three starter chips, and a small line under the question box saying the message is processed by the company and its providers, with a Privacy Notice link.
+- [Mintlify — assistant side panel](https://mobbin.com/screens/99f9f314-b207-46e1-82bc-239240c4b543): a narrow side panel beside the working page, question box fixed at the bottom — the laptop layout this spec chose.
+- [AirOps — assistant answer](https://mobbin.com/screens/433da809-2c06-433d-a05e-6f1a74a7ce8a): an answer followed by small copy / thumbs actions and a question box underneath.
+- [Microsoft Copilot — answer](https://mobbin.com/screens/0fb9fc0d-38aa-4489-88f3-6e35396a361a): plain paragraphs, generous line length, actions under the answer — what Microsoft-first customers already know.
+
+**Changed after prior-art review:** one small grey line under the question box: "Your question and this project's details are sent to Anthropic to write the answer. Privacy" (the last word links to `/privacy`). It makes the data going out visible at the moment of asking, not only on the settings card.

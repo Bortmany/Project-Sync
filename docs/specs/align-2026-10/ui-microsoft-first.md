@@ -3,7 +3,7 @@
 Companion to `microsoft-first.md` and `teams-app.md` (behaviour, server rules and refusal sentences live there; this file only decides how it looks). Same conventions as `ui-export-report.md` and `ui-ask-tielora.md`.
 Rules followed: `CONVENTIONS.md` house rules 6-8 (plain English, dates like "30 Sep 2026", brand tokens from `src/app/globals.css` only, no new hex) and THE EXTERNAL RULE (a contractor sees the smallest possible version of everything below). Builders copy from the live code, not `docs/design-notes.md`.
 
-**Mobbin references:** no Mobbin access in this session and I will not invent links. Before building, pull 2-3 flows each for: "Sign in with Microsoft / SSO button under a password form, including the 'or' divider", "email notification preferences card with toggles and an unconfirmed-address state", "one-click unsubscribe confirmation page", "a work app opened as a Teams tab, signed-out state". Cite each by `mobbin_url` at the bottom of this file. They inform, they do not replace the app's styling.
+**Mobbin references:** pulled by the orchestrator on 30 Sep 2026 — listed under "Prior art" at the bottom of this file. They inform, they do not replace the app's styling.
 
 **Proposed additions to the design system: two, both small.**
 1. A **Microsoft logo file** (`public/brand/microsoft-logo.svg`, the four-square mark, 21x21) used only on the sign-in button. See the flagged conflict in 1.1.
@@ -209,3 +209,14 @@ Files: `src/app/teams/tab/page.tsx` (+ client parts), `src/app/teams/auth-end/pa
 5. **Checkbox rows vs a true on/off switch** for the Email card. I reused the Integrations checkbox pattern; a real switch would be a new component.
 6. **Plain-text emails (spec) vs branded HTML.** HTML would look like Tielora but needs a template approach the spec excludes; it would also make the AI summary box in `ui-ask-tielora.md` section 6 possible (in plain text that summary must be a labelled paragraph instead).
 7. **Teams tab is light-only.** Teams users on its dark theme will see a light page, because the brand has no dark colours and I may not invent them.
+
+## Prior art (Mobbin, pulled 30 Sep 2026)
+
+- [Calendly — log in](https://mobbin.com/screens/275fcd1b-1caf-4143-b676-f09542baeef7): Microsoft as a full-width outlined button with the four-square logo, under an "OR" divider below the main form — the same order this spec chose.
+- [Dropbox Dash — log in or sign up](https://mobbin.com/screens/e1fe4ed5-8c62-49bc-b5fb-c9e1768cde88): the opposite order (providers above the email field). Confirms both are common; we keep password first because most Tielora people today have a password.
+- [Square — sign in](https://mobbin.com/screens/d5fc5fdc-5ddb-4ba7-94ae-acd65518671a): the "or continue with email" divider wording and weight.
+- [Dropbox Dash — notification settings](https://mobbin.com/screens/35c1f067-cebc-44cb-a378-ff72de217319): "Email me about:" with plain checkbox rows including a weekly digest — backs the checkbox-row choice for the Email card.
+- [Basecamp — notification settings](https://mobbin.com/screens/15b94fd3-04f9-4fec-9dc2-c04df782c4b9): each checkbox carries one line of helper text saying exactly when email arrives — the pattern for our three rows.
+- [GetYourGuide — notifications](https://mobbin.com/screens/89119dbf-6465-4fd0-a096-f968a1c66702): shows "Your notifications are sent to: <address>" beside the switches — worth one line on our card so people see which address gets the mail.
+
+**Changed after prior-art review:** the Email card shows one line "Emails go to <your address>." above the three rows.

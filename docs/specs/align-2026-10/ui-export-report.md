@@ -3,7 +3,7 @@
 Companion to `docs/specs/align-2026-10/briefs-and-status-report.md` (sections C, E and screen A). Builders copy from the live code, not `docs/design-notes.md`.
 Rules followed: `CONVENTIONS.md` house rules 6-8 (plain English, dates like "30 Sep 2026", brand tokens from `src/app/globals.css` only, no new hex) and the EXTERNAL rule (a contractor sees no Export at all).
 
-**Mobbin references:** I have no Mobbin access in this session and will not invent links. Before building, pull 2-3 flows for: "export menu on a page header (PDF / PowerPoint)", "download in progress / failed download message", and "weekly digest settings toggle". Cite each by `mobbin_url` at the bottom of this file. They inform, they do not replace the app's own styling.
+**Mobbin references:** pulled by the orchestrator on 30 Sep 2026 — listed under "Prior art" at the bottom of this file. They inform, they do not replace the app's own styling.
 
 **Proposed additions to the design system: none.** Everything below uses the existing `Button`, `Card`, `Badge`, `Skeleton`, `useToast`, `ErrorBanner` and the menu pattern already in `src/components/shell/topbar.tsx` (button with `aria-haspopup="menu"`, panel with `role="menu"`). Tokens named below all exist in `globals.css`.
 
@@ -142,3 +142,12 @@ Replaces the single "Upcoming deadlines" card. Order on the page: tiles, sign-of
 2. Cover in dark navy (chosen) vs a white cover that saves ink when printed.
 3. Recent activity going full width on laptop to make room for Late | Upcoming side by side.
 4. The "Due in 14 days" tile label instead of "Due soon".
+
+## Prior art (Mobbin, pulled 30 Sep 2026)
+
+- [Magnific — Export menu](https://mobbin.com/screens/4f1857ae-772b-460d-8a56-ab40899c0e0a): an "Export" button top-right opening a small menu where each format has a one-line hint ("Ideal for documents or printing").
+- [Perplexity — download menu](https://mobbin.com/screens/5ec280f1-2e52-4afa-85ea-ec910107f564): a compact file-type menu (PDF / Markdown / DOCX) with a small icon per format — the size our two-item menu should be.
+- [Tana — document header menu](https://mobbin.com/screens/d1f5b0a9-80b1-49f0-88c6-cceb833fe0a7): a status-report page whose header menu sits right-aligned under its button, as this spec places ours.
+- [Basecamp — export data](https://mobbin.com/screens/6c58b6ba-1ee9-4f5c-95f1-87a96294ccf1): says up front how long an export takes — our "Preparing your report…" line does the same job for a few seconds' wait.
+
+**Changed after prior-art review:** each menu item gets a one-line hint under its name — PDF: "Best for printing or email"; PowerPoint: "Best for presenting in a meeting".
