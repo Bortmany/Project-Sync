@@ -12,7 +12,42 @@
 
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Sign in with Microsoft runs through the real routes below; this is the cookie jar next/headers
+// would give a live request. Nothing else in this file reads next/headers.
+const jar = vi.hoisted(() => new Map<string, { value: string; options?: Record<string, unknown> }>());
+vi.mock("next/headers", async () => {
+  const fixtures = await import("@/server/__tests__/microsoft-signin-fixtures");
+  return fixtures.cookieJarModule(jar);
+});
+
+import { GET as microsoftStartRoute } from "@/app/api/auth/microsoft/route";
+import { GET as microsoftCallbackRoute } from "@/app/api/auth/microsoft/callback/route";
+import { homePathFor } from "@/components/shell/nav-items";
+import { SESSION_COOKIE, getSessionUser } from "@/lib/auth";
+import { signingKeys } from "@/server/services/microsoft-signin";
+import { sendDailyBriefEmails } from "@/server/sweep";
+import {
+  EMAIL_BASE,
+  configureEmail,
+  goDormant,
+  mockFetchOk as mockEmailFetchOk,
+  optIn,
+  sentEmails,
+  settle,
+} from "@/server/__tests__/email-harness";
+import {
+  TEST_BASE_URL,
+  claimsFor,
+  configureMicrosoftEnv,
+  installFakeMicrosoft,
+  makeKey,
+  newOid,
+  newTenant,
+  signToken,
+  type FakeMicrosoft,
+} from "@/server/__tests__/microsoft-signin-fixtures";
 
 process.env.DATA_DIR = path.join(os.tmpdir(), "tielora-test-data");
 
@@ -1183,5 +1218,238 @@ describe("their access can be given an end date", () => {
       companyName: null,
     });
     expect(promoted.accessExpiresAt).toBeNull();
+  });
+});
+
+describe("a contractor is emailed only their own notification rows", () => {
+  let contractorEmail: string;
+
+  beforeEach(async () => {
+    configureEmail();
+    contractorEmail = await optIn(contractor.userId, { alerts: true });
+  });
+
+  afterEach(() => {
+    goDormant();
+    vi.restoreAllMocks();
+  });
+
+  /** Waits until a colleague who SHOULD be emailed has been, so a missing email is a real "no". */
+  async function afterCanary(spy: ReturnType<typeof mockEmailFetchOk>, canaryEmail: string) {
+    await vi.waitFor(() =>
+      expect(sentEmails(spy).some((email) => email.to.includes(canaryEmail))).toBe(true),
+    );
+    await settle();
+    return sentEmails(spy);
+  }
+
+  it("sends exactly their own row — the same title, sentence and link — and nothing else", async () => {
+    const spy = mockEmailFetchOk();
+
+    await createDisciplineTask(fixture.adminActor, {
+      mainTaskId: sharedMainTaskId,
+      disciplineId: fixture.disciplineId,
+      title: "Contractor flange torque check",
+      assigneeId: contractor.userId,
+      deadline: inThirtyDays(),
+      priority: "MEDIUM",
+      isMandatory: true,
+      requiredDocuments: [],
+    });
+
+    await vi.waitFor(() => expect(sentEmails(spy)).toHaveLength(1));
+    await settle();
+
+    const rows = await prisma.notification.findMany({
+      where: { userId: contractor.userId, type: "ASSIGNED", actorId: fixture.adminActor.userId },
+      orderBy: { createdAt: "desc" },
+    });
+    const row = rows[0]!;
+    const sent = sentEmails(spy);
+    expect(sent).toHaveLength(1);
+    const [email] = sent;
+    expect(email!.to).toEqual([contractorEmail]);
+    expect(email!.subject).toBe(row.title);
+    expect(email!.text).toContain(row.body);
+    expect(email!.text).toContain(`${EMAIL_BASE}${row.linkUrl}`);
+    // Nothing wider than the row: no colleague's work, no colleague's name, no parent roster.
+    for (const outside of [THEIRS, "Pipe rack survey", fixture.engineerActor.name, fixture.pmActor.name]) {
+      expect(email!.text).not.toContain(outside);
+    }
+  });
+
+  it("sends nothing for a project-wide override on work they cannot see", async () => {
+    const spy = mockEmailFetchOk();
+    const colleagueEmail = await optIn(fixture.engineerActor.userId, { alerts: true });
+
+    await overrideMainTaskStatus(fixture.pmActor, {
+      id: otherMainTaskId,
+      status: "COMPLETED",
+      reason: "Agreed at the site meeting.",
+    });
+
+    const sent = await afterCanary(spy, colleagueEmail);
+    expect(sent.some((email) => email.to.includes(contractorEmail))).toBe(false);
+  });
+
+  it("sends nothing for a mention on a colleague's task", async () => {
+    const spy = mockEmailFetchOk();
+    const colleagueEmail = await optIn(fixture.engineerActor.userId, { alerts: true });
+
+    await createComment(fixture.pmActor, {
+      disciplineTaskId: theirTaskId,
+      body: "Both of you, a look at this please.",
+      mentions: [contractor.userId, fixture.engineerActor.userId],
+    });
+
+    const sent = await afterCanary(spy, colleagueEmail);
+    expect(sent.some((email) => email.to.includes(contractorEmail))).toBe(false);
+  });
+
+  it("sends nothing for an announcement that did not include contractors", async () => {
+    const spy = mockEmailFetchOk();
+    const colleagueEmail = await optIn(fixture.engineerActor.userId, { alerts: true });
+
+    await createPost(fixture.adminActor, {
+      kind: "ANNOUNCEMENT",
+      title: "Internal all-hands on Thursday",
+      body: "Staff only.",
+    });
+
+    const sent = await afterCanary(spy, colleagueEmail);
+    expect(sent.some((email) => email.to.includes(contractorEmail))).toBe(false);
+  });
+
+  it("sends nothing for the contractor half of an announcement that did include them", async () => {
+    const spy = mockEmailFetchOk();
+    const colleagueEmail = await optIn(fixture.engineerActor.userId, { alerts: true });
+
+    await createPost(fixture.adminActor, {
+      kind: "ANNOUNCEMENT",
+      title: "Site access closures this weekend",
+      body: "Gate 3 will be shut Sat–Sun for repaving.",
+      includeExternals: true,
+    });
+
+    const sent = await afterCanary(spy, colleagueEmail);
+    // They have the in-app row (it lands on their brief page) and no email copy of it.
+    expect(
+      await prisma.notification.count({ where: { userId: contractor.userId, type: "ANNOUNCEMENT" } }),
+    ).toBe(1);
+    expect(sent.some((email) => email.to.includes(contractorEmail))).toBe(false);
+  });
+
+  it("never sends them a daily brief, even with both briefs forced on in the database", async () => {
+    await prisma.user.update({
+      where: { id: contractor.userId },
+      data: { emailDailyBrief: true, emailWeeklyBrief: true },
+    });
+    // Their day is not empty — only the role rule stands between them and an email.
+    await prisma.disciplineTask.update({
+      where: { id: myTaskId },
+      data: { deadline: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000) },
+    });
+    expect((await personBrief(contractor)).overdue.total).toBe(1);
+    const spy = mockEmailFetchOk();
+
+    const now = new Date();
+    const morning = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 6));
+    expect(await sendDailyBriefEmails(morning)).toEqual({ people: 0, sent: 0 });
+    expect(sentEmails(spy)).toHaveLength(0);
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: contractor.userId } })).dailyBriefEmailedAt,
+    ).toBeNull();
+  });
+});
+
+describe("a contractor at Sign in with Microsoft", () => {
+  const key = makeKey("kid-external");
+  const FAILED_LOCATION = `${TEST_BASE_URL}/login?microsoft=failed`;
+  let fake: FakeMicrosoft;
+  let restoreEnv: () => void = () => undefined;
+  let tid: string;
+  let ipCounter = 0;
+
+  function get(url: string, ip: string): Request {
+    return new Request(`http://localhost${url}`, {
+      headers: { "x-forwarded-for": ip, "user-agent": "vitest" },
+    });
+  }
+
+  /** Press the button, "sign in at Microsoft" as this contractor, come back. */
+  async function roundTrip(oid: string): Promise<Response> {
+    ipCounter += 1;
+    const ip = `198.18.0.${ipCounter}`;
+    const started = await microsoftStartRoute(get("/api/auth/microsoft", ip));
+    expect(started.status).toBe(302);
+    const authorize = new URL(started.headers.get("location") ?? "");
+    const state = authorize.searchParams.get("state") ?? "";
+    const nonce = authorize.searchParams.get("nonce") ?? "";
+    fake.idTokenFor = () =>
+      signToken(claimsFor({ tid, oid, email: contractor.email, edov: true, nonce }), key);
+    return microsoftCallbackRoute(
+      get(`/api/auth/microsoft/callback?code=the-code&state=${encodeURIComponent(state)}`, ip),
+    );
+  }
+
+  beforeEach(async () => {
+    jar.clear();
+    restoreEnv = configureMicrosoftEnv();
+    signingKeys.clear();
+    fake = installFakeMicrosoft([key.jwk]);
+    tid = newTenant();
+    await prisma.organization.update({ where: { id: fixture.orgId }, data: { entraTenantId: tid } });
+  });
+
+  afterEach(() => {
+    restoreEnv();
+    vi.restoreAllMocks();
+    jar.clear();
+  });
+
+  it("refuses a contractor whose access has ended, with the same redirect as everybody else", async () => {
+    await prisma.user.update({
+      where: { id: contractor.userId },
+      data: { accessExpiresAt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+    });
+
+    const response = await roundTrip(newOid());
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(FAILED_LOCATION);
+    expect(jar.has(SESSION_COOKIE)).toBe(false);
+    expect(await prisma.session.count({ where: { userId: contractor.userId } })).toBe(0);
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: contractor.userId } })).microsoftOid,
+    ).toBeNull();
+  });
+
+  it("refuses a contractor whose account was deactivated, with the same redirect", async () => {
+    // Already linked, so the refusal is not merely a failed first match.
+    const oid = newOid();
+    await prisma.user.update({
+      where: { id: contractor.userId },
+      data: { isActive: false, microsoftOid: oid, microsoftTenantId: tid },
+    });
+
+    const response = await roundTrip(oid);
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(FAILED_LOCATION);
+    expect(jar.has(SESSION_COOKIE)).toBe(false);
+    expect(await prisma.session.count({ where: { userId: contractor.userId } })).toBe(0);
+  });
+
+  it("lets a live contractor from the company's own Microsoft tenant in — as EXTERNAL, on My tasks", async () => {
+    const response = await roundTrip(newOid());
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(`${TEST_BASE_URL}${homePathFor("EXTERNAL")}`);
+    expect(homePathFor("EXTERNAL")).toBe("/my-tasks");
+    expect(jar.has(SESSION_COOKIE)).toBe(true);
+
+    const signedIn = await getSessionUser();
+    expect(signedIn?.id).toBe(contractor.userId);
+    expect(signedIn?.role).toBe("EXTERNAL");
   });
 });

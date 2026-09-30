@@ -50,6 +50,13 @@ export {
   disconnectMicrosoft,
 } from "@/server/actions/integrations";
 
+// Admin → Integrations → Microsoft 365 → "Sign in with Microsoft". Switching it on is a browser
+// journey to Microsoft (/api/auth/microsoft/enable); switching it off is the one action.
+export { disableMicrosoftSignIn } from "@/server/actions/microsoft-signin";
+
+// Your account → Email: the signed-in person's own alert and brief email choices.
+export { setEmailPreferences } from "@/server/actions/email-preferences";
+
 // Admin → Data & privacy. The download link itself never comes back through an action.
 export { startWorkspaceExport } from "@/server/actions/exports";
 

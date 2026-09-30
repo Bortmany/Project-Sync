@@ -23,11 +23,14 @@ import type { EmailedPurposeName, EmailPurposeName } from "@/lib/zod-schemas";
  * at their keyboard), a day for a verification, a week for an invitation (a new colleague may be
  * away when it lands).
  *
- * EXPORT and TWOFA_PENDING are the two that are never emailed. EXPORT is the download bearer for a
+ * EXPORT, TWOFA_PENDING and TWOFA_PENDING_MICROSOFT are the three that are never emailed. EXPORT is the download bearer for a
  * finished workspace export, and a day is long enough to fetch a large file without leaving a way
  * into a company's whole record lying around all week. TWOFA_PENDING is the ticket between the
  * password step and the six-digit step of one sign-in: five minutes is long enough to find a phone
  * and short enough that a copied ticket is worth nothing by the time anybody could use it.
+ * TWOFA_PENDING_MICROSOFT is the same ticket when the first step was a Microsoft sign-in instead of
+ * a password — same five minutes, never emailed, and its own name only so the second step can
+ * record which door somebody came through.
  */
 export const EMAIL_TOKEN_TTL_MS: Record<EmailPurposeName, number> = {
   RESET: 60 * 60 * 1000, // 1 hour
@@ -35,7 +38,15 @@ export const EMAIL_TOKEN_TTL_MS: Record<EmailPurposeName, number> = {
   INVITE: 7 * 24 * 60 * 60 * 1000, // 7 days
   EXPORT: 24 * 60 * 60 * 1000, // 24 hours
   TWOFA_PENDING: 5 * 60 * 1000, // 5 minutes
+  TWOFA_PENDING_MICROSOFT: 5 * 60 * 1000, // 5 minutes
 };
+
+/**
+ * The two kinds of sign-in ticket: after a password, and after a Microsoft sign-in. Both are
+ * accepted by the second step and both are retired together by `retireSignInTickets()`.
+ */
+export const SIGN_IN_TICKET_PURPOSES = ["TWOFA_PENDING", "TWOFA_PENDING_MICROSOFT"] as const;
+export type SignInTicketPurpose = (typeof SIGN_IN_TICKET_PURPOSES)[number];
 
 /**
  * Plain English for how long a link lasts, for the email copy. Keyed by the purposes that are
@@ -116,8 +127,8 @@ export async function issueEmailToken(
 }
 
 /**
- * Retires every sign-in ticket this person is holding: their unused `TWOFA_PENDING` rows are marked
- * used, so none of them can finish a sign-in any more.
+ * Retires every sign-in ticket this person is holding: their unused `TWOFA_PENDING` and
+ * `TWOFA_PENDING_MICROSOFT` rows are marked used, so none of them can finish a sign-in any more.
  *
  * **The rule it keeps: any change to a credential or to the second factor retires outstanding
  * sign-in tickets.** A ticket says "this account's password was accepted a moment ago" — the moment
@@ -131,7 +142,7 @@ export async function retireSignInTickets(
   userId: string,
 ): Promise<void> {
   await tx.emailToken.updateMany({
-    where: { userId, purpose: "TWOFA_PENDING", usedAt: null },
+    where: { userId, purpose: { in: [...SIGN_IN_TICKET_PURPOSES] }, usedAt: null },
     data: { usedAt: new Date() },
   });
 }
@@ -160,6 +171,30 @@ export async function previewEmailToken(
 
   if (!row || !row.user.isActive) return null;
   return row.user;
+}
+
+/**
+ * The sign-in ticket's holder and WHICH kind of ticket it is, without spending it — the second step
+ * accepts both kinds and needs to know which door the first step was, to write it in the LOGIN row.
+ * One query over both purposes; a miss answers `null` exactly as `previewEmailToken` does.
+ */
+export async function previewSignInTicket(
+  rawToken: string,
+): Promise<{ user: EmailTokenUser; purpose: SignInTicketPurpose } | null> {
+  const row = await prisma.emailToken.findFirst({
+    where: {
+      tokenHash: hashEmailToken(rawToken),
+      purpose: { in: [...SIGN_IN_TICKET_PURPOSES] },
+      usedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+    select: { purpose: true, user: { select: USER_SELECT } },
+  });
+
+  if (!row || !row.user.isActive) return null;
+  const purpose = SIGN_IN_TICKET_PURPOSES.find((candidate) => candidate === row.purpose);
+  if (!purpose) return null;
+  return { user: row.user, purpose };
 }
 
 /**

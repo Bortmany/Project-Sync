@@ -19,9 +19,10 @@ import { logger } from "@/lib/logger";
 import { byIp, checkOnly, clearFailures, clientIp, limit, recordFailure } from "@/lib/rate-limit";
 import { TwoFactorChallengeInput } from "@/lib/zod-schemas";
 import {
+  SIGN_IN_TICKET_PURPOSES,
   consumeEmailToken,
   hashEmailToken,
-  previewEmailToken,
+  previewSignInTicket,
 } from "@/server/services/email-tokens";
 import {
   TWO_FACTOR_ACCOUNT_TRIES,
@@ -38,6 +39,16 @@ const TRIES_PER_TOKEN = 5;
 
 /** Thrown inside the transaction so a failed attempt rolls the whole thing back, ticket included. */
 class SecondFactorMiss extends Error {}
+
+/**
+ * Throws a ticket away whichever kind it is — after a password or after a Microsoft sign-in. The
+ * hash is unique, so at most one of the two updates ever matches anything.
+ */
+async function burnTicket(pendingToken: string): Promise<void> {
+  for (const purpose of SIGN_IN_TICKET_PURPOSES) {
+    await consumeEmailToken(pendingToken, purpose);
+  }
+}
 
 function failed(): NextResponse {
   return NextResponse.json({ ok: false, error: TWO_FACTOR_FAILED_MESSAGE }, { status: 401 });
@@ -78,13 +89,17 @@ export async function POST(request: Request) {
   const tokenThrottle = checkOnly(tokenKey, TRIES_PER_TOKEN);
   if (!tokenThrottle.ok) {
     // This ticket is finished with: it is marked used, so the only way on is the password again.
-    await consumeEmailToken(pendingToken, "TWOFA_PENDING");
+    await burnTicket(pendingToken);
     return tooMany("Too many attempts. Please sign in again to start over.", tokenThrottle.retryAfterSec);
   }
 
-  // Looking at the ticket never spends it — the same discretion every emailed link gets.
-  const holder = await previewEmailToken(pendingToken, "TWOFA_PENDING");
-  if (!holder) return failed();
+  // Looking at the ticket never spends it — the same discretion every emailed link gets. Both kinds
+  // of ticket are accepted: one minted after a password, one after a Microsoft sign-in. Which kind
+  // it is decides nothing but the `method` written in the LOGIN row.
+  const ticket = await previewSignInTicket(pendingToken);
+  if (!ticket) return failed();
+  const holder = ticket.user;
+  const method = ticket.purpose === "TWOFA_PENDING_MICROSOFT" ? "microsoft" : "password";
 
   // The same budget the account page spends when somebody proves the second factor there — one
   // ceiling per account, wherever the guessing happens.
@@ -105,8 +120,8 @@ export async function POST(request: Request) {
 
   // Two-factor may have been switched off since the password was accepted — an administrator's
   // reset, or a SESSION_SECRET rotation that makes the saved secret unreadable (which switches it
-  // off here, records it and tells the person). Either way this ticket is a proved password from a
-  // minute ago, so the sign-in simply finishes without a second factor rather than dead-ending.
+  // off here, records it and tells the person). Either way this ticket is a proved password (or a
+  // proved, linked Microsoft sign-in) from a minute ago, so the sign-in simply finishes without a second factor rather than dead-ending.
   const secret = user.totpEnabledAt ? await readableTotpSecret(user) : null;
   const secondFactorStillApplies = secret !== null;
 
@@ -145,7 +160,7 @@ export async function POST(request: Request) {
       // The ticket is spent LAST of the checks and inside the same transaction: a wrong code rolls
       // this back, so the person keeps their remaining tries, and two browsers racing one ticket
       // can only ever have one winner.
-      const spent = await consumeEmailToken(pendingToken, "TWOFA_PENDING", tx);
+      const spent = await consumeEmailToken(pendingToken, ticket.purpose, tx);
       if (!spent) throw new SecondFactorMiss();
 
       await tx.session.create({
@@ -171,6 +186,7 @@ export async function POST(request: Request) {
             reportedIp: ip ?? null,
             twoFactor: secondFactorStillApplies,
             recoveryCode: codesLeft !== null,
+            method,
           },
         },
       });
@@ -186,7 +202,7 @@ export async function POST(request: Request) {
     // The try that used the last one kills the ticket as well, rather than leaving a spent-out
     // ticket lying around until it expires.
     if (!checkOnly(tokenKey, TRIES_PER_TOKEN).ok) {
-      await consumeEmailToken(pendingToken, "TWOFA_PENDING");
+      await consumeEmailToken(pendingToken, ticket.purpose);
     }
 
     logger.warn("Second factor refused", { userId: user.id });

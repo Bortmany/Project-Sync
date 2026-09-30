@@ -51,6 +51,19 @@ publicly reachable with no sign-in, following what this app *actually* stores:
   domain, who connected it and when, and that account's sign-in tokens, encrypted at rest and never
   shown to anybody. The privacy page has its own section explaining it, including that everybody
   browses through the one connected account.
+- **A Microsoft sign-in link**, for each person who uses "Sign in with Microsoft": the permanent
+  identifier Microsoft gives their work account and the identifier of their company's Microsoft
+  directory — kept so we recognise them next time. The person's own identifiers are never in an
+  audit row or a log line, never in either export (the personal copy says only "yes, signed in
+  with Microsoft"), and cleared when the account is deleted or the company switches the feature
+  off. And, for each company that switches it on, that company's Microsoft directory identifier —
+  company configuration, not personal data — which IS recorded (with the domain) in the
+  `MICROSOFT_SIGNIN_ENABLED` audit row and appears in the company's own workspace export. No
+  Microsoft token is stored for sign-in.
+- **Email choices**: each person's three yes/no choices — alert emails, the daily brief, the weekly
+  summary — and **the date their last daily brief email was attempted**. Every existing person
+  starts with all three off; a new account starts with alerts on and both briefs off. No email
+  content, subject or copy of any email is stored.
 
 Both pages carry an honest note that they are a template pending professional review, and are not yet
 reviewed by a lawyer — do that before relying on them for real launch. **Data rights are now
@@ -77,11 +90,11 @@ Set these in the Railway service's Variables tab — never in the repo, never in
 | `SENTRY_DSN` | Optional | Server-side error tracking. Leave unset and it stays completely inert (`/api/health` reports `"sentry": {"server": "dormant", ...}`). Set it and server errors go to Sentry (`"server": "configured"`). **Set it before the build**, because the Content-Security-Policy that lets the browser reach Sentry is baked into the build. |
 | `NEXT_PUBLIC_SENTRY_DSN` | Optional | Only if you also want errors from people's browsers. Inlined at build time, and reported separately as `"sentry": {..., "browser": "configured"}`. |
 | `SENTRY_TRACES_SAMPLE_RATE` | Optional | `0` by default — errors only, no tracing quota spent. |
-| `APP_BASE_URL` | Optional | The address this deployment answers on, e.g. `https://tielora.up.railway.app`, with no trailing slash. Makes the link inside a Slack or Teams message clickable, and is **required** for Microsoft 365 attachments (it is what the callback address is built from) **and for email** (an invitation or reset email is nothing but a link, so with this unset no email is sent at all, whatever the two variables below say). Unset is safe for chat: messages name the page instead of linking to it. **It is also the address the public pages publish**: `/robots.txt`, `/sitemap.xml` and the social preview (`og:image`) are all built from it, and both of the first two read it fresh on every request. Unset, they answer with `http://localhost:3000`, which is harmless locally and wrong on a real domain — so set it before you hand the address to anybody, and set it **before the build** as well, since the prerendered pages resolve their preview image at build time. Not a secret. |
-| `RESEND_API_KEY` | Optional | **A real secret.** The API key from resend.com. Leave it unset and no email is ever sent: the forgot-password page tells people to ask their workspace administrator, the "email them an invite link" option is absent from Admin → Users, and `/api/health` reports `"email":"dormant"`. Nothing else in the app changes. |
-| `EMAIL_FROM` | Optional | The address emails come from, e.g. `Tielora <no-reply@yourdomain>`. Must be on a domain you have verified in Resend, or every send is refused. Not a secret, but email stays dormant until it and the key are **both** set. |
-| `MS_GRAPH_CLIENT_ID` | Optional | The Application (client) ID of the Azure app registration (section 6). Not a secret, but the feature stays completely dormant until it and the secret below are both set: no card, no tab, and every Microsoft route answers "not set up". `/api/health` reports `"microsoft": {"status": "dormant", "connectedOrgs": 0}` until then. |
-| `MS_GRAPH_CLIENT_SECRET` | Optional | **A real secret.** The client secret Value from the same Azure app registration, shown once when it is created. Client secrets expire — set a calendar reminder before the date you chose, because when it expires every company's attachments stop working until it is replaced. |
+| `APP_BASE_URL` | Optional | The address this deployment answers on, e.g. `https://tielora.up.railway.app`, with no trailing slash. Makes the link inside a Slack or Teams message clickable, and is **required** for Microsoft 365 attachments (it is what the callback address is built from) **and for email** (an invitation or reset email is nothing but a link, and every alert and daily brief email carries its "open it" link and its one-click **unsubscribe links**, which are built from this address — so with this unset no email is sent at all, whatever the two variables below say). It is also what the "Sign in with Microsoft" return address is built from. Unset is safe for chat: messages name the page instead of linking to it. **It is also the address the public pages publish**: `/robots.txt`, `/sitemap.xml` and the social preview (`og:image`) are all built from it, and both of the first two read it fresh on every request. Unset, they answer with `http://localhost:3000`, which is harmless locally and wrong on a real domain — so set it before you hand the address to anybody, and set it **before the build** as well, since the prerendered pages resolve their preview image at build time. Not a secret. |
+| `RESEND_API_KEY` | Optional | **A real secret.** The API key from resend.com. It carries the three account emails (invitation, password reset, verification) **and, person by person, the alert and daily brief emails** people choose on Your account. Leave it unset and no email is ever sent: the forgot-password page tells people to ask their workspace administrator, the "email them an invite link" option is absent from Admin → Users, the Email card is absent from Your account, and `/api/health` reports `"email":"dormant"`. Nothing else in the app changes. |
+| `EMAIL_FROM` | Optional | The address emails come from, e.g. `Tielora <no-reply@mail.yourdomain>`. Must be on a domain you have **verified in Resend with SPF, DKIM and DMARC all set up** (Resend gives you the SPF and DKIM records; DMARC you add by hand — start at `p=none`, move to `p=quarantine` after two clean weeks). Now that alerts and briefs go out too, Outlook and Microsoft 365 weigh all three, so treat them as required. **Send from a `mail.` subdomain** (for example `mail.yourdomain`) so brief and alert traffic can never hurt the reputation of your main domain. Not a secret, but email stays dormant until it and the key are **both** set. |
+| `MS_GRAPH_CLIENT_ID` | Optional | The Application (client) ID of the Azure app registration (section 6). It powers **both** Microsoft features: OneDrive/SharePoint attachments and **Sign in with Microsoft**. Not a secret, but both stay completely dormant until it and the secret below are both set: no card, no tab, **no button on the login page**, and every Microsoft route answers "not set up". Even once set, **no company sees Sign in with Microsoft work until its own administrator switches it on** in Admin → Integrations. `/api/health` reports `"microsoft": {"status": "dormant", "connectedOrgs": 0, "signInOrgs": 0}` until then; `signInOrgs` is how many companies have switched sign-in on. |
+| `MS_GRAPH_CLIENT_SECRET` | Optional | **A real secret.** The client secret Value from the same Azure app registration, shown once when it is created. Client secrets expire — set a calendar reminder before the date you chose, because when it expires every company's attachments **and every Microsoft sign-in** stop working until it is replaced (passwords keep working throughout). |
 | `MS_GRAPH_REDIRECT_PATH` | Optional | Defaults to `/api/integrations/microsoft/callback`, which is the path to register in Azure. Only change it if something in front of the app rewrites that path. |
 | `PADDLE_API_KEY` | Optional | **A real secret.** The server-side API key from the Paddle dashboard (section 8). Sandbox and live have separate keys and one does not work against the other's host. Leave it unset and payments stay completely dormant: no buttons on Admin → Billing, both billing actions refuse plainly, `/api/billing/webhook` answers "not set up", and `/api/health` reports `"billing": "dormant"`. Plans and limits carry on working exactly as they do today. |
 | `PADDLE_WEBHOOK_SECRET` | Optional | **A real secret.** The notification destination's own secret (`pdl_ntfset_…`), copied from Dashboard → Developer tools → Notifications → your destination. It is what proves a webhook really came from Paddle; without it nothing is trusted and the webhook answers 503. Each destination has its own — the sandbox one and the live one are different. |
@@ -96,10 +109,16 @@ Set these in the Railway service's Variables tab — never in the repo, never in
 | `DATABASE_URL_TEST` | No | Local and CI only. Never set it in production — the tests empty that database. |
 
 Never paste a secret into a commit, a log or a chat. If one leaks: rotate it in Railway, redeploy,
-and (for `SESSION_SECRET`) accept three knock-on effects, all of them intended: everyone is signed
-out, every company has to reconnect Microsoft 365, and **everyone who had two-factor sign-in on has
+and (for `SESSION_SECRET`) accept four knock-on effects, all of them intended: everyone is signed
+out, every company has to reconnect Microsoft 365, **everyone who had two-factor sign-in on has
 it switched off** — each person is notified in the app and sets it up again in a minute, which is far
-better than a workspace full of people locked out by a secret they never saw.
+better than a workspace full of people locked out by a secret they never saw — and **the unsubscribe
+links in emails already sitting in people's inboxes stop working**: they are signed with a key made
+from this secret. The page they open still points to Your account, where anybody can switch their
+emails off, and every new email carries a fresh working link. **Sign in with Microsoft itself is
+not affected** — no Microsoft token is stored for it, only who each person is, so it carries on
+exactly as before (somebody half-way through a Microsoft sign-in at that exact moment just presses
+the button again, and a person with two-factor on re-enrols, as above).
 
 ---
 
@@ -141,7 +160,7 @@ lets a clean Nixpacks checkout build at all — the generated Prisma client live
      on every copy but one when the app runs on several.
    - The same answer's `integrations` line reads `{"slack":0,"teams":0}` on a fresh install — those
      are counts of how many companies have switched a chat channel on, and nothing else. The
-     `microsoft` line reads `{"status":"dormant","connectedOrgs":0}` until the Azure app in section 6
+     `microsoft` line reads `{"status":"dormant","connectedOrgs":0,"signInOrgs":0}` until the Azure app in section 6
      is registered, and `"configured"` afterwards.
    - The same answer's `signups` line reads `"invite"` once `SIGNUP_INVITE_CODES` is set, `"open"`
      only with `SIGNUPS_OPEN=true`, and `"closed"` with neither — in which case nobody can create a
@@ -163,6 +182,27 @@ lets a clean Nixpacks checkout build at all — the generated Prisma client live
      the screen says exactly the same thing — that identical answer is the whole point of the page.
      While the line reads `"dormant"` the page says resets by email are not available and asks
      people to contact their administrator, which is a supported way to run.
+   - **When email is `"configured"`, send yourself an alert and a daily brief** and look at them in
+     Outlook (or any Microsoft 365 mailbox). On Your account, confirm your address if the Email card
+     asks you to, and switch **Alerts** and **Daily brief** on. Have a colleague assign you a task:
+     one email arrives with the same headline and sentence as the in-app notification and a link
+     back to your own domain. The next morning after 05:00 UTC, your "Your day" email arrives (none
+     on a day with nothing in it). **Check Outlook shows its own "Unsubscribe" button** at the top of
+     both — that is the one-click header working — and that pressing it switches that one kind of
+     email off with no sign-in, which Your account then shows. Also check an invitation or
+     password-reset email has **no** unsubscribe link. If the emails land in junk, the sending
+     domain's SPF, DKIM or DMARC is the first thing to check (section 2, `EMAIL_FROM`).
+   - **Sign in with Microsoft**, once section 6 is done. Before the two `MS_GRAPH_*` variables are
+     set, the login page must look exactly as it always has — **no Microsoft button at all**. Once
+     they are set and you have redeployed, the login page shows "Sign in with Microsoft" under the
+     password form, and `/api/health`'s `microsoft` line carries `"signInOrgs":0`. Then, as the
+     administrator of a **test company**, open Admin → Integrations → Microsoft 365 → Sign in with
+     Microsoft → **Switch on**, sign in to Microsoft with the account whose email matches your
+     Tielora email, and confirm the card says it is on and `signInOrgs` reads `1`. Sign out and use
+     the button: you should land on your home page. Finally, try it with a Microsoft account that has
+     **no** Tielora account in that company (or from another company's Microsoft): you must see
+     exactly **"Incorrect email or password."** — the same words as a wrong password, and nothing
+     that hints at why.
    - The deploy logs contain no "Tielora cannot start in production" line. If they do, the
      message names exactly which variable is wrong.
    - `curl -sD - -o /dev/null https://<domain>/login` shows `Content-Security-Policy`,
@@ -275,15 +315,18 @@ the document count makes the copy-out awkward.
 
 ---
 
-## 6. Microsoft 365 attachments — registering the Azure app (owner's one-off setup)
+## 6. Microsoft 365 attachments and Sign in with Microsoft — registering the Azure app (owner's one-off setup)
 
-This is what switches on "Attach from OneDrive or SharePoint" in the upload box. Until you do it,
-the whole feature is invisible to everybody and nothing else in the app changes. You need a
-Microsoft account that can create app registrations; it does **not** have to be a customer's.
+This one registration switches on **two** things: "Attach from OneDrive or SharePoint" in the upload
+box, and the "Sign in with Microsoft" button on the login page. Until you do it, both are invisible
+to everybody — the login page looks exactly as it does today — and nothing else in the app changes.
+You need a Microsoft account that can create app registrations; it does **not** have to be a
+customer's. There is no second registration and no second secret for sign-in.
 
 You register the app **once**, for the whole product. Each customer company's own administrator then
-presses Connect inside Tielora and signs in with their own Microsoft account — you never touch their
-tenant.
+presses Connect (files) and/or Switch on (sign-in) inside Tielora and signs in with their own
+Microsoft account — you never touch their tenant. The two work independently: a company can have
+either, both or neither.
 
 1. Go to **portal.azure.com** → search **"App registrations"** → **New registration**.
 2. Name it **Tielora**. Under **Supported account types**, choose **"Accounts in any organizational
@@ -294,6 +337,11 @@ tenant.
    `https://tielora.up.railway.app/api/integrations/microsoft/callback`. It must match `APP_BASE_URL`
    exactly, including https and no trailing slash. (You may add a `http://localhost:3000/...` one for
    development; remove it before launch if you prefer.)
+   **Then add a second Web redirect for sign-in** (Authentication → Add URI):
+   `<APP_BASE_URL>/api/auth/microsoft/callback`, for example
+   `https://tielora.up.railway.app/api/auth/microsoft/callback` (plus
+   `http://localhost:3000/api/auth/microsoft/callback` if you test on your Mac). Both addresses
+   stay — the first is for files, the second for signing in.
 4. Click **Register**. On the **Overview** page copy the **Application (client) ID** — that is
    `MS_GRAPH_CLIENT_ID`. It is not a secret.
 5. Go to **Certificates & secrets** → **New client secret** → pick an expiry (24 months is a
@@ -301,17 +349,32 @@ tenant.
    `MS_GRAPH_CLIENT_SECRET`. Put both into Railway's Variables tab, never into the repo.
    *Microsoft recommends a certificate instead of a secret for production; it is more secure but
    more work to run. A secret is fine to start with — write the expiry date in your calendar,
-   because when it lapses every company's attachments stop until you replace it.*
+   because when it lapses every company's attachments and every Microsoft sign-in stop until you
+   replace it. Passwords keep working throughout.*
 6. Go to **API permissions** → **Add a permission** → **Microsoft Graph** → **Delegated
-   permissions** → add `Files.Read.All` and `offline_access` (`openid` and `profile` are already
-   there by default and are what tell us which company connected). **Do not** press "Grant admin
-   consent" for your own tenant — each customer's own administrator approves for their company when
-   they press Connect.
-7. Redeploy so the new variables are picked up, then check `https://<domain>/api/health` reads
-   `"microsoft":{"status":"configured","connectedOrgs":0}`.
-8. Sign in as a company administrator, open **Admin → Integrations**, and the Microsoft 365 card is
-   now there. Pressing **Connect** goes to Microsoft, comes back, and the card shows the connected
-   work domain, who connected it and when.
+   permissions** → add `Files.Read.All` and `offline_access` for files, and make sure **`openid`,
+   `profile` and `email`** are all listed — those three are **the only permissions sign-in ever
+   asks for** (who you are, and nothing else: sign-in never asks for your files or keeps any
+   Microsoft token). `openid` and `profile` are usually there by default; add `email` if it is
+   not. **Do not** press "Grant admin consent" for your own tenant — each customer's own
+   administrator approves for their company when they press Connect or Switch on.
+7. **Token configuration → Add optional claim → ID token → tick `email` and `xms_edov`** → accept
+   the prompt. Sign-in needs both: `email` finds a person the very first time they use the button,
+   and `xms_edov` is Microsoft saying that email's domain really belongs to their company. Without
+   them, nobody who has not already been linked can get in with Microsoft (they see the ordinary
+   "Incorrect email or password." sentence), and no administrator can switch sign-in on.
+8. Redeploy so the new variables are picked up, then check `https://<domain>/api/health` reads
+   `"microsoft":{"status":"configured","connectedOrgs":0,"signInOrgs":0}`, and that the login page
+   now shows "Sign in with Microsoft".
+9. Sign in as a company administrator, open **Admin → Integrations**, and the Microsoft 365 card is
+   now first in the list, in two parts. **"OneDrive and SharePoint files"**: pressing **Connect**
+   goes to Microsoft, comes back, and the card shows the connected work domain, who connected it
+   and when. **"Sign in with Microsoft"**: pressing **Switch on** sends the administrator to sign in
+   to Microsoft **as themselves**, with the Microsoft account whose email is the same as their
+   Tielora email; the company's Microsoft directory is captured from that sign-in (nobody ever
+   types an id), and the card then shows it is on, who switched it on, and how many people have
+   used it. **Switch off** removes every person's Microsoft link in that company and signs nobody
+   out — people simply use their password again.
 
 **What each customer's administrator should know before pressing Connect:** everyone in their
 company browses through the account that connects, so they should use an account whose file access
@@ -324,6 +387,15 @@ original is later moved or deleted.
 visiting `https://login.microsoftonline.com/organizations/v2.0/adminconsent?client_id=<your client
 id>&scope=https://graph.microsoft.com/Files.Read.All%20offline_access&redirect_uri=<your callback
 address>` once, after which the ordinary Connect button works.
+
+**For sign-in, the same lock shows the same "needs admin approval" page** — at Microsoft, before
+Tielora is involved, both for the administrator pressing Switch on and for their people pressing
+the login button. The sign-in approval asks for less, so it is a different link, with **scope
+`openid profile email`**: send their Microsoft administrator
+`https://login.microsoftonline.com/organizations/v2.0/adminconsent?client_id=<your client
+id>&scope=openid%20profile%20email&redirect_uri=<APP_BASE_URL>/api/auth/microsoft/callback` once,
+after which Switch on and the login button both work for that company. A company that uses both
+features needs both approvals.
 
 ---
 
@@ -572,26 +644,41 @@ Named here so nobody assumes otherwise:
   channels separately, so neither can be mistaken for the other.
 - **Shared rate limiting** — limits are counted per process (`src/lib/rate-limit.ts`). Fine on one
   instance; if the app is ever scaled to several, add the Redis store behind `RateLimitStore`.
-- **Email or SMS notifications** — work notifications live in the app, with an optional copy to a
-  Slack or Teams channel (Admin → Integrations). **No task, comment or deadline is ever emailed to
-  anybody**, and there is no plan to. The app does now send three account emails — an invitation, a
-  password reset and an email verification — and even those are dormant until `RESEND_API_KEY`,
-  `EMAIL_FROM` and `APP_BASE_URL` are set (section 2). No SMS is ever sent.
+- **SMS notifications, and emailing every kind of notification** — alert and brief emails exist,
+  **per person, off unless chosen** (new accounts start with alerts on, sent only once their address
+  is confirmed); an alert email says only what the in-app notification says, and only for the seven
+  kinds that have a chat toggle — uploads and ordinary comments stay in the app. No SMS is ever
+  sent. All of it, the three account emails included, is dormant until `RESEND_API_KEY`,
+  `EMAIL_FROM` and `APP_BASE_URL` are set (section 2). *The retired rule*: this list used to say no
+  task, comment or deadline would ever be emailed; the owner's decision of 30 Sep 2026 retired it.
 - **A queue behind email** — the same one-attempt, one-retry, then-dropped shape chat delivery has,
-  for the same reason: the audit trail records that the app meant to send, so a dropped email costs
-  somebody a link they can ask for again, never a record. Someone who never receives an invitation
-  is given a password by their administrator instead, exactly as before email existed.
+  for the same reason: the audit trail records that the app meant to send a link, and an alert or
+  brief is a copy of something already in the app, so a dropped email costs somebody a link they
+  can ask for again or a nudge they will see in the app — never a record. Someone who never receives
+  an invitation is given a password by their administrator instead, exactly as before email
+  existed. **Bounces and complaints are not handled either**: Resend's reports of an address that
+  bounced or marked Tielora as spam are not read, and a bouncing address is not marked bad. Named
+  follow-up if complaints appear.
 - **A queue behind chat delivery** — a Slack or Teams message is attempted once, retried once if the
   chat tool says "too many requests", and otherwise dropped with a logged line. Delivery state lives
   in the process, not in a table, exactly like rate limiting. In-app notifications are always written
   either way, so a dropped card costs a nudge and never the record.
 - **A Microsoft file picker in the browser** — the picker is ours, served by our own routes. No
   Microsoft JavaScript is loaded, which is why the strict Content-Security-Policy needed no change.
-- **One Microsoft sign-in per person** — a company connects **once**, by an administrator, and
-  everyone browses through that account. Per-person sign-ins would show each person exactly their
-  own OneDrive; that is a bigger piece of work, and the card says plainly whose access is being
-  shared. Attaching is still limited by Tielora's own permissions: you can only attach to a task you
-  could already upload to.
+- **Per-person Microsoft connections for file browsing** — for OneDrive and SharePoint files, a
+  company connects **once**, by an administrator, and everyone browses through that account.
+  Per-person file connections would show each person exactly their own OneDrive; that is a bigger
+  piece of work, and the card says plainly whose access is being shared. Attaching is still limited
+  by Tielora's own permissions: you can only attach to a task you could already upload to. (This is
+  about browsing files only. **Signing in** with Microsoft is per person — see the next item.)
+- **Microsoft-only sign-in** — Sign in with Microsoft is an extra door, never a replacement:
+  everybody's password keeps working, and there is no per-company switch forcing people off
+  passwords. Enforcing it would need a break-glass way in for an administrator locked out of
+  Microsoft, so it is deliberately not built this round. Nor are: creating Tielora accounts
+  automatically from a Microsoft sign-in, importing people or groups from Microsoft, a per-person
+  "unlink my Microsoft account" button (switching the company off and on again is the reset),
+  treating an address as confirmed because Microsoft vouched for it, and personal Microsoft
+  accounts (Outlook.com / Hotmail) — work and school accounts only.
 - **Browsing SharePoint sites the connected account does not already have** — Tielora asks only for
   `Files.Read.All`, so the picker lists the libraries that account can already reach. Listing every
   site in a company would need the broader `Sites.Read.All` permission, which is deliberately not

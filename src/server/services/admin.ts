@@ -239,6 +239,10 @@ export async function createUser(actor: ActorContext, input: CreateUserInput): P
         jobTitle: input.jobTitle ?? null,
         companyName,
         accessExpiresAt,
+        // A NEW account starts with alert emails on (both modes, contractors included) — set here,
+        // in code, never by the column default, which is false so the migration switched nobody on.
+        // Nothing is sent until the address is confirmed. Both briefs stay off: they are opt-in.
+        emailAlerts: true,
       },
       select: USER_SELECT,
     });

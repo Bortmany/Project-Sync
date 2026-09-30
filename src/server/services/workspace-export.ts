@@ -471,7 +471,11 @@ async function* jsonRows(read: PageReader): AsyncGenerator<string> {
   yield "\n]\n";
 }
 
-/** Everything about a person EXCEPT their password hash. Sessions and tokens are absent entirely. */
+/**
+ * Everything about a person EXCEPT their password hash and their Microsoft sign-in identifiers
+ * (`microsoftOid`, `microsoftTenantId`): the permanent id Microsoft gives a person belongs to that
+ * person, not the company's record. Sessions and tokens are absent entirely.
+ */
 const USER_FIELDS = {
   id: true,
   orgId: true,
@@ -483,6 +487,11 @@ const USER_FIELDS = {
   companyName: true,
   accessExpiresAt: true,
   emailVerifiedAt: true,
+  // Each person's own email choices, and when their daily brief email was last attempted.
+  emailAlerts: true,
+  emailDailyBrief: true,
+  emailWeeklyBrief: true,
+  dailyBriefEmailedAt: true,
   isActive: true,
   lastLoginAt: true,
   createdAt: true,
@@ -580,6 +589,9 @@ const README = (workspace: string, when: Date) =>
     "  - The address of a connected Slack or Teams channel, and the Microsoft 365 connection.",
     "    A webhook address is a password for that channel and Microsoft's tokens can be swapped",
     "    for new ones, so this file shows only which service is connected and to which host.",
+    "  - The permanent id Microsoft gives each person who signs in with Microsoft. It identifies",
+    "    the person rather than the company's work; organization.json does show your company's",
+    "    own Microsoft directory id, if sign-in with Microsoft is switched on.",
     "  - Anything private to one person: starred shortcuts and private to-do lists. Those belong",
     "    to the person, not the company — each person can download their own from Your account.",
     "",
@@ -594,6 +606,8 @@ type ArchiveSummary = { fileCount: number; documentCount: number };
 
 /** Writes every entry of one company's archive, in order, streaming throughout. */
 async function writeArchive(zip: ZipWriter, orgId: string): Promise<ArchiveSummary> {
+  // The whole organisation row, which includes `entraTenantId` — the company's own Microsoft
+  // directory id once sign-in with Microsoft is switched on (company configuration, not a person's).
   const organization = await prisma.organization.findUnique({ where: { id: orgId } });
   if (!organization) throw new NotFoundError("We could not find that workspace.");
 

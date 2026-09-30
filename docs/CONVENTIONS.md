@@ -214,11 +214,25 @@ In practice:
       on that flag. It used to answer 404, which hid the tab just as well but planted a red error in
       every visitor's browser console on a perfectly healthy page. **Invisible still means invisible**
       — nothing about what a person sees changed. `/api/health` reports
-      `"microsoft": {"status": "dormant" | "configured", "connectedOrgs": n}`.
-    - **Transactional email is per deployment and nothing else**: `RESEND_API_KEY` (a real secret)
-      and `EMAIL_FROM`, plus `APP_BASE_URL`, which email needs the way Microsoft needs it. Unset
-      means **no email is ever sent and nothing else changes**; `/api/health` reports
-      `"email": "dormant"`. See "Transactional email" below.
+      `"microsoft": {"status": "dormant" | "configured", "connectedOrgs": n, "signInOrgs": n}`.
+    - **Sign in with Microsoft is the same shape: per deployment AND per company.** It uses the
+      very same `MS_GRAPH_*` registration as the file attachments (plus `APP_BASE_URL`, which the
+      sign-in callback address is built from) — there is no second Azure app and no second secret.
+      Unset means **invisible**: no button, the login page **byte-for-byte what it always was** (a
+      `?microsoft=…` in the address is ignored), no sign-in part on the Microsoft 365 card, and
+      `/api/auth/microsoft`, `/callback` and `/enable` all answer a plain "not set up" and
+      redirect nowhere. Once set, **nothing changes for any company until its own administrator
+      switches it on** from Admin → Integrations, with their own Microsoft sign-in. `/api/health`
+      reports how many companies have: `signInOrgs`, a count and nothing else. See "Sign in with
+      Microsoft" below.
+    - **Email is per deployment and nothing else**: `RESEND_API_KEY` (a real secret) and
+      `EMAIL_FROM`, plus `APP_BASE_URL`, which email needs the way Microsoft needs it. It carries
+      the account links (invitations, password resets, verification) **and, opt-in person by
+      person, alert and daily brief emails** — each person chooses those on Your account, and the
+      company's administrator has no switch for them at all. Unset still means **no email is ever
+      sent and nothing else changes**: no Email card, no invite toggle, and `/api/health` reports
+      `"email": "dormant"` exactly as before. See "Email (account links, alerts and briefs)"
+      below.
     - **Payments are per deployment and nothing else**: `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`
       and `PADDLE_PRICE_ID_PRO` (the first two are real secrets), plus `APP_BASE_URL`, which
       checkout needs the way email needs it, and the optional `PADDLE_ENV`. With any of the four
@@ -229,7 +243,8 @@ In practice:
     - **Delivery is best-effort and per-process**, the same accepted limitation rate limiting
       carries: one attempt, one retry on 429 respecting `Retry-After` (capped at ten seconds), then
       the message is dropped with a logged line. There is no queue table. In-app Notifications
-      remain the source of truth. **Email follows exactly the same road.**
+      remain the source of truth. **Email follows exactly the same road** — alert emails included,
+      which are copies of in-app rows exactly as chat messages are.
 12. **Privacy:** if a change starts storing a new piece of personal data, the privacy page (`/privacy`,
     alongside `/terms`) is part of the same change (see the engineering standards, section 6). Both
     pages are a template pending a real legal review before launch — see `docs/GO-LIVE.md` gate 1.
@@ -453,6 +468,49 @@ In practice:
     migration's five trigram `DropIndex` lines were deleted by hand, and `pg_indexes` was checked on
     both databases afterwards — five rows each.)
 
+  - `20260930104003_microsoft_sign_in` (Sign in with Microsoft. TWO nullable columns on `User` —
+    `microsoftOid` and `microsoftTenantId`, the object id and tenant id of the Microsoft identity
+    linked at somebody's first Microsoft sign-in — with `@@unique([microsoftTenantId,
+    microsoftOid])`, so one Microsoft identity maps to at most one account; plus ONE nullable column
+    on `Organization`, `entraTenantId`, **unique across the whole product**, so one Microsoft tenant
+    belongs to exactly one company and the callback can turn a token's own `tid` into one company
+    before it looks anybody up. **The composite unique allows any number of never-linked accounts**:
+    Postgres treats NULLs as distinct, so every row with both columns null sits beside the others
+    without colliding. They are identifiers, not secrets — but a PERSON's `microsoftOid` /
+    `microsoftTenantId` are never written to an audit row or a log line all the same. The
+    company's `entraTenantId` is company configuration, not a person's identifier: it is recorded
+    once, with the domain, in the `MICROSOFT_SIGNIN_ENABLED` row (the admin card reads the domain
+    back from it) and travels in the workspace export's organisation file. Additive only: nothing is dropped, renamed or made stricter,
+    and null on all three — which is what every existing account and company means — reads as
+    "Microsoft sign-in is switched off / never used", so nobody's sign-in changes when it is
+    applied. Step 2c (the Teams app) reuses exactly these columns and needs no migration of its
+    own for identity. The generated migration's five trigram `DropIndex` lines were deleted by hand
+    (the diff was produced with `prisma migrate diff`, because `migrate dev --create-only` refuses a
+    non-interactive shell), and `pg_indexes` was checked on both databases afterwards — five rows
+    each.)
+
+  - `20260930104144_email_preferences` (alert and daily brief emails. FOUR columns on `User`, and
+    nothing else: three `Boolean @default(false)` choices — `emailAlerts`, `emailDailyBrief`,
+    `emailWeeklyBrief` — and ONE nullable `dailyBriefEmailedAt`, when that person's daily brief
+    email was last attempted. **Additive only**: nothing is dropped, renamed or made stricter, and
+    false / null — which is what every existing account means once it is applied — is exactly
+    today's behaviour: no alert email, no brief email, "never sent". **The migration switches
+    nobody on, and that is deliberate.** Existing people never agreed to any email of this kind, so
+    the column default is false; a NEW account gets `emailAlerts: true` from **the code that
+    creates it** (`createUser` in both modes, contractors included, and `signUpOrganization()` for a
+    company's first administrator) — never from the column default, so no future migration or
+    backfill can quietly start emailing people. Both briefs stay opt-in for everybody.
+    `emailWeeklyBrief` is stored here so the weekly brief build needs no migration for the choice
+    itself; nothing sends anything on the strength of it yet. **The "already
+    sent today" date is per person, not per company, and on purpose**: the daily brief run has a
+    30-second budget, and a per-company date cannot survive that budget stopping halfway through a
+    large company — either the rest are never sent that day or the first half are sent twice. A
+    per-person date resumes exactly where the run stopped. It is a fact about delivery rather than
+    a derived state, the same reasoning `OrgIntegration.dailyBriefSentAt` carries for the chat
+    digest. No email content, subject or copy of any email is stored anywhere. The generated
+    migration's five trigram `DropIndex` lines were deleted by hand, and `pg_indexes` was checked on
+    both databases afterwards — five rows each.)
+
 - **Careful with `prisma migrate dev`:** the trigram search indexes are hand-written raw SQL that the
   Prisma schema does not know about, so the generated migration will try to DROP them. Delete those
   `DropIndex` lines from the generated `migration.sql` before it goes anywhere near a real database.
@@ -491,14 +549,20 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/uploads` | POST | multipart: `file`, `projectId`, `mainTaskId?` \| `disciplineTaskId?`, `documentId?`, `requiredDocumentId?`, `title?`, `category?`, `note?` (validated by `UploadMeta`) | `DocumentVersionDTO` — refused with the plan's plain-English storage message when the company's stored bytes plus this file would go past its cap. The Microsoft attach route is refused the same way, in the same place |
 | `/api/documents/versions/[versionId]/download` | GET | — | file stream |
 | `/api/auth/signup` | POST | `SignupInput` (plus an optional `inviteCode`) | `SignupResultDTO` + session cookie (public; `byIp` limited to 5 an hour). **Gated by the deployment's sign-up mode** (`src/lib/signup-mode.ts` — the owner's switch until the paywall is live): in production it is **closed** with nothing set (403 "Sign-up is closed for now."), **invite-only** while `SIGNUP_INVITE_CODES` holds a code — a missing or wrong `inviteCode` is 403 "Sign-up is by invitation. Enter a valid invite code.", named on the field, compared in constant time, and counted `byIp` failures-only at 10 per 15 minutes — and **open** only with `SIGNUPS_OPEN=true`. Development and test stay open unless codes are set. The code is never stored, audited or logged, and `signUpOrganization()` never sees it. Invitations to join an EXISTING company (`createUser` with `mode: "INVITE"`) are a different door and unchanged |
-| `/api/auth/login` | POST | `LoginInput` | session cookie — **unless that account has two-factor on**, in which case `TwoFactorChallengeDTO` (`status: "TWO_FACTOR_REQUIRED"`, a five-minute `pendingToken`, `expiresAt`) and **no session, no cookie, no `LOGIN` audit row and no `lastLoginAt`**. An account without it behaves byte for byte as it always has |
-| `/api/auth/two-factor` | POST | `TwoFactorChallengeInput` (the pending token plus **exactly one** of `code` / `recoveryCode`) | the same body the password sign-in returns, plus `recoveryCodesLeft` when a recovery code was spent, and the session cookie (public; `byIp` limited, plus five tries per ticket and eight per account — see "Two-factor sign-in") |
+| `/api/auth/login` | POST | `LoginInput` | session cookie — **unless that account has two-factor on**, in which case `TwoFactorChallengeDTO` (`status: "TWO_FACTOR_REQUIRED"`, a five-minute `pendingToken`, `expiresAt`) and **no session, no cookie, no `LOGIN` audit row and no `lastLoginAt`**. An account without it behaves byte for byte as it always has. The `LOGIN` audit row it writes now carries `method: "password"` beside `reportedIp` and `twoFactor`, so the trail says which door every sign-in came through |
+| `/api/auth/two-factor` | POST | `TwoFactorChallengeInput` (the pending token plus **exactly one** of `code` / `recoveryCode`) | the same body the password sign-in returns, plus `recoveryCodesLeft` when a recovery code was spent, and the session cookie (public; `byIp` limited, plus five tries per ticket and eight per account — see "Two-factor sign-in"). It accepts a ticket from either first step — a password (`TWOFA_PENDING`) or a Microsoft sign-in (`TWOFA_PENDING_MICROSOFT`) — and the ticket's purpose decides one thing only: the `LOGIN` row's `method`, `"password"` or `"microsoft"`, written with `twoFactor: true` |
 | `/api/auth/forgot-password` | POST | `ForgotPasswordInput` | `{ sent: true }` — **the same body, status and bytes whatever the address was**: with an account, without one, deactivated, or a contractor whose access has run out. Public; `byIp` limited to 3 an hour **and** 3 an hour per address asked about. Answers the dormant sentence (503) while email is not set up, and sends nothing |
 | `/api/auth/reset-password` | POST | `ResetPasswordInput` | `PasswordChangedDTO` — **no session, no cookie** (public; `byIp` limited to 10 an hour) |
 | `/api/auth/set-password` | POST | `SetPasswordInput` | `PasswordChangedDTO` — accepting an invitation; also marks the address verified. **No session, no cookie** (public; `byIp` limited to 10 an hour) |
 | `/api/auth/logout` | POST | — | `{ signedOut: true }` |
+| `/api/auth/microsoft` | GET | — | 302 to Microsoft's sign-in (`login.microsoftonline.com/organizations/oauth2/v2.0/authorize`, scopes `openid profile email`, code + PKCE), with the attempt sealed in a ten-minute httpOnly cookie. **Public**; `byIp` limited to 20 a minute. While the `MS_GRAPH_*` pair (or `APP_BASE_URL`) is unset: 404 "not set up" and no redirect — and the login page has no button pointing here |
+| `/api/auth/microsoft/callback` | GET | query: `code`, `state` (or `error`) | **Public.** Signed in → session cookie set after the commit, then 302 to `homePathFor(role)`; two-factor on → 302 to `/login#mstf=<ticket>` (the address **fragment**, never a query string); **every refusal** → 302 `/login?microsoft=failed`, where the login page shows the password route's own sentence. An administrator's switch-on attempt comes back here too and lands on `/admin/integrations?microsoftSignIn=enabled\|denied\|mismatch\|taken\|switchOffFirst\|failed`. `byIp` 10 a minute **plus** 10 failures per IP per 15 minutes — see "Sign in with Microsoft" |
+| `/api/auth/microsoft/enable` | GET | — | 302 to Microsoft for an administrator's own sign-in ("Switch on" on the Microsoft 365 card). Signed in, `MANAGE_INTEGRATIONS` (ADMIN), their own company only — the attempt carries their user and company id and the callback refuses any other session. `byUser`, 5 a minute. 404 "not set up" while dormant |
+| `/api/email/unsubscribe` | POST | query: `t` (the signed token); body `List-Unsubscribe=One-Click` from a mail client, or the page's own form | **Public, no sign-in** — the signature is the key. Switches off the one kind of email the token names for the one person it names. A mail client's one-click gets `200` and the neutral sentence as plain text; the page's form is sent back (303) to `/unsubscribe?done=1`. **The same answer for every token** — genuine, tampered, old, deactivated or missing. `byIp`, 300 a minute |
+| `/api/email/unsubscribe` | GET | query: `t` | **Changes nothing** — 303 to `/unsubscribe?t=…`. Mail scanners open every link in a message, so a GET must never unsubscribe anybody |
+| `/unsubscribe` (page) | GET | query: `t` | The one-button "Stop these emails?" page on the `AuthSplit` shell. Never looks the token up and is identical whatever it holds; the button posts to the route above. `byIp`, 300 a minute |
 | `/api/auth/me` | GET | — | signed-in user |
-| `/api/health` | GET | — | health JSON (adds `integrations` — how many companies have each chat kind switched on, numbers only: `{"slack": 0, "teams": 0}` when nobody has — `microsoft`: `{"status": "dormant"\|"configured", "connectedOrgs": n}`, and `email`: `"dormant"` or `"configured"`, a word and nothing else. `"configured"` means all three of `RESEND_API_KEY`, `EMAIL_FROM` and `APP_BASE_URL` are set, because an email with no link is no use — and `billing`: `"dormant"` or `"configured"`, a word about this deployment's own set-up and nothing about anybody's money, plan or balance — and `signups`: `"open"`, `"invite"` or `"closed"`, the mode and never a code) |
+| `/api/health` | GET | — | health JSON (adds `integrations` — how many companies have each chat kind switched on, numbers only: `{"slack": 0, "teams": 0}` when nobody has — `microsoft`: `{"status": "dormant"\|"configured", "connectedOrgs": n, "signInOrgs": n}` — `signInOrgs` is how many companies have Sign in with Microsoft switched on, a count and never a tenant id — and `email`: `"dormant"` or `"configured"`, a word and nothing else. `"configured"` means all three of `RESEND_API_KEY`, `EMAIL_FROM` and `APP_BASE_URL` are set, because an email with no link is no use — and `billing`: `"dormant"` or `"configured"`, a word about this deployment's own set-up and nothing about anybody's money, plan or balance — and `signups`: `"open"`, `"invite"` or `"closed"`, the mode and never a code) |
 | `/api/billing/webhook` | POST | the provider's raw JSON body, with a `Paddle-Signature` header | `{ received: true }` — **public, and nobody signs in for it**: the signature IS the authentication, checked over the raw body before anything is parsed and before any database read. 200 for anything handled, recorded or already seen (an unknown company included — never a 404); 400 for a signature that is missing, wrong or stale; 503 while the provider is not set up; 500 on anything unexpected, so the provider retries. `byIp` limited generously (600 a minute) because webhooks arrive in bursts |
 | `/api/integrations/microsoft/connect` | GET | — | 302 to Microsoft's sign-in (ADMIN; signed `state` binds the attempt to this person and company) |
 | `/api/integrations/microsoft/callback` | GET | query: `code`, `state` (or `error`) | 302 back to `/admin/integrations?microsoft=connected\|denied\|failed\|setup` |
@@ -561,6 +625,8 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `deactivateUser` | `{ id }` | `ActionResult<UserDTO>` |
 | `resendInvite` (ADMIN in their own company; only for somebody who has never signed in — `lastLoginAt` null — and only while email is configured. Re-issuing retires the link already in their inbox; audited with a second `EMAIL_SENT` row. Three a minute per person) | `ResendInviteInput` | `ActionResult<EmailSentDTO>` |
 | `resendVerificationEmail` (the banner's action; your OWN address and nobody else's, three a minute per person. An address that is already verified answers the same `{ sent: true }` rather than an error) | — | `ActionResult<EmailSentDTO>` |
+| `emailPreferencesFor` (a READ, called by `/account` for the Email card: the signed-in person's own choices and nobody else's — no id, no `assertCan`. `available` false means the card is not drawn at all. A contractor's two brief flags always read as off) | — | `EmailPreferencesDTO` |
+| `setEmailPreferences` (the signed-in person's OWN choices; **no id and no `assertCan`** — the `deleteMyAccount` precedent, the only account it can reach is the session's. Zod refuses unknown fields and an empty change. A contractor's `emailDailyBrief` / `emailWeeklyBrief` are ignored. Switching the daily brief on stamps `dailyBriefEmailedAt` with now, so the first one comes the next morning. One `EMAIL_PREFERENCES_CHANGED` row only when a value really moved. Thirty presses a minute) | `EmailPreferencesInput` | `ActionResult<EmailPreferencesDTO>` |
 | `beginTwoFactorEnrollment` (your own account; no input at all. Mints a fresh secret, seals it and returns the QR code, the manual key and the `otpauth://` address **once**. Switches nothing on and writes no audit row — nobody has attested to anything yet — and pressing it again simply overwrites a half-finished enrolment) | — | `ActionResult<TwoFactorEnrollmentDTO>` |
 | `confirmTwoFactorEnrollment` (the first working code is the proof the app is really set up. One transaction: the enabled date, the step that code spent, eight recovery codes and `TWO_FACTOR_ENABLED`. The codes come back **once**) | `ConfirmTwoFactorInput` | `ActionResult<TwoFactorCodesDTO>` |
 | `regenerateRecoveryCodes` (needs a live code or an unused recovery code; replaces all eight, so every old one stops working, and audits `TWO_FACTOR_CODES_REPLACED`) | `TwoFactorProofInput` | `ActionResult<TwoFactorCodesDTO>` |
@@ -579,6 +645,8 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `sendTestMessage` (ADMIN; rate limited hard — five a minute per person, because each press posts into a real channel) | `IntegrationKindInput` | `ActionResult<IntegrationTestResultDTO>` |
 | `deleteIntegration` (ADMIN; removes the address with the connection, audit rows stay) | `IntegrationKindInput` | `ActionResult<{ removed: true }>` |
 | `disconnectMicrosoft` (ADMIN; deletes the stored tokens, audit row stays. Connecting is a browser journey to Microsoft, so only this half can be an action) | — | `ActionResult<{ removed: true }>` |
+| `microsoftSignInStatus` (a READ rather than an action, called by `/admin/integrations` the way `billingStatus` is: ADMIN of their own company, `MANAGE_INTEGRATIONS`. Whether sign-in is on, the domain, who switched it on and when — all three read from the latest `MICROSOFT_SIGNIN_ENABLED` audit row, because nothing else is stored for it — how many people are linked (a count), and whether `APP_BASE_URL` is set. Never a tenant id or anybody's Microsoft id) | — | `MicrosoftSignInStatusDTO` |
+| `disableMicrosoftSignIn` (ADMIN, `MANAGE_INTEGRATIONS`, own company only — no id in the input. Forgets the company's `entraTenantId`, clears every Microsoft link in THAT company, retires any Microsoft sign-in ticket still waiting for a code there, and audits `MICROSOFT_SIGNIN_DISABLED` with `peopleUnlinked`. **Signs nobody out.** Switching on is a browser journey to Microsoft, so only this half can be an action. Ten presses a minute) | — | `ActionResult<{ removed: true }>` |
 | `createPost` (`POST_ANNOUNCEMENT` / `POST_BOARD` by kind; exactly one audience; an announcement may carry an expiry and notifies its audience. `CreatePostInput` also carries three optional flags, each meaning "no" when left out: `requiresAck` — announcements only, and only from an ADMIN or PROJECT_MANAGER; `includeExternals` — announcements only, company-wide or one project, never a department and never a board; and `documentId` — BOARD root posts on a PROJECT board only, checked through the documents service's own loader so a miss is not-found) | `CreatePostInput` | `ActionResult<PostDTO>` |
 | `replyToPost` (BOARD only, one level deep — a reply's parent is always a root post; anybody who may READ that board may reply) | `ReplyToPostInput` | `ActionResult<PostDTO>` |
 | `editPost` (author, or an ADMIN correcting one) | `EditPostInput` | `ActionResult<PostDTO>` |
@@ -600,13 +668,19 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
   person's action.** Every service already calls it *after* its transaction has committed, so a
   problem saving notifications can never undo the change that caused them — failures are logged and
   swallowed. It skips the actor, skips duplicates inside one call, and skips deactivated people.
-  - **It takes exactly one option, `{ chatCopy: false }`**, which writes the in-app rows and posts
-    nothing to Slack or Teams. Two callers use it: the contractors' half of an announcement that
-    included them, which is the same news with a different link (see "Contractor notices") — the
-    chat channel is the company's own and has already had that announcement once — and the two
-    workspace-deletion messages to a company's administrators, which borrow `ANNOUNCEMENT` for
-    their shape but are not noticeboard news, so the `announcements` chat toggle must not carry
-    them.
+  - **It sends two kinds of copy, both after the rows are committed and neither awaited**: the
+    company's chat copy (see "Chat delivery") and, person by person, an **alert email** to each
+    recipient who switched alerts on and has a confirmed address (see "Email" below). The company's
+    chat toggles have no say in the email, and the person's email choice has no say in the chat.
+  - **It takes exactly one option, `{ chatCopy: false }`, and it means "no copies" — chat AND
+    email.** It writes the in-app rows and sends nothing anywhere else. The option kept its name
+    when email arrived; read it as "copies". Two callers use it: the contractors' half of an
+    announcement that included them, which is the same news with a different link (see "Contractor
+    notices") — the chat channel is the company's own and has already had that announcement once,
+    and the contractor reads it on their own brief page — and the two workspace-deletion messages to
+    a company's administrators, which borrow `ANNOUNCEMENT` for their shape but are not noticeboard
+    news, so neither the `announcements` chat toggle nor an alert email (which would arrive worded
+    as an announcement) may carry them.
 - **Marking a notification read writes no `ActivityLog` row.** Read state is a personal preference,
   not project work; the audit trail records project work only. This is the one documented exception
   to house rule 1.
@@ -655,6 +729,17 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
     two copies of the app must never both be deleting the same company. The rows go inside the
     transaction; the FILES are removed by `removeDeletedWorkspaceFiles()` after it commits, the same
     road the chat copies take. A late sweep deletes late, never never.
+  - **After the transaction commits, the same run sends its copies, each step on its own
+    30-second budget** (checked after each send, so one always goes): the reminders' chat copies
+    (`deliverSweepReminders`), then **the reminders' alert emails** (`emailSweepReminders` — the
+    locked pass also returns a per-person list, because the chat events are one per task per company
+    and name no recipient; each email goes to the row's own person, only with alerts on and a
+    confirmed address), then the chat digest (`postDailyDigests`), then **each person's daily brief
+    email** (`sendDailyBriefEmails` — its own step, deliberately NOT inside the digest, see "Email"
+    below), then the export-file cleanup. **The contractor access-expiry warnings and the
+    workspace-deletion messages are in-app only**: an administrator's housekeeping, with no chat
+    copy and no email. The locked pass never hands an access-expiry warning to the email step, and
+    the deletion messages are written with `{ chatCopy: false }`, which stops both copies.
   - **Nothing else depends on the sweep having run.** Overdue is still derived at read time everywhere
     (`isOverdue()`), and an expired contractor is refused at sign-in whether or not anybody was
     warned; a skipped run costs a nudge, never correctness.
@@ -912,7 +997,10 @@ the noticeboard.
 - **The fan-out cannot leave the company**, for the same reason `notify()` cannot: the lookup is
   `where: { orgId, enabled: true }`, and the `orgId` is the actor's (or, in the sweep, the
   recipient's, who is always a member of that task's project).
-- **The daily brief digest is chat-only, and off unless asked for.** A sixth toggle, `dailyBrief`,
+- **The daily brief digest is a chat card, and off unless asked for.** (The chat digest itself is
+  chat-only. The daily brief also exists as a **per-person email** — each person's own "Your day",
+  chosen on Your account, which the company's `dailyBrief` toggle has nothing to do with; see
+  "Email" below.) A sixth toggle, `dailyBrief`,
   sits beside the five notification copies; it defaults to **off**, and it is deliberately NOT part
   of `TOGGLE_FOR_TYPE` — the digest is a summary of data the app already holds, not a fan-out of any
   `NotificationType`, and the compiler refuses to let a notification type map to it
@@ -923,6 +1011,11 @@ the noticeboard.
   rule 1, alongside marking a notification read and the favorites / personal to-do items: there is
   nothing new to record — every line of the digest is data the app already holds, and a notification
   would only be a second copy of a summary nobody asked to be notified about.
+  **The daily brief EMAIL sits under this same exception rather than adding another**: it is the
+  same kind of act — a read of data the app already holds, sent as a copy — and it writes no
+  notification row and no audit row either, only one stamp (`User.dailyBriefEmailedAt`), exactly as
+  the chat digest writes only `OrgIntegration.dailyBriefSentAt`. So the count stays as it is: this is
+  the third, and the verification banner below is the fourth.
 - **It goes out once a day, from the hourly sweep** (`postDailyDigests` in `src/server/sweep.ts`):
   the first run after **05:00 UTC** sends one compact card per connected, enabled, digest-toggled
   channel — one line per active project, with its progress, overdue count, blocked count and next
@@ -986,21 +1079,41 @@ the network: `global.fetch` is mocked.**
 `src/server/__tests__/microsoft.service.test.ts` in the same change — and the tests never touch the
 network: `global.fetch` is mocked.**
 
-## Transactional email (invitations, password resets, verification)
+## Email (account links, alerts and briefs)
 
 > An emailed link is a **hashed, single-use, expiring** thing. The raw token leaves the server once,
 > inside the email; the database only ever holds its SHA-256 hash, and the same link never works
 > twice.
+>
+> An alert or brief email is **a copy, chosen by the person it goes to**. It says what the in-app
+> notification (or their own brief page) already says to that person and nothing wider, it goes only
+> to an address they have confirmed, and every one carries a one-click way out.
+
+Two families of email share one sending road (`src/server/services/email.ts`) and nothing else.
+**Account links** — invitation, password reset, verification — are the three below; they are
+about somebody's account, never optional, and carry no unsubscribe. **Alert and daily brief
+emails** (further down) are about work, off unless the person chose them, and always carry the
+unsubscribe headers and footer. The line between them is deliberate and is tested both ways.
+
+**The retired rule.** This section used to say, and GO-LIVE and the privacy page used to promise,
+that no task, comment or deadline is ever emailed. **The owner's decision of 30 Sep 2026 retired
+that rule** (`docs/decisions/owner-answers-2026-09-30.md`, item 3; spec
+`docs/specs/align-2026-10/microsoft-first.md`). What replaced it is narrower than "email
+everything", and every limit on it below is the point: only the seven notification types that have
+a chat toggle, only for people who asked, only to a confirmed address, only the row's own words.
+Uploads and ordinary comments still never leave the app by email, and no SMS is ever sent.
 
 - **Dormant until keyed, like every other integration.** `emailConfigured()` in
   `src/server/services/email.ts` is true only when `RESEND_API_KEY` **and** `EMAIL_FROM` are both
   set; `emailAvailable()` additionally requires `APP_BASE_URL`, and that is the one every screen and
   `/api/health` should ask. Keys with no base address logs **one** line and behaves as dormant —
-  every one of these emails is nothing but a link, so a link with nowhere to point is "not set up",
-  not a broken email. Dormant means every send is a silent no-op returning `{ status: "dormant" }`
+  every one of these emails is built around a link (a link email is nothing else, and an alert or
+  brief is worthless without its "open it" link and its unsubscribe link), so a link with nowhere
+  to point is "not set up", not a broken email. Dormant means every send is a silent no-op returning `{ status: "dormant" }`
   and **nothing else in the app behaves differently**: tokens are still issued and consumed, so the
   flows on top can be built and tested before anybody buys a mail provider.
-- **The audit row is written BEFORE the send, inside the calling service's transaction.** The
+- **For a link email, the audit row is written BEFORE the send, inside the calling service's
+  transaction.** The
   `ActivityLog` row is the record of intent; the email is the copy. `appendEmailActivity()` writes
   `entityType: "Email"`, `action: EMAIL_SENT`, `entityId` = the recipient's user id and
   `metadata: { kind, userId }` — never the token, never the link, never the address (the address is
@@ -1026,7 +1139,138 @@ network: `global.fetch` is mocked.**
   belonging to a deactivated account all answer the same `null`, and the screens say "this link no
   longer works" and nothing more — the same discretion the external rule's "not found" carries.
 - **Verification is a nudge, never a lock.** `User.emailVerifiedAt` null means "not verified" and
-  restricts nothing anywhere in the app; no route, permission or read consults it.
+  restricts nothing anywhere in the app; no route, permission or screen withholds anything because
+  of it. **One place consults it, and it locks nobody out of anything**: alert and brief emails are
+  sent only to a confirmed address (see below), because otherwise a mistyped address would receive
+  somebody's task titles. The Email card says so and offers the existing resend button.
+
+### Alert and daily brief emails (chosen person by person)
+
+- **Three choices on `User`, each the person's own**: `emailAlerts`, `emailDailyBrief` and
+  `emailWeeklyBrief` (stored now; the weekly brief's own build sends it). They are changed on Your
+  account's Email card (`setEmailPreferences`) or switched off by an unsubscribe link — never by
+  an administrator. **A company's chat toggles have no effect on email at all, in either
+  direction**: alerts off means no email whatever the chat toggles say, and a company with chat
+  switched off can still have people who want email.
+- **Defaults.** Every existing person is off on all three — the migration's column default is
+  false, and nobody agreed to any of this before. **A new account starts with alerts ON** — set by
+  the code that creates it (`createUser` in both modes, contractors included, and
+  `signUpOrganization()` for a company's first administrator), never by the column default — and
+  both briefs OFF. The reasoning: a new person was either invited by email (so email demonstrably
+  reaches them, and accepting verifies the address) or signed up themselves, alert emails are
+  about their own assignments, and the way out is one click. The briefs are digests — bulk-style
+  mail — so they are opt-in for everybody.
+- **Only to a confirmed address** (`emailVerifiedAt` set), checked at send time for every alert,
+  every reminder and every brief.
+- **An alert email is one copy of one notification row.** `notify()` already reads its recipients
+  (active, same company, the actor skipped, duplicates removed); that same query now also reads
+  `email`, `emailAlerts` and `emailVerifiedAt`, and `alertRecipients()` keeps exactly the people
+  with alerts on and a confirmed address — and nobody at all while email is dormant or when the
+  type has no chat toggle. **The seven types that can be emailed are exactly the seven with a chat
+  toggle** (`toggleForType(type) !== null`): `ASSIGNED`, `MENTIONED`, `STATUS_CHANGED`,
+  `DEADLINE_APPROACHING`, `OVERDUE`, `OVERRIDE_APPLIED`, `ANNOUNCEMENT`. `DOCUMENT_UPLOADED` and
+  `COMMENT_ADDED` never are. One email per notification row per person, sent after the rows are
+  committed, **not awaited**, never throwing — `void emailAlerts(...)`, the road
+  `deliverToOrgWebhooks()` takes.
+- **Built from the row and nothing wider.** Subject = the row's title; body = the row's sentence,
+  then "Open it in Tielora:" and the app address plus the row's own link, then the footer. Nothing
+  is fetched to enrich it — no task list, no roster, no name the sentence did not already hold — so
+  whatever walls `notify()` keeps (the company, the contractor) are the email's walls too. **The
+  tenant rule holds because the recipient list is the one `notify()` already filters by
+  `actor.orgId`**; there is no second lookup to get wrong.
+- **Text somebody typed never becomes a link** (`src/lib/email-text.ts`). The email is plain text,
+  and Outlook turns a bare web address into a live one — so a task titled "Sign in at
+  https://evil.example" would arrive from Tielora's trusted sender with a working link. In the
+  EMAIL copy only (never in the stored row), every `http://`, `https://` or `www.` run in the title
+  or body becomes **"[link removed]"**; the run stops at the first non-ASCII character, so Arabic
+  text written straight after an address is never swallowed with it. Control characters are
+  stripped from the subject (one line, 200 characters at most) and from the body except newlines,
+  and **the body is capped at 1,200 characters**, the chat card's cap. It is the email's version of
+  `slackEscape` / `teamsEscape`. Dates in any email are "30 Sep 2026", in UTC, via `Intl`.
+- **The flood guard: at most 20 alert emails per person per hour** (`ALERT_EMAILS_PER_HOUR`),
+  counted in the process exactly as rate limiting is. The 21st is **held back** — the in-app row
+  already exists — and logged with the person's id and nothing else. A person mass-assigned fifty
+  tasks gets twenty emails, not fifty.
+- **The sweep's reminders are emailed on the same road**, after the sweep's transaction commits,
+  from a per-person list the locked pass returns (`emailSweepReminders`), on their own 30-second
+  budget. Contractor access-expiry warnings and workspace-deletion messages are **never emailed** —
+  see "Notifications and the deadline sweep".
+- **`notify(..., { chatCopy: false })` suppresses BOTH copies.** Its two callers — the contractor
+  half of an announcement and the workspace-deletion messages — get no chat copy and no email.
+- **The daily brief email is each person's own "Your day"** (`sendDailyBriefEmails` in
+  `src/server/sweep.ts`): `personBrief` built for that person's own actor, exactly as their brief
+  page is, so it is scoped to what they may see and nothing wider. Same sections, same order, ten
+  lines a section with "and N more". Internal people only.
+  - **Its own step in the hourly sweep, after the chat digest and deliberately NOT inside it.**
+    `postDailyDigests` returns early when no company has a chat channel with the digest on; a
+    company with no chat channel at all must still get its people's emails.
+  - **The same send line as the chat digest**, `digestBoundary()`: the first sweep after 05:00 UTC,
+    "early morning UTC", and a late server sends late, not never. Recipients: active, not EXTERNAL,
+    `emailDailyBrief` on, a confirmed address, and `dailyBriefEmailedAt` null or before today's
+    line — longest-waiting first.
+  - **Once a day, per person.** `User.dailyBriefEmailedAt` is stamped **after each attempt** — sent,
+    failed, or a day with nothing in any section, on which **nothing is sent**. Per person rather
+    than per company so a run the 30-second budget cuts short resumes exactly where it stopped (see
+    the `email_preferences` amendment). Switching the brief on stamps now, so the first one comes
+    the next morning rather than this afternoon.
+  - **Dormant email → the whole step does nothing and stamps nothing.** It writes no notification
+    row and no audit row — the chat digest's documented exception, not a new one.
+- **Which emails are audited, and why the line falls there.** A **link email** writes `EMAIL_SENT`
+  before the send, inside the calling transaction (above) — it is an account event somebody may
+  need to prove happened. **An alert or brief email writes nothing**: it is a copy of an in-app row
+  or a read of data already held, exactly like a chat copy and the chat digest, and the in-app row
+  is the record. `EMAIL_SENT` stays for link emails only. **Changing a choice IS audited**:
+  `EMAIL_PREFERENCES_CHANGED`, actor = the person, `metadata: { changed, via }` where `via` is
+  `"account"` or `"unsubscribe-link"`, written only when a value really moved, never carrying a
+  token. Consent is worth a record, so this is deliberately not another exception to house rule 1.
+- **Contractors get alerts and nothing else.** Their Email card shows the Alerts switch only;
+  `setEmailPreferences` ignores their two brief flags, the card reads them back as off, and the
+  sender skips EXTERNAL people whatever their row says. They are emailed only for rows a contractor
+  already receives — every fan-out that leaves them out in-app (`projectAudience()`,
+  `notifiableRecipients()`, announcements without `includeExternals`) produces no row and so no
+  email, and the contractor half of an included announcement is `{ chatCopy: false }`, so it is
+  read on their brief page and never emailed.
+
+### Unsubscribe (one click, no sign-in)
+
+- **Every alert and brief email carries RFC 8058's two headers** —
+  `List-Unsubscribe: <APP_BASE_URL/api/email/unsubscribe?t=TOKEN>` and
+  `List-Unsubscribe-Post: List-Unsubscribe=One-Click` — **and those emails only**: an invitation, a
+  reset and a verification email never do (`sendEmail` takes an optional `headers` argument, and
+  only `sendAlertEmail` / `sendDailyBriefEmail` pass one). The body ends with a `--` footer: "Stop
+  emails like this one:" and the `/unsubscribe?t=` page, then "Change all your email settings:" and
+  `/account`. **No alert or brief ever goes out without its way out**: if the token cannot be
+  signed or there is no base address, that email is not sent.
+- **The token is signed, not stored** (`src/lib/unsubscribe-token.ts`): `<person id>.<kind>.<HMAC>`,
+  HMAC-SHA256 under a key derived from `SESSION_SECRET` for its own purpose,
+  `deriveKey("email.unsubscribe")` (`src/lib/secret-box.ts`). The kind is `ALERTS`, `DAILY` or
+  `WEEKLY`. **No expiry**: an unsubscribe link in a two-month-old email must still work. **Why not
+  an `EmailToken` row**: that is single-use (a second click would fail), it expires, issuing one
+  retires every earlier one of its purpose (killing the link in every older email), its raw value
+  cannot be recovered from the stored hash (so every email would need a new row), and it would add
+  a row per email sent. The check is **constant time and the same work on a miss**: a malformed
+  token is still signed over a placeholder and compared against a dummy signature of the same
+  length, and the lookup behind it runs on a hit and a miss alike.
+- **A GET never unsubscribes anybody.** Mail scanners open every link in a message, so `GET
+  /api/email/unsubscribe` only answers 303 to the `/unsubscribe` page, and the page itself changes
+  nothing. **Only a POST acts**: a mail client's one-click (`List-Unsubscribe=One-Click` in the
+  body) gets a plain-text 200, and the page's button is sent back to the page with the "done"
+  sentence.
+- **The neutral page and the neutral answer.** `/unsubscribe` never looks the token up and never
+  names a person, a company, an address or a kind: "Stop these emails? Press the button to
+  confirm." for every token — genuine, tampered, old or none — and afterwards "Done. If that link
+  was still valid, those emails have stopped. You can review all your email settings in Your
+  account." **Same status and same bytes whatever the token.**
+- **What a valid token does**: one conditional update (`WHERE <kind> = true`) for that person and
+  that kind only, so a link pressed twice — or by a mail client and a person at once — writes
+  exactly one `EMAIL_PREFERENCES_CHANGED` row with `via: "unsubscribe-link"`. A deactivated or
+  anonymised account is left alone and shown the same page.
+- **Generous on purpose: 300 a minute per IP**, on the route and the page alike. Gmail and Outlook
+  send one-click requests for many people from a few shared addresses, and a refused one-click
+  leaves somebody subscribed.
+- **The known cost: rotating `SESSION_SECRET` kills every unsubscribe link already in an inbox.**
+  They stop verifying, and the neutral page still points at Your account, which always works — the
+  same cost the Microsoft file tokens and two-factor secrets already accept, and GO-LIVE says so.
 
 ### The four flows on top (`src/server/services/account.ts`)
 
@@ -1094,9 +1338,13 @@ network: `global.fetch` is mocked.**
   GET and consume only on submit, so a scanner following them changes nothing at all.
 
 **Any change touching this area adds or extends a test in
-`src/server/__tests__/email.service.test.ts` (the delivery half) or
-`src/server/__tests__/email-flows.service.test.ts` (the flows on top) in the same change — and the
-tests never touch the network: `global.fetch` is mocked.**
+`src/server/__tests__/email.service.test.ts` AND `src/server/__tests__/integrations.service.test.ts`
+(the delivery half — alert and brief emails ride on `notify()` and the sweep, whose tests live
+there), or `src/server/__tests__/email-flows.service.test.ts` (the flows on top), plus
+`email-preferences.service.test.ts` / `unsubscribe.route.test.ts` for the choices and the way out
+(and `src/lib/__tests__/email-text.test.ts` / `unsubscribe-token.test.ts` for the pure halves), in
+the same change — with the tenant and contractor halves in `org-isolation.service.test.ts` and
+`external-scoping.service.test.ts`. The tests never touch the network: `global.fetch` is mocked.**
 
 ## Two-factor sign-in
 
@@ -1146,6 +1394,18 @@ tests never touch the network: `global.fetch` is mocked.**
   `EmailedPurposeName` excludes it alongside `"EXPORT"`, so the compiler refuses to let one reach an
   inbox and `EMAIL_TOKEN_TTL_WORDS` needs no entry for it. It says one thing only: this person's
   password was accepted less than five minutes ago.
+- **The Microsoft door leads to the same second step.** When the first step was "Sign in with
+  Microsoft" rather than a password, the callback mints a **`TWOFA_PENDING_MICROSOFT`** ticket
+  instead — the same five minutes, the same hashed single-use row, and the **third purpose that is
+  never emailed** (`EmailedPurposeName` excludes it alongside `EXPORT` and `TWOFA_PENDING`). It
+  says "this person's Microsoft sign-in was accepted a moment ago", and it exists as its own name
+  for one reason only: so the second step can write the truth. `POST /api/auth/two-factor` accepts
+  either ticket (`SIGN_IN_TICKET_PURPOSES`), runs exactly the same code checks, the same three
+  limiters and the same replay guard, and writes the `LOGIN` row with `twoFactor: true` and
+  **`method: "microsoft"` or `"password"`** according to which ticket it was. Every `LOGIN` row in
+  the app — the password route's, the Microsoft callback's and this one — now carries `method`, so
+  the trail says which door every sign-in came through. The ticket reaches the login page in the
+  address **fragment** (`/login#mstf=…`), never a query string, a log line or a readable cookie.
 - **Three limiters, and none of them is the password's.** `byIp` on the route; five wrong tries
   against ONE ticket, whose exhaustion **marks the ticket used** so the only way on is the password
   again; and eight wrong tries per account per fifteen minutes (`twoFactorAccountKey(userId)`).
@@ -1176,7 +1436,8 @@ tests never touch the network: `global.fetch` is mocked.**
   solves for other people, which another administrator solves for them. It never revokes sessions —
   nothing about who that person is has changed.
 - **ANY CHANGE TO A CREDENTIAL OR TO THE SECOND FACTOR RETIRES OUTSTANDING SIGN-IN TICKETS.**
-  `retireSignInTickets()` (`email-tokens.ts`) marks that person's unused `TWOFA_PENDING` rows used,
+  `retireSignInTickets()` (`email-tokens.ts`) marks that person's unused `TWOFA_PENDING` **and
+  `TWOFA_PENDING_MICROSOFT`** rows used,
   inside the transaction that makes the change. A ticket says "this account's password was accepted a
   moment ago"; the moment that password is replaced or the second factor it was waiting for is taken
   away, that sentence is false, and a live ticket would be a five-minute window in which the OLD
@@ -1194,6 +1455,174 @@ tests never touch the network: `global.fetch` is mocked.**
 `src/server/__tests__/two-factor-signin.route.test.ts` (both halves of signing in) in the same
 change** — and the tenant half in `org-isolation.service.test.ts`, which proves one company's
 administrator can neither reset nor read anything about another company's second factor.
+
+## Sign in with Microsoft
+
+> A Microsoft login is the first way into this app that starts from an OUTSIDE party's claim about
+> which company somebody belongs to, and four rules hold it up. **Identity is `tid` + `oid`, never an
+> email alone. A miss never says why. Two-factor is never skipped. A login never lands in another
+> company.**
+
+It is an extra door, never a replacement: everybody's password keeps working, nobody is created by
+it, and a person with no Tielora account cannot get one through it. The whole of it is
+`src/server/services/microsoft-signin.ts` (the rules), `src/lib/ms-id-token.ts` (the token check,
+pure) and three thin routes under `src/app/api/auth/microsoft/`.
+
+**Who gets in — the order is law.** Everything about Microsoft's answer is validated first; only
+then is a single Tielora row read.
+
+1. **The attempt.** `GET /api/auth/microsoft` seals a random `state`, a `nonce` and a PKCE verifier
+   (with the purpose, `"signin"` or `"enable"`, and the time) under AES-256-GCM
+   (`seal("microsoft.signin-attempt", …)`, `src/lib/secret-box.ts`) into one cookie:
+   `tielora_ms_attempt`, httpOnly, `SameSite=Lax` (Microsoft's return is a top-level navigation,
+   which Lax allows), limited to the path `/api/auth/microsoft`, ten minutes. Only the verifier's
+   S256 hash ever leaves the server. The callback reads the cookie and **deletes it in the same
+   breath** — one attempt, one return trip — and refuses when it is missing, expired, tampered with
+   or its `state` does not match (compared in constant time).
+2. **The ID token** (`validateIdToken`, in this order): three parts; header `alg` exactly `RS256`
+   with a `kid` ("none" and HS256 are refused, which is what stops a public key being used as an
+   HMAC secret); the signature against the key Microsoft publishes under that `kid` —
+   `login.microsoftonline.com/organizations/discovery/v2.0/keys`, the host the Graph guard already
+   allows, cached six hours, with an unknown `kid` buying at most one early re-fetch a minute so a
+   flood of made-up keys cannot turn this server into a way of hammering Microsoft; `aud` equals our
+   client id; `nonce` equals this attempt's; `exp` / `nbf` with two minutes of clock tolerance and
+   no more; `tid` a GUID and not Microsoft's personal-account tenant; `iss` exactly
+   `https://login.microsoftonline.com/{tid}/v2.0` rebuilt from **the token's own `tid`** (the
+   `/organizations/` metadata publishes a templated issuer, so it is rebuilt, never trusted); and
+   `oid` present. Node's own crypto does the RS256 check — **no new dependency**. Sign-in asks for
+   `openid profile email` and nothing else: no `offline_access`, no `Files.Read.All`, and **no
+   Microsoft token is stored** — the code is exchanged, the ID token read, and only the two
+   identifiers survive.
+3. **Identity is `tid` + `oid`.** Never `email` or `preferred_username` alone — that is the
+   "nOAuth" flaw Microsoft itself warns about.
+4. **The company is the ONE organisation whose `entraTenantId` equals the token's `tid`.** None →
+   refused. Every lookup after this is scoped to that company.
+5. **Already linked**: the person whose (`microsoftTenantId`, `microsoftOid`) is (`tid`, `oid`), and
+   they must belong to the company from step 4 — **checked, not assumed**. After the first sign-in
+   only the `oid` is used; the email is never consulted again.
+6. **First time**: only when the token carries an `email` claim **and** `xms_edov` is literally
+   `true` (Microsoft vouching the address's domain is owned). The lower-cased address is looked up
+   **in that company only** (`email` is globally unique, and `orgId` is still checked), and the
+   account must have no link yet — one already linked to a different `oid` is refused. The link is
+   **one conditional write** (`WHERE microsoftOid IS NULL`, still active, and the company still
+   owning this `tid`), so two simultaneous first sign-ins have exactly one winner and a switch-off
+   that committed a moment earlier cannot be undone by a link landing after it; the composite
+   unique index is the last word.
+7. **One transaction**: the session, `lastLoginAt`, the `LOGIN` row
+   (`metadata: { reportedIp, twoFactor: false, method: "microsoft" }`) and, on a first link, a
+   `MICROSOFT_IDENTITY_LINKED` row with **empty metadata**. The session cookie is set by the route
+   after the commit, exactly as the password route does, then 302 to `homePathFor(role)` — so a
+   contractor lands on My tasks. Deactivation and a contractor's end date refuse here exactly as at
+   the password.
+
+**The four rules, in practice.**
+
+- **Identity is `tid` + `oid`** — steps 3, 5 and 6. The email only ever finds a person once, inside
+  one company, and only when Microsoft vouches for it.
+- **A miss never says why.** Wrong company, company not switched on, no matching account,
+  deactivated, an expired contractor, a different Microsoft account from the one linked, an
+  unverified email, a cancelled Microsoft screen, an expired or tampered attempt, Microsoft
+  returning an error, a lost race: **every one** is a 302 to `/login?microsoft=failed`, and the
+  login page shows `SIGN_IN_REFUSED_MESSAGE` (`src/lib/sign-in-messages.ts`) — "Incorrect email or
+  password.", **the password route's own constant**, imported by both, never retyped. The log line
+  carries a category and, when known, the person's id — never the email, the `oid`, the `tid`, the
+  code or a token; an unexpected error is logged by its name only, because a Prisma message about a
+  lookup can carry the value it looked up.
+- **Two-factor is never skipped.** Somebody with Tielora two-factor on gets a five-minute
+  `TWOFA_PENDING_MICROSOFT` ticket and nothing else — no session, no cookie, no `LOGIN` row, no
+  `lastLoginAt` — handed to the login page in the address fragment (`/login#mstf=…`), and the same
+  six-digit step as after a password (see "Two-factor sign-in"). On a person's first Microsoft
+  sign-in the link itself (`microsoftOid` / `microsoftTenantId` and the `MICROSOFT_IDENTITY_LINKED`
+  row) is written when the ticket is issued, before the six-digit code is accepted — harmless,
+  because Microsoft has already vouched for the identity and the email, and nothing is signed in
+  until the code is. Microsoft's own two-factor is a
+  bonus, not a substitute. A secret made unreadable by a `SESSION_SECRET` rotation is handled
+  exactly as after a password: switched off, recorded, and the sign-in carries on.
+- **A login never lands in another company.** Step 4 turns the `tid` into one company before any
+  person is looked up, steps 5 and 6 check the person is in it, and the link write re-checks that
+  the company still owns the `tid`. A contractor signing in from their employer's own tenant has a
+  different `tid` and is refused with the same sentence — only an account inside the company's own
+  Microsoft tenant can use this door.
+
+**Switching it on (per company, never typed).**
+
+- An administrator with `MANAGE_INTEGRATIONS` presses **Switch on** in the Microsoft 365 card's
+  "Sign in with Microsoft" part → `GET /api/auth/microsoft/enable` → Microsoft, where they sign in
+  **as themselves**. The attempt carries their user id and company; the callback refuses unless
+  the session coming back is that same administrator of that same company, still allowed to manage
+  integrations.
+- **The tenant is captured from the token, never typed** — so nobody can claim a tenant they merely
+  know the id of. And **the Microsoft email must be vouched for (`xms_edov`) and equal their own
+  Tielora email**, otherwise `mismatch`: an employee of company X cannot register a Tielora
+  workspace under an unrelated address and quietly claim X's tenant.
+- **One tenant, one company, product-wide** (`entraTenantId` is unique). A tenant another company
+  already holds → `taken`, and that company is untouched. This workspace already holding a
+  different tenant → `switchOffFirst`. The claim is one conditional update (company holding no
+  tenant or this one), so two administrators pressing at once with two tenants cannot both win,
+  and the unique index settles a cross-company race. A cancel at Microsoft → `denied`; anything
+  else → `failed`. The outcome comes back as `/admin/integrations?microsoftSignIn=<outcome>`.
+- **Switching on also links the administrator's own Microsoft account** (they proved both at once,
+  with its own `MICROSOFT_IDENTITY_LINKED` row), so they can use the button straight away.
+- **Nothing is stored for the card beyond `entraTenantId`.** The domain, who switched it on and
+  when are read back from the latest `MICROSOFT_SIGNIN_ENABLED` row (`microsoftSignInStatus`); the
+  number of people linked is counted at read time.
+
+**Switching it off** (`disableMicrosoftSignIn`, ADMIN, own company, no input): forgets the
+company's `entraTenantId`, clears **every** person's `microsoftOid` / `microsoftTenantId` **in that
+company and no other**, retires any `TWOFA_PENDING_MICROSOFT` ticket still waiting there (the door
+it came through has just closed), and writes `MICROSOFT_SIGNIN_DISABLED` — one transaction.
+**It signs nobody out**: nothing about who anybody is has changed, and their password always
+worked. It is also the recovery path when somebody's Microsoft account was recreated and their link
+no longer matches — switching off and on starts fresh, matching by email once more. There is no
+per-person "unlink" button, deliberately.
+
+**What is audited, and what an audit row never contains.**
+
+- `LOGIN` — as always, now with `method: "microsoft"`; after a second step, written by the
+  two-factor route with `twoFactor: true`.
+- `MICROSOFT_SIGNIN_ENABLED` — actor, the company, `metadata: { tenantId, domain }`: company facts
+  only, never the administrator's `oid` or address; the domain is in the summary too.
+- `MICROSOFT_SIGNIN_DISABLED` — `metadata: { peopleUnlinked: n }`.
+- `MICROSOFT_IDENTITY_LINKED` — actor = the person, `metadata: {}`. **Empty on purpose**: the audit
+  trail can never be edited or deleted, so it must not hold an `oid`, a `tid` or an address that
+  deleting the account is supposed to clear.
+- **Not audited**: a refused sign-in (unauthenticated, no actor — logged as above) and viewing the
+  card. A person's two identifiers are never in a log line either; the only place a tenant id
+  reaches the audit trail is the company's own `entraTenantId` in `MICROSOFT_SIGNIN_ENABLED`.
+
+**Rate limits** (house rule 10, 429 with a plain sentence and `Retry-After`): the start route
+`byIp` 20 a minute; the callback `byIp` 10 a minute (the password route's number) **plus a
+failures-only counter per IP, 10 per 15 minutes**; the enable route `byUser` 5 a minute;
+`disableMicrosoftSignIn` 10 a minute. **A failed Microsoft sign-in never counts against
+`login-account:<email>`**: it has no password to guess, and must never let anybody lock the real
+owner out of the password form. The second step after Microsoft shares the two-factor route's three
+limiters, unchanged.
+
+**Contractors** follow exactly the same path — no special case either way. They land as EXTERNAL on
+My tasks, their expiry and deactivation refuse them exactly as at the password, and most will keep
+using their password, because only an account inside the company's own tenant can use this door.
+
+**The login page** (`/login`): while the `MS_GRAPH_*` pair is unset it is byte-for-byte what it
+always was — no button, no line, no markup, and `?microsoft=failed` ignored (a tested
+requirement). Once set, below the password form sits an "or" divider and a secondary full-width
+**"Sign in with Microsoft"** — an ordinary link to `/api/auth/microsoft`, never a fetch, so no
+Microsoft script is loaded and the Content-Security-Policy is unchanged — with one grey line under
+it: "Works once your company's administrator has switched it on." It names no company and is the
+same for everybody: the page cannot know who is visiting, and not revealing which companies use
+Tielora is worth a button that sometimes cannot help. The button also needs `APP_BASE_URL` (the
+sign-in callback address, `signInRedirectUri()`), the same way the admin card's Connect link does —
+without it the page stays the dormant page rather than offer a button that lands on a "not set up"
+answer. **Step 2c (the Teams app) reuses exactly
+these columns and this validator.**
+
+**Any change touching this area adds or extends a test in
+`src/server/__tests__/microsoft-signin.route.test.ts` (the token checks, the first link and every
+refusal) and `src/server/__tests__/two-factor-signin.route.test.ts` (the second step after
+Microsoft) in the same change — and the tenant half in `org-isolation.service.test.ts` (a valid
+token from company B's tenant never produces a session in company A, even carrying a company-A
+person's exact address; a switch-on can never take another company's tenant; a switch-off clears
+only its own company), and the contractor half in `external-scoping.service.test.ts`. The tests
+never touch the network: `global.fetch` is mocked and the tokens are signed with a test key.**
 
 ## Data rights, part 1: taking a copy out
 
@@ -1248,6 +1677,16 @@ uploaded file of that company's document versions, under its stored name — and
   would be a new place to leak them, so it is left out entirely rather than half-included.
 - Personal preference data — favorites and private to-do lists. They belong to the person rather
   than the company, and each person exports their own from Your account.
+- **Every person's Microsoft sign-in identifiers** (`microsoftOid`, `microsoftTenantId`). The
+  permanent id Microsoft gives a person belongs to that person, not to the company's record, and
+  it is a key to recognising them elsewhere — so it is left out, the same way the password hash
+  is.
+
+**Also in it, on purpose:** each person's three email choices (`emailAlerts`, `emailDailyBrief`,
+`emailWeeklyBrief`) and `dailyBriefEmailedAt` — the company can see who has chosen which emails,
+which is its own people's settings rather than anybody's secret — and, on the organisation row,
+`entraTenantId`, the company's own Microsoft directory id once Sign in with Microsoft is on:
+company configuration, not personal data.
 
 **Soft-deleted rows ARE included**, with their `deletedAt`: a removed document or project is still
 part of the record the company is asking for a copy of, and the permanence rule already says the
@@ -1319,6 +1758,11 @@ history stays.
   `src/server/services/personal-export.ts` builds it and the route streams it as an attachment.
 - **A route rather than a server action**, for the same reason the document download is one: a
   server action returns a value to React, and this has to arrive in a downloads folder as a file.
+- **Their profile includes their email choices and a yes/no, never an id.** The three
+  preferences, the date of their last daily brief email, and `signedInWithMicrosoft` — true when
+  their account carries a Microsoft link. **Not the `oid` or the `tid` themselves**: a file that
+  gets emailed around and left on laptops has no need of an identifier that recognises them at
+  Microsoft, and "yes, you have signed in with Microsoft" is the whole of what it tells them.
 - **Their own reach and no further.** Their profile (never a hash), their project memberships, the
   tasks assigned to them, the comments they wrote, their notifications, their favorites, their
   private list and the announcements they acknowledged or dismissed. **A contractor's copy is
@@ -1355,7 +1799,11 @@ Both live on the two screens part 1 built, in a red-tinted danger section under 
   (a `.invalid` address by RFC 2606, so nothing can ever be delivered to it, carrying the id so the
   column's global uniqueness still holds), `passwordHash` → an argon2 hash of 32 random bytes that
   are thrown away (`unusablePasswordHash()`'s idea, reused), `jobTitle` / `companyName` /
-  `disciplineId` / `accessExpiresAt` / `emailVerifiedAt` cleared, `isActive` false. Then every
+  `disciplineId` / `accessExpiresAt` / `emailVerifiedAt` cleared, **the Microsoft link cleared**
+  (`microsoftOid` and `microsoftTenantId` → null, so the permanent id Microsoft gave them is held
+  nowhere — the audit rows never carried it), **all three email choices off and
+  `dailyBriefEmailedAt` cleared** (an unsubscribe token needs no clearing: it is a signature rather
+  than a row, and an inactive account ignores it), `isActive` false. Then every
   `Session` and `EmailToken`, and the personal-preference rows: `Favorite`, `PersonalTask`,
   `PostDismissal`.
 - **What stays, and why.** Comments, completed tasks, uploaded `DocumentVersion` rows, `Post`s and

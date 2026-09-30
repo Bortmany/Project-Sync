@@ -108,7 +108,18 @@ import {
   whenExportSettles,
   workspaceExportStatus,
 } from "@/server/services/workspace-export";
-import { DIGEST_HOUR_UTC, postDailyDigests, runSweepOnce } from "@/server/sweep";
+import { DIGEST_HOUR_UTC, postDailyDigests, runSweepOnce, sendDailyBriefEmails } from "@/server/sweep";
+import { notify } from "@/server/services/notify";
+import { unsubscribeWithToken } from "@/server/services/email-preferences";
+import { unsubscribeToken } from "@/lib/unsubscribe-token";
+import {
+  configureEmail,
+  goDormant,
+  mockFetchOk as mockEmailFetchOk,
+  optIn,
+  sentEmails,
+  settle,
+} from "@/server/__tests__/email-harness";
 import { deliverToOrgWebhooks } from "@/server/services/webhooks";
 import {
   inThirtyDays,
@@ -119,6 +130,24 @@ import {
   subtaskIdsByTitle,
   type Fixture,
 } from "@/server/__tests__/harness";
+import {
+  completeMicrosoftSignIn,
+  completeMicrosoftSignInEnable,
+  disableMicrosoftSignIn,
+  microsoftSignInStatus,
+  signingKeys,
+  type SignInAttempt,
+} from "@/server/services/microsoft-signin";
+import {
+  claimsFor,
+  configureMicrosoftEnv,
+  installFakeMicrosoft,
+  makeKey,
+  newOid,
+  newTenant,
+  signToken,
+  type FakeMicrosoft,
+} from "@/server/__tests__/microsoft-signin-fixtures";
 
 /** Both companies name their work exactly the same, so nothing passes by accident. */
 const EVERYONE_AUDIENCE = { kind: "EVERYONE" as const, projectId: null, disciplineId: null };
@@ -1374,5 +1403,307 @@ describe("two-factor sign-in stops at the company door", () => {
     // The admin screen learns THAT it is on, and nothing else about it.
     expect(enrolled?.twoFactorEnabled).toBe(true);
     expect(JSON.stringify(ourList)).not.toContain(enrolment.manualKey);
+  });
+});
+
+// "Sign in with Microsoft" starts from an OUTSIDE party's claim about which company somebody is in.
+// The token's own `tid` picks exactly one company, and every person lookup after that is scoped to
+// it — so a token from company B's Microsoft tenant can never become a session in company A, even
+// when it carries the exact address of somebody in company A. Tokens here are REALLY signed.
+
+describe("Sign in with Microsoft never lands in another company", () => {
+  const key = makeKey("kid-isolation");
+  let fake: FakeMicrosoft;
+  let restoreEnv: () => void = () => undefined;
+  let acmeTid: string;
+  let rivalTid: string;
+
+  beforeEach(async () => {
+    restoreEnv = configureMicrosoftEnv();
+    signingKeys.clear();
+    fake = installFakeMicrosoft([key.jwk]);
+    acmeTid = newTenant();
+    rivalTid = newTenant();
+    await prisma.organization.update({ where: { id: acme.admin.orgId }, data: { entraTenantId: acmeTid } });
+    await prisma.organization.update({ where: { id: rival.admin.orgId }, data: { entraTenantId: rivalTid } });
+  });
+
+  afterEach(() => {
+    restoreEnv();
+    vi.restoreAllMocks();
+  });
+
+  /** One attempt, and Microsoft answering it with a genuine token carrying `claims`. */
+  function attemptFor(
+    claims: { tid: string; oid: string; email?: string | null; edov?: unknown },
+    who?: { userId: string; orgId: string },
+  ) {
+    const tag = Math.random().toString(36).slice(2);
+    const attempt: SignInAttempt = {
+      purpose: who ? "enable" : "signin",
+      state: `state-${tag}`,
+      nonce: `nonce-${tag}`,
+      verifier: `verifier-${tag}`,
+      ts: Date.now(),
+      ...(who ?? {}),
+    };
+    fake.idTokenFor = () => signToken(claimsFor({ ...claims, nonce: attempt.nonce }), key);
+    return { attempt, input: { code: "code", state: attempt.state, error: null } };
+  }
+
+  it("refuses a valid token from company B's tenant, even carrying a company-A person's exact address", async () => {
+    const { attempt, input } = attemptFor({
+      tid: rivalTid,
+      oid: newOid(),
+      email: acme.engineer.email,
+      edov: true,
+    });
+
+    const outcome = await completeMicrosoftSignIn(attempt, input, {});
+
+    expect(outcome.kind).toBe("refused");
+    expect(await prisma.session.count({ where: { userId: acme.engineer.userId } })).toBe(0);
+    const acmePerson = await prisma.user.findUniqueOrThrow({ where: { id: acme.engineer.userId } });
+    expect(acmePerson.microsoftOid).toBeNull();
+    expect(acmePerson.lastLoginAt).toBeNull();
+    expect(
+      await prisma.activityLog.count({ where: { actorId: acme.engineer.userId, action: "LOGIN" } }),
+    ).toBe(0);
+  });
+
+  it("refuses company B's tenant even when company A has not switched Microsoft sign-in on", async () => {
+    await prisma.organization.update({ where: { id: acme.admin.orgId }, data: { entraTenantId: null } });
+    const { attempt, input } = attemptFor({
+      tid: rivalTid,
+      oid: newOid(),
+      email: acme.engineer.email,
+      edov: true,
+    });
+    expect((await completeMicrosoftSignIn(attempt, input, {})).kind).toBe("refused");
+    expect(await prisma.session.count({ where: { userId: acme.engineer.userId } })).toBe(0);
+  });
+
+  it("never follows a link to a person outside the company that owns the tenant", async () => {
+    // A link that somehow names company B's tenant on company A's person is still refused.
+    const oid = newOid();
+    await prisma.user.update({
+      where: { id: acme.engineer.userId },
+      data: { microsoftOid: oid, microsoftTenantId: rivalTid },
+    });
+    const { attempt, input } = attemptFor({ tid: rivalTid, oid, email: null });
+    expect((await completeMicrosoftSignIn(attempt, input, {})).kind).toBe("refused");
+    expect(await prisma.session.count({ where: { userId: acme.engineer.userId } })).toBe(0);
+  });
+
+  it("refuses a token from a tenant no company has claimed", async () => {
+    const { attempt, input } = attemptFor({
+      tid: newTenant(),
+      oid: newOid(),
+      email: acme.engineer.email,
+      edov: true,
+    });
+    expect((await completeMicrosoftSignIn(attempt, input, {})).kind).toBe("refused");
+    expect(await prisma.session.count({ where: { userId: acme.engineer.userId } })).toBe(0);
+  });
+
+  it("lets company A's own tenant in, as the contrast", async () => {
+    const { attempt, input } = attemptFor({
+      tid: acmeTid,
+      oid: newOid(),
+      email: acme.engineer.email,
+      edov: true,
+    });
+    const outcome = await completeMicrosoftSignIn(attempt, input, {});
+    expect(outcome.kind).toBe("signed-in");
+    if (outcome.kind === "signed-in") expect(outcome.userId).toBe(acme.engineer.userId);
+  });
+
+  it("refuses company A's administrator switching on with a tenant company B holds, and leaves B alone", async () => {
+    await prisma.organization.update({ where: { id: acme.admin.orgId }, data: { entraTenantId: null } });
+    const { attempt, input } = attemptFor(
+      { tid: rivalTid, oid: newOid(), email: acme.admin.email, edov: true },
+      { userId: acme.admin.userId, orgId: acme.admin.orgId },
+    );
+
+    expect(await completeMicrosoftSignInEnable(acme.admin, attempt, input)).toBe("taken");
+
+    const rivalOrg = await prisma.organization.findUniqueOrThrow({ where: { id: rival.admin.orgId } });
+    expect(rivalOrg.entraTenantId).toBe(rivalTid);
+    const acmeOrg = await prisma.organization.findUniqueOrThrow({ where: { id: acme.admin.orgId } });
+    expect(acmeOrg.entraTenantId).toBeNull();
+    const acmeAdmin = await prisma.user.findUniqueOrThrow({ where: { id: acme.admin.userId } });
+    expect(acmeAdmin.microsoftOid).toBeNull();
+    expect(
+      await prisma.activityLog.count({ where: { action: "MICROSOFT_SIGNIN_ENABLED" } }),
+    ).toBe(0);
+  });
+
+  it("refuses a switch-on attempt carried into another company's session", async () => {
+    await prisma.organization.update({ where: { id: acme.admin.orgId }, data: { entraTenantId: null } });
+    const { attempt, input } = attemptFor(
+      { tid: newTenant(), oid: newOid(), email: rival.admin.email, edov: true },
+      { userId: acme.admin.userId, orgId: acme.admin.orgId },
+    );
+    expect(await completeMicrosoftSignInEnable(rival.admin, attempt, input)).toBe("failed");
+    expect(
+      (await prisma.organization.findUniqueOrThrow({ where: { id: acme.admin.orgId } })).entraTenantId,
+    ).toBeNull();
+  });
+
+  it("switching off clears only the administrator's own company's links", async () => {
+    await prisma.user.update({
+      where: { id: acme.engineer.userId },
+      data: { microsoftOid: newOid(), microsoftTenantId: acmeTid },
+    });
+    const rivalOid = newOid();
+    await prisma.user.update({
+      where: { id: rival.engineer.userId },
+      data: { microsoftOid: rivalOid, microsoftTenantId: rivalTid },
+    });
+
+    await disableMicrosoftSignIn(acme.admin);
+
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: acme.engineer.userId } })).microsoftOid,
+    ).toBeNull();
+    const rivalPerson = await prisma.user.findUniqueOrThrow({ where: { id: rival.engineer.userId } });
+    expect(rivalPerson.microsoftOid).toBe(rivalOid);
+    expect(
+      (await prisma.organization.findUniqueOrThrow({ where: { id: rival.admin.orgId } })).entraTenantId,
+    ).toBe(rivalTid);
+    const audit = await prisma.activityLog.findFirstOrThrow({
+      where: { action: "MICROSOFT_SIGNIN_DISABLED" },
+    });
+    expect(audit.metadata).toEqual({ peopleUnlinked: 1 });
+  });
+
+  it("one company's administrator only ever reads their own company's sign-in status", async () => {
+    await prisma.user.update({
+      where: { id: acme.engineer.userId },
+      data: { microsoftOid: newOid(), microsoftTenantId: acmeTid },
+    });
+    await prisma.organization.update({ where: { id: rival.admin.orgId }, data: { entraTenantId: null } });
+
+    const theirs = await microsoftSignInStatus(rival.admin);
+    expect(theirs.enabled).toBe(false);
+    expect(theirs.linkedPeople).toBe(0);
+    expect(JSON.stringify(theirs)).not.toContain(acmeTid);
+
+    const ours = await microsoftSignInStatus(acme.admin);
+    expect(ours.enabled).toBe(true);
+    expect(ours.linkedPeople).toBe(1);
+    expect(JSON.stringify(ours)).not.toContain(acmeTid);
+
+    await expect(microsoftSignInStatus(rival.engineer)).rejects.toBeInstanceOf(ForbiddenError);
+  });
+});
+
+describe("alert and brief emails never cross the company door", () => {
+  beforeEach(() => configureEmail());
+
+  afterEach(() => {
+    goDormant();
+    vi.restoreAllMocks();
+  });
+
+  it("notify() sends no email to another company's person, even with alerts on and a confirmed address", async () => {
+    const spy = mockEmailFetchOk();
+    const acmeEmail = await optIn(acme.engineer.userId, { alerts: true });
+    const rivalEmail = await optIn(rival.engineer.userId, { alerts: true });
+
+    // A caller that wrongly hands in the other company's person alongside its own.
+    await notify(
+      { userId: acme.admin.userId, orgId: acme.admin.orgId },
+      [acme.engineer.userId, rival.engineer.userId],
+      "ASSIGNED",
+      { title: "New task assigned to you", body: "You were given a task.", linkUrl: "/my-tasks" },
+    );
+    await vi.waitFor(() => expect(sentEmails(spy)).toHaveLength(1));
+    await settle();
+
+    const sent = sentEmails(spy);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.to).toEqual([acmeEmail]);
+    expect(JSON.stringify(sent)).not.toContain(rivalEmail);
+    // No in-app row either — the email copy can never be wider than the rows.
+    expect(
+      await prisma.notification.count({
+        where: { userId: rival.engineer.userId, actorId: acme.admin.userId },
+      }),
+    ).toBe(0);
+  });
+
+  it("the daily brief email run carries each person only their own company's work", async () => {
+    const RIVAL_PROJECT = "Rival confidential expansion";
+    const RIVAL_TASK = "Rival-only compressor inspection";
+    const lateDeadline = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    for (const company of [acme, rival]) {
+      await prisma.disciplineTask.update({
+        where: { id: company.disciplineTaskId },
+        data: { deadline: lateDeadline },
+      });
+    }
+    const rivalProject = await prisma.project.update({
+      where: { id: rival.projectId },
+      data: { name: RIVAL_PROJECT, code: "RIVAL-SECRET" },
+    });
+    await prisma.disciplineTask.update({ where: { id: rival.disciplineTaskId }, data: { title: RIVAL_TASK } });
+
+    const acmeEmail = await optIn(acme.engineer.userId, { alerts: false, daily: true });
+    const rivalEmail = await optIn(rival.engineer.userId, { alerts: false, daily: false });
+    const spy = mockEmailFetchOk();
+    const today = new Date();
+    const morning = new Date(
+      Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), DIGEST_HOUR_UTC + 1),
+    );
+
+    // Only Acme's person asked for it: exactly one email, to them, about their own work.
+    expect(await sendDailyBriefEmails(morning)).toEqual({ people: 1, sent: 1 });
+    let sent = sentEmails(spy);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.to).toEqual([acmeEmail]);
+    const acmeCopy = JSON.stringify(sent[0]);
+    expect(acmeCopy).toContain(SUBTASK_TITLE);
+    for (const marker of [RIVAL_PROJECT, RIVAL_TASK, rivalProject.code, rivalEmail, rival.engineer.userId]) {
+      expect(acmeCopy).not.toContain(marker);
+    }
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: rival.engineer.userId } })).dailyBriefEmailedAt,
+    ).toBeNull();
+
+    // When the other company's person asks too, theirs carries their work — and still none of Acme's.
+    const acmeProject = await prisma.project.findUniqueOrThrow({ where: { id: acme.projectId } });
+    await optIn(rival.engineer.userId, { alerts: false, daily: true });
+    expect(await sendDailyBriefEmails(new Date(morning.getTime() + 60 * 60 * 1000))).toEqual({
+      people: 1,
+      sent: 1,
+    });
+    sent = sentEmails(spy);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]!.to).toEqual([rivalEmail]);
+    const rivalCopy = JSON.stringify(sent[1]);
+    expect(rivalCopy).toContain(RIVAL_TASK);
+    expect(rivalCopy).not.toContain(acmeProject.code);
+    expect(rivalCopy).not.toContain(acmeEmail);
+  });
+
+  it("an unsubscribe token changes only the one person it names", async () => {
+    const everyone = [acme.engineer, acme.admin, rival.engineer, rival.admin].map((person) => person.userId);
+    for (const userId of everyone) await optIn(userId, { alerts: true, daily: true });
+
+    await unsubscribeWithToken(unsubscribeToken(acme.engineer.userId, "ALERTS"));
+
+    const rows = await prisma.user.findMany({
+      where: { id: { in: everyone } },
+      select: { id: true, emailAlerts: true, emailDailyBrief: true },
+    });
+    expect(rows).toHaveLength(4);
+    for (const row of rows) {
+      expect(row.emailDailyBrief).toBe(true);
+      expect(row.emailAlerts).toBe(row.id !== acme.engineer.userId);
+    }
+    const audit = await prisma.activityLog.findMany({ where: { action: "EMAIL_PREFERENCES_CHANGED" } });
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.actorId).toBe(acme.engineer.userId);
   });
 });

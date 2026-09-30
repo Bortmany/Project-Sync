@@ -18,6 +18,8 @@ vi.mock("@/server/session", async (importOriginal) => {
 });
 
 import { GET as healthRoute } from "@/app/api/health/route";
+import { prisma } from "@/lib/db";
+import { makeOrg, resetDatabase } from "@/server/__tests__/harness";
 
 describe("GET /api/health", () => {
   afterEach(() => {
@@ -50,5 +52,20 @@ describe("GET /api/health", () => {
     expect(body).toHaveProperty("microsoft");
     expect(body).toHaveProperty("sweep");
     expect(body).toHaveProperty("uptime");
+  });
+
+  it("counts the companies with Sign in with Microsoft switched on — a number and nothing else", async () => {
+    await resetDatabase();
+    const a = await makeOrg("Health Microsoft A");
+    await makeOrg("Health Microsoft B");
+    const tenant = "0b7c9a52-3f1e-4d2a-9c6b-8e5f4a3d2c1b";
+    await prisma.organization.update({ where: { id: a.id }, data: { entraTenantId: tenant } });
+
+    session.actor = { userId: "someone", orgId: a.id, role: "ADMIN" };
+    const body = await (await healthRoute()).json();
+
+    expect(body.microsoft.signInOrgs).toBe(1);
+    expect(JSON.stringify(body)).not.toContain(tenant);
+    await resetDatabase();
   });
 });

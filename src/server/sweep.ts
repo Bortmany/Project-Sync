@@ -19,6 +19,11 @@ import {
   type SweepWebhookEvent,
 } from "@/server/services/notifications";
 import { deliverDailyBrief, deliverToOrgWebhooks } from "@/server/services/webhooks";
+import { actorForUser } from "@/server/actor";
+import { personBrief } from "@/server/services/briefs";
+import { briefIsEmpty } from "@/lib/email-text";
+import { emailAvailable, sendAlertEmail, sendDailyBriefEmail } from "@/server/services/email";
+import type { SweepAlertEmail } from "@/server/services/notifications";
 import {
   removeDeletedWorkspaceFiles,
   sweepWorkspaceDeletions,
@@ -93,6 +98,9 @@ export async function runSweepOnce(now: Date = new Date()): Promise<SweepResult>
         ran: true as const,
         counts: { ...swept.counts, accessExpiring: expiring.count },
         events: swept.events,
+        // The deadline reminders only. The access-expiry warnings above are an administrator's
+        // housekeeping and are never emailed, exactly as they are never copied to chat.
+        emails: swept.emails,
         deletedWorkspaces,
       };
     },
@@ -110,8 +118,14 @@ export async function runSweepOnce(now: Date = new Date()): Promise<SweepResult>
   // notification rows are the truth, and a chat tool being slow must never hold a database
   // transaction open.
   await deliverSweepReminders(outcome.events);
+  // The alert email copies of the same reminders, one per person, on their own time budget.
+  await emailSweepReminders(outcome.emails);
   // The once-a-day digest rides on the same hourly run, outside the transaction for the same reason.
   await postDailyDigests(now);
+  // And each person's own daily brief email. Its OWN step, deliberately not inside the digest:
+  // `postDailyDigests` returns early when no company has a chat channel with the digest on, and a
+  // company with no chat channel at all must still get its people's emails.
+  await sendDailyBriefEmails(now);
   // And so does the housekeeping: workspace export archives are deleted 48 hours after they were
   // built. It touches the disk rather than the database, it never throws, and nothing in the app
   // depends on it having run — a file left behind costs disk space, never correctness.
@@ -280,6 +294,156 @@ export async function deliverSweepReminders(
         reason: outOfTime ? "the time budget for chat ran out" : "the per-company cap",
       });
     }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Email: the reminders' alert copies, and each person's daily brief   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The longest each email step may take in one sweep — the same size as the chat budgets and
+ * separate from them. Checked after each send, so one always goes.
+ */
+export const EMAIL_DELIVERY_BUDGET_MS = 30_000;
+
+/**
+ * Emails the sweep's deadline reminders to the people they were written for — only those with
+ * alerts on and a confirmed address, looked up now, after the commit. Each email is the row's own
+ * words and nothing else, and it goes to the row's own person, who is by construction in the same
+ * company as the task. Never throws; anything held back is a nudge, the rows are already there.
+ */
+export async function emailSweepReminders(
+  emails: SweepAlertEmail[],
+  budgetMs: number = EMAIL_DELIVERY_BUDGET_MS,
+): Promise<{ sent: number; heldBack: number }> {
+  if (emails.length === 0 || !emailAvailable()) return { sent: 0, heldBack: 0 };
+
+  try {
+    const wanting = await prisma.user.findMany({
+      where: {
+        id: { in: [...new Set(emails.map((email) => email.userId))] },
+        isActive: true,
+        emailAlerts: true,
+        emailVerifiedAt: { not: null },
+      },
+      select: { id: true, email: true },
+    });
+    const addressOf = new Map(wanting.map((person) => [person.id, person.email]));
+    const queue = emails.filter((email) => addressOf.has(email.userId));
+
+    const deadline = Date.now() + budgetMs;
+    let sent = 0;
+    for (const email of queue) {
+      await sendAlertEmail(
+        { id: email.userId, email: addressOf.get(email.userId) as string },
+        { title: email.title, body: email.body, linkUrl: email.linkUrl },
+      );
+      sent += 1;
+      if (Date.now() >= deadline) break;
+    }
+
+    const heldBack = queue.length - sent;
+    if (heldBack > 0) {
+      logger.info("Reminder emails held back this sweep", {
+        sent,
+        heldBack,
+        reason: "the time budget for email ran out",
+      });
+    }
+    return { sent, heldBack };
+  } catch (error) {
+    logger.error("Reminder emails could not finish", {
+      reason: error instanceof Error ? error.name : "unknown",
+    });
+    return { sent: 0, heldBack: 0 };
+  }
+}
+
+export type DailyBriefEmailRun = { people: number; sent: number };
+
+/**
+ * Sends each person who asked for it their own "Your day", once a day, from the first sweep after
+ * 05:00 UTC — the same line the chat digest uses, so a late server sends late, never never.
+ *
+ *  - **Who.** Active, internal (a contractor is never sent a brief, whatever their row says),
+ *    `emailDailyBrief` on, a confirmed address, and not yet attempted since today's line. Longest
+ *    waiting first, so a run the budget cut short serves the people who missed out first next hour.
+ *  - **What.** Their own `personBrief`, built for their own actor exactly as their brief page is —
+ *    scoped to what they may see and nothing wider. A day with nothing in any section sends nothing.
+ *  - **Once a day, per person.** `User.dailyBriefEmailedAt` is stamped after each attempt — sent,
+ *    empty or failed — so the other hourly runs do nothing for them, and a run cut short resumes
+ *    exactly where it stopped.
+ *  - **Writes no notification row and no audit row**: a read, plus one stamp — the same documented
+ *    exception the chat digest carries.
+ *  - **Dormant email** → nothing happens at all, and nothing is stamped.
+ *
+ * Never throws.
+ */
+export async function sendDailyBriefEmails(
+  now: Date = new Date(),
+  budgetMs: number = EMAIL_DELIVERY_BUDGET_MS,
+): Promise<DailyBriefEmailRun> {
+  if (!emailAvailable()) return { people: 0, sent: 0 };
+  const boundary = digestBoundary(now);
+  if (!boundary) return { people: 0, sent: 0 };
+
+  let people = 0;
+  let sent = 0;
+  try {
+    const due = await prisma.user.findMany({
+      where: {
+        isActive: true,
+        role: { not: "EXTERNAL" },
+        emailDailyBrief: true,
+        emailVerifiedAt: { not: null },
+        OR: [{ dailyBriefEmailedAt: null }, { dailyBriefEmailedAt: { lt: boundary } }],
+      },
+      orderBy: [{ dailyBriefEmailedAt: { sort: "asc", nulls: "first" } }, { id: "asc" }],
+      select: { id: true, email: true },
+    });
+
+    const deadline = Date.now() + budgetMs;
+    for (const person of due) {
+      try {
+        const brief = await personBrief(await actorForUser(person.id), now);
+        if (!briefIsEmpty(brief)) {
+          const outcome = await sendDailyBriefEmail(person, brief, now);
+          if (outcome.status === "sent") sent += 1;
+        }
+      } catch (error) {
+        logger.error("Could not put a daily brief email together", {
+          userId: person.id,
+          reason: error instanceof Error ? error.name : "unknown",
+        });
+      }
+
+      // Stamped after the attempt, whatever it came to — one attempt a day, never a retry storm.
+      await prisma.user.update({
+        where: { id: person.id },
+        data: { dailyBriefEmailedAt: now },
+      });
+      people += 1;
+
+      if (Date.now() >= deadline) {
+        if (due.length > people) {
+          logger.info("Daily brief emails held back this sweep", {
+            done: people,
+            heldBack: due.length - people,
+            reason: "the time budget for email ran out",
+          });
+        }
+        break;
+      }
+    }
+
+    if (sent > 0) logger.info("Daily brief emails sent", { people, sent });
+    return { people, sent };
+  } catch (error) {
+    logger.error("The daily brief emails could not finish", {
+      reason: error instanceof Error ? error.name : "unknown",
+    });
+    return { people, sent };
   }
 }
 

@@ -20,7 +20,7 @@ export default function PrivacyPage() {
   return (
     <LegalPage
       title="Privacy notice"
-      lastUpdated="31 Aug 2026"
+      lastUpdated="30 Sep 2026"
       notice="This notice is a template written to describe the app honestly. It has not yet been reviewed by a lawyer, and should be before the app is relied on for real projects."
       otherHref="/terms"
       otherLabel="Terms of use"
@@ -111,6 +111,17 @@ export default function PrivacyPage() {
             Microsoft work domain it is, which administrator connected it and when, and the sign-in
             tokens for that one account, kept encrypted and never shown to anybody. See below.
           </li>
+          <li>
+            <strong>Your Microsoft sign-in link, if you use it:</strong> a permanent identifier
+            Microsoft gives us for your work account and the identifier of your company&apos;s
+            Microsoft directory, kept so we recognise you next time. For each company that switches
+            Microsoft sign-in on, we also store its Microsoft directory identifier. See
+            &ldquo;Signing in with Microsoft&rdquo; below.
+          </li>
+          <li>
+            <strong>Your email choices:</strong> whether you want alert emails, a daily brief and a
+            weekly summary, and the date your last daily brief email was sent.
+          </li>
         </ul>
       </section>
 
@@ -197,17 +208,61 @@ export default function PrivacyPage() {
       <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
         <h2 className="text-base font-semibold text-[var(--brand-ink)]">The emails we send you</h2>
         <p>
-          There are only three, and each is about your account rather than your work: an invitation
-          to set your first password, a password reset you asked for, and a request to confirm your
-          email address. Each carries your name and a link that works once and then expires. They are
-          sent through Resend, an email delivery service, which handles your name and address in
-          order to deliver the message.
+          Three emails are about your account: an invitation to set your first password, a password
+          reset you asked for, and a request to confirm your email address. Each carries your name
+          and a link that works once and then expires.
         </p>
         <p>
-          No task, comment, document or deadline is ever emailed to anybody — work notifications stay
-          in the app, with the optional chat copy described above. If your company has not switched
-          email on, none of these are sent at all and your administrator sets passwords for you
-          instead.
+          The others are about your work, and you choose them. <strong>Alert emails</strong> are one
+          email for each alert you would see in the app — a task assigned to you, a mention, a
+          change on your work, a deadline coming up or passed, a stage opened by an override, or a
+          company announcement. Each one contains what that in-app notification says and nothing
+          else: its headline, its sentence and a link back to Tielora. A <strong>daily brief</strong>{" "}
+          is your own &ldquo;Your day&rdquo; page, sent early each morning (UTC) and skipped on a day
+          with nothing in it, and a <strong>weekly summary</strong>, once it is offered, works the
+          same way once a week.
+          Uploads and ordinary comments are never emailed.
+        </p>
+        <p>
+          These are off unless you switch them on — except that when your account is newly created,
+          alert emails start switched on, and both briefs start off. They go only to an address you
+          have confirmed, every one has a one-click unsubscribe link, and you can change all of them
+          at any time on <strong>Your account</strong>. External contractors can only choose alert
+          emails, and only for their own work; they are never sent a brief.
+        </p>
+        <p>
+          All of these emails are sent through Resend, an email delivery service, which handles your
+          name, your address and the email itself in order to deliver it. We keep no copy of any
+          email. If your company has not switched email on, none of them are sent at all and your
+          administrator sets passwords for you instead.
+        </p>
+      </section>
+
+      <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
+        <h2 className="text-base font-semibold text-[var(--brand-ink)]">
+          Signing in with Microsoft
+        </h2>
+        <p>
+          If your company&apos;s administrator switches it on, you can sign in with the Microsoft work
+          account you already use instead of your Tielora password. Your password keeps working
+          either way, and it only works if you already have a Tielora account.
+        </p>
+        <p>
+          When you sign in this way, Microsoft tells us which company&apos;s Microsoft directory you
+          belong to, a permanent identifier for your work account, and your work email address. We
+          ask only for the basic sign-in permissions — who you are, and nothing else. We do not read
+          your mailbox, your files or your contacts to sign you in, and we keep no Microsoft sign-in
+          token: only the two identifiers listed above, so we recognise you next time. Your email
+          address is used only to find your Tielora account the first time.
+        </p>
+        <p>
+          If you have switched on two-factor sign-in in Tielora, you are still asked for your code
+          after Microsoft. The permanent identifier Microsoft gives your own work account never
+          appears in the activity trail, in our logs or in either copy of your data, and your link is
+          removed when you delete your account or your administrator switches Microsoft sign-in off.
+          Your company&apos;s Microsoft directory identifier is different: it is company settings,
+          not something about you, so it is recorded in the activity trail when an administrator
+          switches Microsoft sign-in on, and it appears in the company&apos;s own copy of its data.
         </p>
       </section>
 
@@ -218,8 +273,8 @@ export default function PrivacyPage() {
           are in: assigning and tracking work, gating task completion on required documents, keeping
           a dependable audit trail, and notifying people about work relevant to them. Nothing here is
           used for advertising and nothing is ever sold. The only information that leaves this app is
-          the chat copy described above, while your administrator has that switched on, the account
-          emails described below, and — if your company pays for a plan — your company&apos;s own
+          the chat copy described above, while your administrator has that switched on, the emails
+          described above, and — if your company pays for a plan — your company&apos;s own
           identifier passed to the payment provider, so they can tell us which company paid.
         </p>
       </section>
@@ -239,7 +294,9 @@ export default function PrivacyPage() {
           <strong>Admin → Data &amp; privacy</strong>: a copy of everything the workspace holds, as
           data files plus every uploaded document and revision. It never contains anybody&apos;s
           password, any sign-in session, any one-time email link, anybody&apos;s two-factor secret or
-          recovery codes, or the address of a connected chat channel. That copy is prepared on our server, can be downloaded for one day using a link
+          recovery codes, the personal Microsoft identifier of anybody&apos;s work account (only
+          the company&apos;s own Microsoft directory identifier is included), or the address of a connected
+          chat channel. That copy is prepared on our server, can be downloaded for one day using a link
           only an administrator of your own company can use, and is deleted from our server two days
           after it was made.
         </p>

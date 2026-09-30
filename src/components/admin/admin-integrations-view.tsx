@@ -1,5 +1,7 @@
-// Admin → Integrations: one card per chat tool, where an administrator pastes the webhook address
-// their own Slack or Teams channel gave them.
+// Admin → Integrations: Microsoft 365 first (sign-in and files, absent while no Azure app is
+// registered), then one card per chat tool, where an administrator pastes the webhook address their
+// own Teams or Slack channel gave them, then the company noticeboard. The order is fixed here and
+// never follows the database.
 //
 // The saved address is never sent back to this screen — only its scheme and host, followed by an
 // ellipsis. Changing it therefore means pasting the whole thing again, which is exactly what the
@@ -26,6 +28,7 @@ import type {
   IntegrationEventToggles,
   IntegrationKindName,
   MicrosoftConnectionDTO,
+  MicrosoftSignInStatusDTO,
   OrgIntegrationDTO,
 } from "@/lib/zod-schemas";
 
@@ -33,6 +36,18 @@ const KIND_LABEL: Record<IntegrationKindName, string> = {
   SLACK: "Slack",
   TEAMS: "Microsoft Teams",
 };
+
+/**
+ * The card's own title. The Teams chat card says "channel" so it is never confused with another
+ * Microsoft card; toasts and every other sentence keep KIND_LABEL.
+ */
+const CARD_TITLE: Record<IntegrationKindName, string> = {
+  SLACK: "Slack",
+  TEAMS: "Microsoft Teams channel",
+};
+
+/** Fixed on screen whatever order the database answers in: Microsoft first, then Slack. */
+const CHAT_ORDER: IntegrationKindName[] = ["TEAMS", "SLACK"];
 
 const KIND_INTRO: Record<IntegrationKindName, string> = {
   SLACK:
@@ -293,7 +308,7 @@ function IntegrationCard({ integration }: { integration: OrgIntegrationDTO }) {
   const refresh = () => router.refresh();
 
   return (
-    <Card title={KIND_LABEL[integration.kind]} action={<StatusBadge integration={integration} />}>
+    <Card title={CARD_TITLE[integration.kind]} action={<StatusBadge integration={integration} />}>
       <div className="space-y-4">
         <p className="text-sm text-[var(--brand-text)]">{KIND_INTRO[integration.kind]}</p>
         <p className="text-xs text-[var(--brand-gray)]">{AUDIENCE_WARNING}</p>
@@ -325,31 +340,51 @@ export function AdminIntegrationsView({
   integrations,
   microsoft,
   microsoftOutcome,
+  microsoftSignIn,
+  microsoftSignInOutcome,
+  emailAvailable,
   broadcastPolicy,
 }: {
   integrations: OrgIntegrationDTO[];
   microsoft: MicrosoftConnectionDTO;
   microsoftOutcome?: string;
+  /** The "Sign in with Microsoft" part of the Microsoft 365 card. */
+  microsoftSignIn: MicrosoftSignInStatusDTO;
+  microsoftSignInOutcome?: string;
+  /** Whether this Tielora sends email at all. */
+  emailAvailable: boolean;
   /** The company's noticeboard setting — who may start a post to the whole company. */
   broadcastPolicy: BroadcastPolicyName;
 }) {
+  const chatCards = CHAT_ORDER.flatMap((kind) =>
+    integrations.filter((integration) => integration.kind === kind),
+  );
+
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-semibold text-[var(--brand-primary)]">Integrations</h1>
         <p className="mt-1 text-sm text-[var(--brand-text)]">
-          Send a copy of your company&rsquo;s notifications to a chat channel, and connect the files
-          your team already keeps in Microsoft 365. Notifications inside Tielora carry on either way
-          — chat is an extra copy, not a replacement.
+          Connect the Microsoft tools your team already uses, and send a copy of your notifications
+          to a chat channel. Notifications inside Tielora carry on either way — these are extra
+          copies, not replacements.
         </p>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        {integrations.map((integration) => (
+      {/* Fixed order: Microsoft 365, Teams channel, Slack, noticeboard. items-start so a short card
+          is never stretched to the height of the tall Microsoft 365 card beside it. */}
+      <div className="grid items-start gap-4 lg:grid-cols-2">
+        {/* Renders nothing at all while no Azure app is registered on this Tielora. */}
+        <AdminMicrosoftCard
+          connection={microsoft}
+          outcome={microsoftOutcome}
+          signIn={microsoftSignIn}
+          signInOutcome={microsoftSignInOutcome}
+          emailAvailable={emailAvailable}
+        />
+        {chatCards.map((integration) => (
           <IntegrationCard key={integration.kind} integration={integration} />
         ))}
-        {/* Renders nothing at all while no Azure app is registered on this Tielora. */}
-        <AdminMicrosoftCard connection={microsoft} outcome={microsoftOutcome} />
 
         {/* Not a chat tool, but the same shape of thing: one company-wide setting, saved instantly. */}
         <AdminBroadcastCard policy={broadcastPolicy} />

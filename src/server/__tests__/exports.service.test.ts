@@ -220,6 +220,50 @@ describe("the workspace export", () => {
     expect(String(integrations[0]!.webhookAddress)).not.toContain("NEVERexport");
   });
 
+  it("carries each person's email choices and the company's Microsoft directory, never a person's Microsoft id", async () => {
+    const TENANT = "0a0a0a0a-1b1b-4c2c-8d3d-4e4e4e4e4e4e";
+    const OID = "5f5f5f5f-6a6a-4b7b-8c8c-9d9d9d9d9d9d";
+    await prisma.organization.update({ where: { id: alpha.orgId }, data: { entraTenantId: TENANT } });
+    await prisma.user.update({
+      where: { id: alpha.engineerActor.userId },
+      data: {
+        microsoftOid: OID,
+        microsoftTenantId: TENANT,
+        emailAlerts: true,
+        emailDailyBrief: true,
+        emailWeeklyBrief: false,
+      },
+    });
+
+    const archive = await exportFor(alpha.adminActor);
+
+    const organization = JSON.parse(archive.entries.get("organization.json")!.toString("utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(organization.entraTenantId).toBe(TENANT);
+
+    const engineer = rowsOf(archive, "users.json").find((row) => row.id === alpha.engineerActor.userId)!;
+    expect(engineer.emailAlerts).toBe(true);
+    expect(engineer.emailDailyBrief).toBe(true);
+    expect(engineer.emailWeeklyBrief).toBe(false);
+    expect("dailyBriefEmailedAt" in engineer).toBe(true);
+    expect("microsoftOid" in engineer).toBe(false);
+    expect("microsoftTenantId" in engineer).toBe(false);
+    // Nowhere in the archive at all — not in another table, not in the readme.
+    expect(archive.raw.includes(Buffer.from(OID, "utf8"))).toBe(false);
+    expect(archive.raw.includes(Buffer.from("microsoftOid", "utf8"))).toBe(false);
+  });
+
+  it("shows an empty Microsoft directory for a company that never switched sign-in on", async () => {
+    const archive = await exportFor(alpha.adminActor);
+    const organization = JSON.parse(archive.entries.get("organization.json")!.toString("utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(organization).toHaveProperty("entraTenantId", null);
+  });
+
   it("includes this company's uploaded files and not the other's", async () => {
     const mine = await prisma.documentVersion.findMany({
       where: { document: { project: { orgId: alpha.orgId } } },
@@ -470,6 +514,30 @@ describe("downloading your own data", () => {
     expect(bytes).not.toContain("passwordHash");
     expect(bytes).not.toContain("tokenHash");
     expect(bytes).toContain(alpha.adminActor.email);
+  });
+
+  it("says yes or no to signing in with Microsoft, and never carries the identifier", async () => {
+    const OID = "7e7e7e7e-8f8f-4a9a-8b0b-1c1c1c1c1c1c";
+    const TENANT = "2d2d2d2d-3e3e-4f4f-8a5a-6b6b6b6b6b6b";
+
+    const before = await downloadMyData(alpha.engineerActor);
+    expect(before.profile.signedInWithMicrosoft).toBe(false);
+    expect(before.profile.emailAlerts).toBe(false);
+
+    await prisma.user.update({
+      where: { id: alpha.engineerActor.userId },
+      data: { microsoftOid: OID, microsoftTenantId: TENANT, emailAlerts: true, emailWeeklyBrief: true },
+    });
+    const after = await downloadMyData(alpha.engineerActor);
+    expect(after.profile.signedInWithMicrosoft).toBe(true);
+    expect(after.profile.emailAlerts).toBe(true);
+    expect(after.profile.emailDailyBrief).toBe(false);
+    expect(after.profile.emailWeeklyBrief).toBe(true);
+
+    const bytes = JSON.stringify(after);
+    expect(bytes).not.toContain(OID);
+    expect(bytes).not.toContain(TENANT);
+    expect(bytes).not.toContain("microsoftOid");
   });
 
   it("narrows a contractor's copy to their own reach", async () => {

@@ -294,6 +294,40 @@ describe("deleting your own account", () => {
     expect(await prisma.postAck.count({ where: { userId: before.id, postId: seeded.postId } })).toBe(1);
   });
 
+  it("clears the Microsoft sign-in link and every email choice, and the audit row names neither", async () => {
+    const OID = "11111111-2222-4333-8444-555555555555";
+    const TID = "99999999-8888-4777-8666-555555555555";
+    const userId = fixture.engineerActor.userId;
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        microsoftOid: OID,
+        microsoftTenantId: TID,
+        emailAlerts: true,
+        emailDailyBrief: true,
+        emailWeeklyBrief: true,
+        dailyBriefEmailedAt: new Date(),
+      },
+    });
+
+    await deleteMyAccount(fixture.engineerActor, { confirm: "DELETE" });
+
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    expect(after.microsoftOid).toBeNull();
+    expect(after.microsoftTenantId).toBeNull();
+    expect(after.emailAlerts).toBe(false);
+    expect(after.emailDailyBrief).toBe(false);
+    expect(after.emailWeeklyBrief).toBe(false);
+    expect(after.dailyBriefEmailedAt).toBeNull();
+
+    // Nothing anywhere in the trail carries the identifiers that were just cleared.
+    const rows = await prisma.activityLog.findMany({ where: { actorId: userId } });
+    expect(rows.some((row) => row.action === ACTIVITY.ACCOUNT_DELETED)).toBe(true);
+    const trail = JSON.stringify(rows);
+    expect(trail).not.toContain(OID);
+    expect(trail).not.toContain(TID);
+  });
+
   it("leaves the work in place, rendered as Former member", async () => {
     const seeded = await seedEverything(fixture, "Alpha");
     const authorName = fixture.pmActor.name;

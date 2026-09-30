@@ -94,6 +94,12 @@ model Organization {
   /// no key, token or card detail is ever stored anywhere in this app.
   billingCustomerId     String?
   billingSubscriptionId String?
+  /// The Microsoft Entra tenant id (a GUID) whose people may "Sign in with Microsoft" into THIS
+  /// company. Null — what every existing company means — is "Microsoft sign-in is switched off".
+  /// Unique across the whole product: one Microsoft tenant belongs to exactly one company, which is
+  /// what lets the sign-in callback turn a token's own `tid` into one company and only then look a
+  /// person up inside it. An identifier, not a secret. Step 2c (Teams) reuses it.
+  entraTenantId    String?  @unique
   createdAt        DateTime @default(now())
 
   deleteRequestedBy User? @relation("OrganizationDeleteRequestedBy", fields: [deleteRequestedById], references: [id], onDelete: SetNull)
@@ -243,6 +249,26 @@ model User {
   /// when its step is HIGHER than this, which is what stops the same six digits being replayed
   /// inside their own window. Null means no code has been used yet.
   totpLastUsedStep Int?
+  /// This person's Microsoft identity, linked at their first "Sign in with Microsoft": the token's
+  /// `oid` (object id) and `tid` (tenant id). Identity is ALWAYS the pair, never an email claim. Null
+  /// on both — what every existing account means — is "never signed in with Microsoft". Identifiers,
+  /// not secrets; never written to an audit row or a log line. Step 2c (Teams) reuses them.
+  microsoftOid      String?
+  microsoftTenantId String?
+  /// This person's own email choices. The DATABASE default is false, so the migration switches
+  /// nobody on: every existing account stays exactly as it was until its owner chooses. A NEW
+  /// account gets `emailAlerts: true` from the code that creates it (`createUser` in both modes and
+  /// the sign-up that creates a company's first administrator), never from this default. Alert and
+  /// brief emails only ever go to a confirmed address (`emailVerifiedAt`), and a contractor's two
+  /// brief flags are ignored by the sender.
+  emailAlerts      Boolean   @default(false)
+  emailDailyBrief  Boolean   @default(false)
+  emailWeeklyBrief Boolean   @default(false)
+  /// When this person's daily brief email was last attempted — a fact about delivery, stamped after
+  /// each attempt (sent, empty or failed), exactly as `OrgIntegration.dailyBriefSentAt` is for the
+  /// chat digest. Per person rather than per company so a run cut short by its time budget resumes
+  /// exactly where it stopped. Null means "never".
+  dailyBriefEmailedAt DateTime?
   isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
@@ -281,6 +307,9 @@ model User {
 
   @@index([isActive])
   @@index([orgId, isActive])
+  /// One Microsoft identity maps to at most one account. Postgres treats NULLs as distinct, so every
+  /// never-linked account (both columns null) sits alongside the others without colliding.
+  @@unique([microsoftTenantId, microsoftOid])
 }
 
 model Session {

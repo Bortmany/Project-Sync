@@ -44,6 +44,30 @@ import {
   type Fixture,
 } from "@/server/__tests__/harness";
 
+// Alert and brief emails — the email copy of the same fan-out, per person.
+import { verifyUnsubscribeToken } from "@/lib/unsubscribe-token";
+import { actorForUser } from "@/server/actor";
+import {
+  ALERT_EMAILS_PER_HOUR,
+  sendInviteEmail,
+  sendPasswordResetEmail,
+  sendVerificationEmail,
+} from "@/server/services/email";
+import { setEmailPreferences } from "@/server/services/email-preferences";
+import { createMainTask } from "@/server/services/tasks";
+import { requestWorkspaceDeletion } from "@/server/services/workspace-deletion";
+import { emailSweepReminders, runSweepOnce, sendDailyBriefEmails } from "@/server/sweep";
+import { inThirtyDays, makeUser } from "@/server/__tests__/harness";
+import {
+  EMAIL_BASE,
+  configureEmail,
+  goDormant,
+  mockFetchOk as mockEmailFetchOk,
+  optIn,
+  sentEmails,
+  settle,
+} from "@/server/__tests__/email-harness";
+
 process.env.SWEEP_DISABLED = "1";
 
 const SLACK_URL = "https://hooks.slack.com/services/T00000000/B00000000/Sup3rSecretT0kenValue";
@@ -762,5 +786,536 @@ describe("the test message", () => {
     await expect(
       sendIntegrationTest(fixture.adminActor, { kind: "TEAMS" }),
     ).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Alert and brief emails                                              */
+/* ------------------------------------------------------------------ */
+
+const ALERT = {
+  title: "New task assigned to you",
+  body: "You were given “Flare tip inspection”.",
+  linkUrl: "/discipline-tasks/abc123",
+};
+
+const DAY = 24 * 60 * 60 * 1000;
+
+/** notify() from the administrator's seat, as a service would call it. */
+function notifyFromAdmin(
+  userIds: string[],
+  type: Parameters<typeof notify>[2],
+  payload = ALERT,
+  options?: Parameters<typeof notify>[4],
+) {
+  return notify(
+    { userId: fixture.adminActor.userId, orgId: fixture.orgId },
+    userIds,
+    type,
+    payload,
+    options,
+  );
+}
+
+describe("alert emails, from notify() outwards", () => {
+  let engineerEmail: string;
+
+  beforeEach(async () => {
+    configureEmail();
+    engineerEmail = await optIn(fixture.engineerActor.userId);
+  });
+
+  afterEach(() => goDormant());
+
+  it("emails only the seven notification types that have a chat toggle", async () => {
+    const spy = mockEmailFetchOk();
+    const emailed = [
+      "ASSIGNED",
+      "MENTIONED",
+      "STATUS_CHANGED",
+      "DEADLINE_APPROACHING",
+      "OVERDUE",
+      "OVERRIDE_APPLIED",
+      "ANNOUNCEMENT",
+    ] as const;
+    for (const type of [...emailed, "DOCUMENT_UPLOADED", "COMMENT_ADDED"] as const) {
+      await notifyFromAdmin([fixture.engineerActor.userId], type);
+    }
+    await vi.waitFor(() => expect(sentEmails(spy)).toHaveLength(7));
+    await settle();
+    expect(sentEmails(spy)).toHaveLength(7);
+    for (const type of emailed) expect(toggleForType(type)).not.toBeNull();
+    // The in-app rows are all there — nine of them — whatever email did.
+    expect(await prisma.notification.count({ where: { userId: fixture.engineerActor.userId } })).toBe(9);
+  });
+
+  it("sends nothing for an upload or an ordinary comment", async () => {
+    const spy = mockEmailFetchOk();
+    await notifyFromAdmin([fixture.engineerActor.userId], "DOCUMENT_UPLOADED");
+    await notifyFromAdmin([fixture.engineerActor.userId], "COMMENT_ADDED");
+    await settle();
+    expect(sentEmails(spy)).toHaveLength(0);
+  });
+
+  it("sends nothing with alerts off, whatever the company's chat toggles say", async () => {
+    const spy = mockEmailFetchOk();
+    await connect("SLACK", SLACK_URL); // every notification copy switched on
+    await optIn(fixture.engineerActor.userId, { alerts: false });
+
+    await notifyFromAdmin([fixture.engineerActor.userId], "ASSIGNED");
+    await vi.waitFor(() => expect(spy.mock.calls.some((call) => String(call[0]) === SLACK_URL)).toBe(true));
+    await settle();
+    expect(sentEmails(spy)).toHaveLength(0);
+  });
+
+  it("still emails with alerts on when the company has no chat at all (the toggles have no say)", async () => {
+    const spy = mockEmailFetchOk();
+    expect(await prisma.orgIntegration.count()).toBe(0);
+    await notifyFromAdmin([fixture.engineerActor.userId], "ASSIGNED");
+    await vi.waitFor(() => expect(sentEmails(spy)).toHaveLength(1));
+    expect(sentEmails(spy)[0].to).toEqual([engineerEmail]);
+  });
+
+  it("still emails when the company's chat has that event switched OFF", async () => {
+    const spy = mockEmailFetchOk();
+    await connect("SLACK", SLACK_URL);
+    await setEventToggles(fixture.adminActor, {
+      kind: "SLACK",
+      eventToggles: {
+        taskAssigned: false,
+        mention: false,
+        statusChange: false,
+        overdueReminder: false,
+        gateOverride: false,
+        announcements: false,
+        dailyBrief: false,
+      },
+    });
+    await notifyFromAdmin([fixture.engineerActor.userId], "ASSIGNED");
+    await vi.waitFor(() => expect(sentEmails(spy)).toHaveLength(1));
+    await settle();
+    expect(spy.mock.calls.some((call) => String(call[0]) === SLACK_URL)).toBe(false);
+  });
+
+  it("sends nothing to an address that has not been confirmed", async () => {
+    const spy = mockEmailFetchOk();
+    await optIn(fixture.engineerActor.userId, { verified: false });
+    await notifyFromAdmin([fixture.engineerActor.userId], "ASSIGNED");
+    await settle();
+    expect(sentEmails(spy)).toHaveLength(0);
+  });
+
+  it("sends exactly one email per notification row, to that row's own person", async () => {
+    const spy = mockEmailFetchOk();
+    const pmEmail = await optIn(fixture.pmActor.userId);
+    const engineer = fixture.engineerActor.userId;
+
+    await notifyFromAdmin([engineer, engineer, fixture.pmActor.userId, engineer], "ASSIGNED");
+    await vi.waitFor(() => expect(sentEmails(spy)).toHaveLength(2));
+    await settle();
+
+    const sent = sentEmails(spy);
+    expect(sent).toHaveLength(2);
+    expect(sent.map((email) => email.to[0]).sort()).toEqual([engineerEmail, pmEmail].sort());
+    expect(await prisma.notification.count()).toBe(2);
+  });
+
+  it("builds the email from the row and nothing wider", async () => {
+    const spy = mockEmailFetchOk();
+    await notifyFromAdmin([fixture.engineerActor.userId], "ASSIGNED");
+    await vi.waitFor(() => expect(sentEmails(spy)).toHaveLength(1));
+
+    const [email] = sentEmails(spy);
+    expect(email.subject).toBe(ALERT.title);
+    expect(email.text.split("\n").slice(0, 6)).toEqual([
+      "Tielora — Alert",
+      "",
+      ALERT.body,
+      "",
+      "Open it in Tielora:",
+      `${EMAIL_BASE}${ALERT.linkUrl}`,
+    ]);
+    expect(email.text).toContain(`Change all your email settings: ${EMAIL_BASE}/account`);
+    expect(email.text).toContain(`Stop emails like this one: ${EMAIL_BASE}/unsubscribe?t=`);
+  });
+
+  it("lets notify() finish even when the mail provider hangs", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>(() => undefined));
+    await expect(notifyFromAdmin([fixture.engineerActor.userId], "ASSIGNED")).resolves.toBeUndefined();
+    expect(await prisma.notification.count()).toBe(1);
+  });
+
+  it("lets notify() finish, and logs without the address, when the mail call fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error(`boom ${engineerEmail}`));
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    await expect(notifyFromAdmin([fixture.engineerActor.userId], "ASSIGNED")).resolves.toBeUndefined();
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(engineerEmail);
+    expect(JSON.stringify(warn.mock.calls)).toContain(fixture.engineerActor.userId);
+  });
+
+  it("retries a 429 exactly once, then drops it", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response("slow down", { status: 429, headers: { "retry-after": "1" } }));
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+
+    await notifyFromAdmin([fixture.engineerActor.userId], "ASSIGNED");
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled(), { timeout: 3_000 });
+    expect(sentEmails(spy)).toHaveLength(2);
+    expect(warn.mock.calls[0][1]).toMatchObject({ purpose: "ALERT", status: 429 });
+  });
+
+  it("sends nothing and changes nothing while email is not set up", async () => {
+    goDormant();
+    const spy = mockEmailFetchOk();
+    await notifyFromAdmin([fixture.engineerActor.userId], "ASSIGNED");
+    await settle();
+    expect(spy).not.toHaveBeenCalled();
+    expect(await prisma.notification.count()).toBe(1);
+  });
+
+  it("sends no email for a fan-out written with { chatCopy: false }", async () => {
+    const spy = mockEmailFetchOk();
+    await notifyFromAdmin([fixture.engineerActor.userId], "ANNOUNCEMENT", ALERT, { chatCopy: false });
+    await settle();
+    expect(sentEmails(spy)).toHaveLength(0);
+    expect(await prisma.notification.count()).toBe(1);
+  });
+
+  it("never emails the workspace-deletion messages to administrators", async () => {
+    const secondAdmin = await makeUser({ name: "Salma Admin", role: "ADMIN", orgId: fixture.orgId });
+    await optIn(secondAdmin.id);
+    const spy = mockEmailFetchOk();
+
+    await requestWorkspaceDeletion(fixture.adminActor, { confirmName: "Tielora Test Company" });
+    await settle();
+
+    expect(await prisma.notification.count({ where: { userId: secondAdmin.id } })).toBe(1);
+    expect(sentEmails(spy)).toHaveLength(0);
+  });
+
+  it("never emails a contractor-access-expiry warning", async () => {
+    const contractor = await makeUser({ name: "Yusuf Contractor", role: "EXTERNAL", orgId: fixture.orgId });
+    await prisma.user.update({
+      where: { id: contractor.id },
+      data: { accessExpiresAt: new Date(Date.now() + 3 * DAY) },
+    });
+    await optIn(fixture.adminActor.userId);
+    const spy = mockEmailFetchOk();
+
+    await runSweepOnce(new Date());
+    await settle();
+
+    expect(
+      await prisma.notification.count({ where: { userId: fixture.adminActor.userId, type: "DEADLINE_APPROACHING" } }),
+    ).toBe(1);
+    expect(sentEmails(spy)).toHaveLength(0);
+  });
+
+  it("removes typed web addresses from the email copy only, leaving Arabic text intact", async () => {
+    const spy = mockEmailFetchOk();
+    const arabic = "فحص رأس الشعلة";
+    await notifyFromAdmin([fixture.engineerActor.userId], "ANNOUNCEMENT", {
+      title: `${arabic} https://evil.example/login\r\nBcc: x\u0007`,
+      body: `${arabic} https://evil.example/x — see www.evil.example.`,
+      linkUrl: "/messages?tab=org",
+    });
+    await vi.waitFor(() => expect(sentEmails(spy)).toHaveLength(1));
+
+    const [email] = sentEmails(spy);
+    expect(email.subject).toBe(`${arabic} [link removed] Bcc: x`);
+    expect(email.text).toContain(`${arabic} [link removed] — see [link removed].`);
+    expect(email.text).not.toContain("evil.example");
+
+    // The in-app row keeps exactly what was written.
+    const row = await prisma.notification.findFirstOrThrow({ where: { userId: fixture.engineerActor.userId } });
+    expect(row.title).toContain("https://evil.example/login");
+    expect(row.body).toContain("www.evil.example");
+  });
+
+  it("carries the one-click unsubscribe headers on an alert, naming that person and kind", async () => {
+    const spy = mockEmailFetchOk();
+    await notifyFromAdmin([fixture.engineerActor.userId], "ASSIGNED");
+    await vi.waitFor(() => expect(sentEmails(spy)).toHaveLength(1));
+
+    const headers = sentEmails(spy)[0].headers ?? {};
+    expect(headers["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
+    const match = /^<https:\/\/tielora\.example\/api\/email\/unsubscribe\?t=([^>]+)>$/.exec(
+      headers["List-Unsubscribe"] ?? "",
+    );
+    expect(match).not.toBeNull();
+    expect(verifyUnsubscribeToken(decodeURIComponent(match?.[1] ?? ""))).toEqual({
+      personId: fixture.engineerActor.userId,
+      kind: "ALERTS",
+    });
+  });
+
+  it("never puts unsubscribe headers or lines on an invitation, a reset or a verification", async () => {
+    const spy = mockEmailFetchOk();
+    const person = { id: fixture.engineerActor.userId, name: "John Carter", email: engineerEmail };
+    await sendInviteEmail({ ...person, inviterName: "Admin", organizationName: "Co" }, `${EMAIL_BASE}/set-password?token=x`);
+    await sendPasswordResetEmail(person, `${EMAIL_BASE}/reset-password?token=x`);
+    await sendVerificationEmail(person, `${EMAIL_BASE}/verify-email?token=x`);
+
+    const sent = sentEmails(spy);
+    expect(sent).toHaveLength(3);
+    for (const email of sent) {
+      expect(email.headers).toBeUndefined();
+      expect(email.text).not.toMatch(/unsubscribe|Stop emails like this one/i);
+    }
+  });
+
+  it("holds back the twenty-first alert to one person inside an hour", async () => {
+    const spy = mockEmailFetchOk();
+    const info = vi.spyOn(logger, "info").mockImplementation(() => undefined);
+
+    for (let index = 0; index <= ALERT_EMAILS_PER_HOUR; index += 1) {
+      await notifyFromAdmin([fixture.engineerActor.userId], "ASSIGNED", {
+        ...ALERT,
+        linkUrl: `/discipline-tasks/t${index}`,
+      });
+    }
+    await vi.waitFor(() =>
+      expect(info.mock.calls.some((call) => call[0] === "Alert email held back")).toBe(true),
+    );
+    await settle();
+
+    expect(sentEmails(spy)).toHaveLength(ALERT_EMAILS_PER_HOUR);
+    expect(await prisma.notification.count()).toBe(ALERT_EMAILS_PER_HOUR + 1);
+    expect(JSON.stringify(info.mock.calls)).not.toContain(engineerEmail);
+  });
+});
+
+describe("the sweep's reminder emails", () => {
+  beforeEach(() => configureEmail());
+  afterEach(() => goDormant());
+
+  async function taskDue(deadline: Date) {
+    return createMainTask(fixture.adminActor, {
+      projectId: fixture.projectId,
+      title: "Vendor drawing review",
+      description: "A reminder test.",
+      priority: "MEDIUM",
+      deadline,
+      ownerId: fixture.pmActor.userId,
+      disciplineTasks: [
+        {
+          disciplineId: fixture.disciplineId,
+          title: "Mechanical check",
+          assigneeId: fixture.engineerActor.userId,
+          deadline,
+          isMandatory: true,
+          requiredDocuments: [],
+        },
+      ],
+    });
+  }
+
+  it("emails the reminder to the person it was written for, and only if they asked", async () => {
+    const deadline = inThirtyDays();
+    await taskDue(deadline);
+    const engineerEmail = await optIn(fixture.engineerActor.userId);
+    await optIn(fixture.pmActor.userId, { alerts: false });
+    const spy = mockEmailFetchOk();
+
+    await runSweepOnce(new Date(deadline.getTime() + DAY));
+
+    // The assignee and the owner both got an OVERDUE row; only the one who asked got an email.
+    expect(await prisma.notification.count({ where: { type: "OVERDUE" } })).toBe(2);
+    const sent = sentEmails(spy);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].to).toEqual([engineerEmail]);
+    expect(sent[0].subject).toBe("A task is overdue");
+    expect(sent[0].text).toContain("Mechanical check");
+  });
+
+  it("stops at its own time budget, having always sent at least one", async () => {
+    await optIn(fixture.engineerActor.userId);
+    const spy = mockEmailFetchOk();
+    const reminder = (n: number) => ({
+      userId: fixture.engineerActor.userId,
+      type: "OVERDUE" as const,
+      title: "A task is overdue",
+      body: `"Task ${n}" was due on 1 Sep 2026.`,
+      linkUrl: `/discipline-tasks/r${n}`,
+    });
+
+    const run = await emailSweepReminders([reminder(1), reminder(2), reminder(3)], 0);
+
+    expect(run).toEqual({ sent: 1, heldBack: 2 });
+    expect(sentEmails(spy)).toHaveLength(1);
+  });
+});
+
+describe("the daily brief email", () => {
+  /** 06:00 UTC today — after the 05:00 line. */
+  const morning = (): Date => {
+    const now = new Date();
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 6));
+  };
+  const startOfToday = (): Date => {
+    const now = new Date();
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  };
+
+  async function workDueToday(assigneeIds: string[]) {
+    await createMainTask(fixture.adminActor, {
+      projectId: fixture.projectId,
+      title: "Flare tip replacement",
+      description: "Daily brief test.",
+      priority: "HIGH",
+      deadline: startOfToday(),
+      disciplineTasks: assigneeIds.map((assigneeId, index) => ({
+        disciplineId: fixture.disciplineId,
+        title: `Due today ${index + 1}`,
+        assigneeId,
+        deadline: startOfToday(),
+        isMandatory: true,
+        requiredDocuments: [],
+      })),
+    });
+  }
+
+  const stampOf = async (userId: string) =>
+    (await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { dailyBriefEmailedAt: true } }))
+      .dailyBriefEmailedAt;
+
+  beforeEach(() => configureEmail());
+  afterEach(() => goDormant());
+
+  it("sends each person their own day once, and stamps it after the attempt", async () => {
+    await workDueToday([fixture.engineerActor.userId]);
+    const engineerEmail = await optIn(fixture.engineerActor.userId, { alerts: false, daily: true });
+    const spy = mockEmailFetchOk();
+
+    const first = await sendDailyBriefEmails(morning());
+    expect(first).toEqual({ people: 1, sent: 1 });
+    const [email] = sentEmails(spy);
+    expect(email.to).toEqual([engineerEmail]);
+    expect(email.subject).toMatch(/^Your day — \d{1,2} [A-Z][a-z]{2} \d{4} \(1 due today\)$/);
+    expect(email.text).toContain("Tielora — Your day");
+    expect(email.text).toContain("DUE TODAY (1)");
+    expect(email.text).toContain("- Due today 1 (");
+    expect(email.text).toContain(`Open your day in Tielora:\n${EMAIL_BASE}/my-tasks/brief`);
+    expect(email.headers?.["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
+    const token = /\?t=([^>]+)>/.exec(email.headers?.["List-Unsubscribe"] ?? "")?.[1] ?? "";
+    expect(verifyUnsubscribeToken(decodeURIComponent(token))?.kind).toBe("DAILY");
+    expect(await stampOf(fixture.engineerActor.userId)).toEqual(morning());
+
+    // The other twenty-three sweeps of the day do nothing for them.
+    const again = await sendDailyBriefEmails(new Date(morning().getTime() + 60 * 60 * 1000));
+    expect(again.people).toBe(0);
+    expect(sentEmails(spy)).toHaveLength(1);
+
+    // Tomorrow's line earns tomorrow's brief.
+    const tomorrow = await sendDailyBriefEmails(new Date(morning().getTime() + DAY));
+    expect(tomorrow.sent).toBe(1);
+  });
+
+  it("sends nothing on an empty day, but still stamps it", async () => {
+    await optIn(fixture.outsiderActor.userId, { daily: true });
+    const spy = mockEmailFetchOk();
+
+    const run = await sendDailyBriefEmails(morning());
+
+    expect(run).toEqual({ people: 1, sent: 0 });
+    expect(sentEmails(spy)).toHaveLength(0);
+    expect(await stampOf(fixture.outsiderActor.userId)).toEqual(morning());
+  });
+
+  it("resumes with the people it had not reached when the budget cut it short", async () => {
+    await workDueToday([fixture.engineerActor.userId, fixture.pmActor.userId]);
+    await optIn(fixture.engineerActor.userId, { alerts: false, daily: true });
+    await optIn(fixture.pmActor.userId, { alerts: false, daily: true });
+    const spy = mockEmailFetchOk();
+
+    const cut = await sendDailyBriefEmails(morning(), 0);
+    expect(cut.people).toBe(1);
+    const firstTo = sentEmails(spy)[0].to[0];
+
+    const rest = await sendDailyBriefEmails(new Date(morning().getTime() + 60 * 60 * 1000), 0);
+    expect(rest.people).toBe(1);
+    const sent = sentEmails(spy);
+    expect(sent).toHaveLength(2);
+    expect(sent[1].to[0]).not.toBe(firstTo);
+  });
+
+  it("stamps today when somebody switches it on, so the first one comes next morning", async () => {
+    await workDueToday([fixture.engineerActor.userId]);
+    await optIn(fixture.engineerActor.userId, { alerts: false, daily: false });
+    const spy = mockEmailFetchOk();
+
+    const before = Date.now();
+    await setEmailPreferences(fixture.engineerActor, { emailDailyBrief: true });
+    const stamp = (await stampOf(fixture.engineerActor.userId)) as Date;
+    expect(stamp.getTime()).toBeGreaterThanOrEqual(before);
+
+    expect((await sendDailyBriefEmails(new Date(stamp.getTime() + 1))).sent).toBe(0);
+    const nextMorning = new Date(
+      Date.UTC(stamp.getUTCFullYear(), stamp.getUTCMonth(), stamp.getUTCDate() + 1, 6),
+    );
+    expect((await sendDailyBriefEmails(nextMorning)).people).toBe(1);
+    expect(sentEmails(spy)).toHaveLength(1);
+  });
+
+  it("runs for a company with no chat channel at all, from the real sweep", async () => {
+    await workDueToday([fixture.engineerActor.userId]);
+    await optIn(fixture.engineerActor.userId, { alerts: false, daily: true });
+    expect(await prisma.orgIntegration.count()).toBe(0);
+    const spy = mockEmailFetchOk();
+
+    await runSweepOnce(morning());
+
+    expect(sentEmails(spy).filter((email) => email.subject.startsWith("Your day"))).toHaveLength(1);
+  });
+
+  it("does nothing and stamps nothing while email is not set up", async () => {
+    await workDueToday([fixture.engineerActor.userId]);
+    await optIn(fixture.engineerActor.userId, { daily: true });
+    goDormant();
+    const spy = mockEmailFetchOk();
+
+    expect(await sendDailyBriefEmails(morning())).toEqual({ people: 0, sent: 0 });
+    expect(spy).not.toHaveBeenCalled();
+    expect(await stampOf(fixture.engineerActor.userId)).toBeNull();
+  });
+
+  it("never sends a contractor a brief, whatever their row says", async () => {
+    const contractor = await makeUser({ name: "Yusuf Contractor", role: "EXTERNAL", orgId: fixture.orgId });
+    await prisma.projectMember.create({
+      data: { projectId: fixture.projectId, userId: contractor.id, projectRole: "EXTERNAL" },
+    });
+    await workDueToday([contractor.id]);
+    await optIn(contractor.id, { alerts: false, daily: true, weekly: true });
+    const spy = mockEmailFetchOk();
+
+    expect(await sendDailyBriefEmails(morning())).toEqual({ people: 0, sent: 0 });
+    expect(sentEmails(spy)).toHaveLength(0);
+    expect(await stampOf(contractor.id)).toBeNull();
+  });
+
+  it("writes no notification row and no audit row", async () => {
+    await workDueToday([fixture.engineerActor.userId]);
+    await optIn(fixture.engineerActor.userId, { alerts: false, daily: true });
+    mockEmailFetchOk();
+    const notifications = await prisma.notification.count();
+    const audit = await prisma.activityLog.count();
+
+    expect((await sendDailyBriefEmails(morning())).sent).toBe(1);
+
+    expect(await prisma.notification.count()).toBe(notifications);
+    expect(await prisma.activityLog.count()).toBe(audit);
+  });
+
+  it("builds each brief for that person's own actor", async () => {
+    await workDueToday([fixture.engineerActor.userId]);
+    await optIn(fixture.pmActor.userId, { alerts: false, daily: true });
+    const spy = mockEmailFetchOk();
+
+    // The project manager owns nothing due today, so their day is empty and nothing goes.
+    expect((await sendDailyBriefEmails(morning())).sent).toBe(0);
+    expect(sentEmails(spy)).toHaveLength(0);
+    expect((await actorForUser(fixture.pmActor.userId)).userId).toBe(fixture.pmActor.userId);
   });
 });

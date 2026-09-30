@@ -87,11 +87,14 @@ export function Select({ className = "", children, ...rest }: SelectHTMLAttribut
 }
 
 export function Card({
+  id,
   title,
   action,
   children,
   className = "",
 }: {
+  /** Lets another screen link straight to this card (`#id`). */
+  id?: string;
   title?: string;
   action?: ReactNode;
   children: ReactNode;
@@ -99,6 +102,7 @@ export function Card({
 }) {
   return (
     <section
+      id={id}
       className={`min-w-0 rounded-[var(--radius)] border border-[var(--border)] bg-white ${className}`}
     >
       {title || action ? (

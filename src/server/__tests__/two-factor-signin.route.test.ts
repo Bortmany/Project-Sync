@@ -4,7 +4,7 @@
 // because the promise this feature makes is about what a REQUEST can and cannot get, not about what
 // a service returns. The only thing stubbed is the cookie jar, which needs a live request to exist.
 
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** The cookie jar next/headers would give a route. Replaced per test so each starts empty. */
 const jar = new Map<string, { value: string; expires?: Date }>();
@@ -25,6 +25,8 @@ vi.mock("next/headers", () => ({
 }));
 
 import { POST as login } from "@/app/api/auth/login/route";
+import { GET as microsoftStart } from "@/app/api/auth/microsoft/route";
+import { GET as microsoftCallback } from "@/app/api/auth/microsoft/callback/route";
 import { POST as twoFactor } from "@/app/api/auth/two-factor/route";
 import { SESSION_COOKIE, hashPassword } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -32,6 +34,17 @@ import { base32Decode, stepAt, totpCode } from "@/lib/totp";
 import { actorForUser, type ActorContext } from "@/server/actor";
 import { resetPassword } from "@/server/services/account";
 import { hashEmailToken, issueEmailToken } from "@/server/services/email-tokens";
+import { signingKeys } from "@/server/services/microsoft-signin";
+import { disableTwoFactor } from "@/server/services/two-factor";
+import {
+  claimsFor,
+  configureMicrosoftEnv,
+  installFakeMicrosoft,
+  makeKey,
+  newOid,
+  newTenant,
+  signToken,
+} from "@/server/__tests__/microsoft-signin-fixtures";
 import {
   beginTwoFactorEnrollment,
   confirmTwoFactorEnrollment,
@@ -128,6 +141,7 @@ describe("an account without two-factor", () => {
     const rows = await loginRows(person.id);
     expect(rows).toHaveLength(1);
     expect((rows[0].metadata as { twoFactor?: boolean }).twoFactor).toBe(false);
+    expect((rows[0].metadata as { method?: string }).method).toBe("password");
 
     const user = await prisma.user.findUniqueOrThrow({ where: { id: person.id } });
     expect(user.lastLoginAt).not.toBeNull();
@@ -226,6 +240,7 @@ describe("the second step", () => {
     const rows = await loginRows(person.id);
     expect(rows).toHaveLength(1);
     expect((rows[0].metadata as { twoFactor?: boolean }).twoFactor).toBe(true);
+    expect((rows[0].metadata as { method?: string }).method).toBe("password");
 
     const user = await prisma.user.findUniqueOrThrow({ where: { id: person.id } });
     expect(user.lastLoginAt).not.toBeNull();
@@ -493,5 +508,125 @@ describe("the limiters on the second step", () => {
     const { status, body } = await postLogin(person.email);
     expect(status).toBe(200);
     expect(body.data.status).toBe("TWO_FACTOR_REQUIRED");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* After a Microsoft sign-in                                           */
+/* ------------------------------------------------------------------ */
+
+describe("two-factor after Sign in with Microsoft", () => {
+  const key = makeKey("kid-two-factor");
+  let restoreEnv: () => void = () => undefined;
+
+  beforeEach(() => {
+    restoreEnv = configureMicrosoftEnv();
+    signingKeys.clear();
+  });
+
+  afterEach(() => {
+    restoreEnv();
+    vi.restoreAllMocks();
+  });
+
+  /** A person in a company with Microsoft sign-in on, already linked, with two-factor on. */
+  async function linkedWithTwoFactor() {
+    const person = await makePerson("Aisha al-Kindi");
+    const { manualKey } = await enrol(person.actor);
+    const tid = newTenant();
+    const oid = newOid();
+    await prisma.organization.update({ where: { id: person.actor.orgId }, data: { entraTenantId: tid } });
+    await prisma.user.update({ where: { id: person.id }, data: { microsoftOid: oid, microsoftTenantId: tid } });
+    return { ...person, manualKey, tid, oid };
+  }
+
+  /** Press the button, "sign in at Microsoft", come back. Returns the callback's Location. */
+  async function microsoftRoundTrip(tid: string, oid: string): Promise<string> {
+    const fake = installFakeMicrosoft([key.jwk]);
+    ipCounter += 1;
+    const headers = { "x-forwarded-for": `198.51.100.${ipCounter % 250}`, "user-agent": "vitest" };
+    const started = await microsoftStart(new Request("http://localhost/api/auth/microsoft", { headers }));
+    const authorize = new URL(started.headers.get("location") ?? "");
+    fake.idTokenFor = () =>
+      signToken(claimsFor({ tid, oid, nonce: authorize.searchParams.get("nonce") ?? "" }), key);
+    const state = encodeURIComponent(authorize.searchParams.get("state") ?? "");
+    const back = await microsoftCallback(
+      new Request(`http://localhost/api/auth/microsoft/callback?code=c&state=${state}`, { headers }),
+    );
+    expect(back.status).toBe(302);
+    return back.headers.get("location") ?? "";
+  }
+
+  function ticketFrom(location: string): string {
+    const url = new URL(location);
+    return new URLSearchParams(url.hash.slice(1)).get("mstf") ?? "";
+  }
+
+  it("creates no session, cookie, LOGIN row or lastLoginAt until the code is accepted", async () => {
+    const person = await linkedWithTwoFactor();
+
+    const location = await microsoftRoundTrip(person.tid, person.oid);
+
+    expect(jar.get(SESSION_COOKIE)).toBeUndefined();
+    expect(await prisma.session.count({ where: { userId: person.id } })).toBe(0);
+    expect(await loginRows(person.id)).toHaveLength(0);
+    const before = await prisma.user.findUniqueOrThrow({ where: { id: person.id } });
+    expect(before.lastLoginAt).toBeNull();
+
+    const pendingToken = ticketFrom(location);
+    expect(pendingToken).toMatch(/^[0-9a-f]{64}$/);
+    const ticket = await prisma.emailToken.findFirstOrThrow({
+      where: { tokenHash: hashEmailToken(pendingToken) },
+    });
+    expect(ticket.purpose).toBe("TWOFA_PENDING_MICROSOFT");
+
+    const { status } = await postSecondStep({ pendingToken, code: codeFor(person.manualKey, 1) });
+    expect(status).toBe(200);
+    expect(jar.get(SESSION_COOKIE)).toBeDefined();
+    expect(await prisma.session.count({ where: { userId: person.id } })).toBe(1);
+
+    const rows = await loginRows(person.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].metadata).toMatchObject({ twoFactor: true, method: "microsoft" });
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: person.id } });
+    expect(after.lastLoginAt).not.toBeNull();
+  });
+
+  it("hands the ticket over only in the address fragment, never in a query string", async () => {
+    const person = await linkedWithTwoFactor();
+    const location = await microsoftRoundTrip(person.tid, person.oid);
+    const url = new URL(location);
+
+    expect(url.pathname).toBe("/login");
+    expect(url.search).toBe("");
+    expect(url.hash.startsWith("#mstf=")).toBe(true);
+    const ticket = ticketFrom(location);
+    expect(location.indexOf(ticket)).toBeGreaterThan(location.indexOf("#"));
+  });
+
+  it("retires a Microsoft ticket when the password is reset", async () => {
+    const person = await linkedWithTwoFactor();
+    const pendingToken = ticketFrom(await microsoftRoundTrip(person.tid, person.oid));
+
+    const reset = await issueEmailToken(person.id, "RESET");
+    await resetPassword({ token: reset.rawToken, password: "a-brand-new-password-2026" });
+
+    const stale = await postSecondStep({ pendingToken, code: codeFor(person.manualKey, 1) });
+    expect(stale.status).toBe(401);
+    expect(await prisma.session.count({ where: { userId: person.id } })).toBe(0);
+  });
+
+  it("retires a Microsoft ticket when two-factor is switched off", async () => {
+    const person = await linkedWithTwoFactor();
+    const pendingToken = ticketFrom(await microsoftRoundTrip(person.tid, person.oid));
+
+    await disableTwoFactor(person.actor, { code: codeFor(person.manualKey, 1) });
+
+    const ticket = await prisma.emailToken.findFirstOrThrow({
+      where: { tokenHash: hashEmailToken(pendingToken) },
+    });
+    expect(ticket.usedAt).not.toBeNull();
+    const stale = await postSecondStep({ pendingToken, code: codeFor(person.manualKey, 2) });
+    expect(stale.status).toBe(401);
   });
 });

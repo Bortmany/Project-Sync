@@ -207,7 +207,7 @@ describe("the legal pages", () => {
     const terms = renderToStaticMarkup(TermsPage());
 
     expect(privacy).toContain("Privacy notice");
-    expect(privacy).toContain("Last updated 31 Aug 2026");
+    expect(privacy).toContain("Last updated 30 Sep 2026");
     expect(privacy).toContain("What is stored");
     expect(terms).toContain("Terms of use");
     expect(terms).toContain("How access works");

@@ -16,6 +16,7 @@ import { billingHealth } from "@/server/services/billing";
 import { emailStatus } from "@/server/services/email";
 import { integrationCounts } from "@/server/services/integrations";
 import { microsoftHealth } from "@/server/services/microsoft";
+import { microsoftSignInOrgCount } from "@/server/services/microsoft-signin";
 import { currentActor } from "@/server/session";
 import { sweepStatus } from "@/server/sweep";
 
@@ -64,9 +65,15 @@ export async function GET() {
 
   // Microsoft 365 file attachments: "dormant" until the Azure app is registered, then "configured"
   // with how many companies have connected. A number and a word — nothing that names anybody.
+  // `signInOrgs` is how many companies have "Sign in with Microsoft" switched on: a count, never
+  // a tenant id or a company name.
   const microsoft = dbUp
-    ? await microsoftHealth()
-    : { status: isMicrosoftConfigured() ? "configured" : "dormant", connectedOrgs: 0 };
+    ? { ...(await microsoftHealth()), signInOrgs: await microsoftSignInOrgCount() }
+    : {
+        status: isMicrosoftConfigured() ? "configured" : "dormant",
+        connectedOrgs: 0,
+        signInOrgs: 0,
+      };
 
   return NextResponse.json(
     {

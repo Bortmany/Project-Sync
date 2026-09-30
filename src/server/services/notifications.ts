@@ -137,7 +137,19 @@ export type SweepCounts = DeadlineCounts & { accessExpiring: number };
 export type SweepWebhookEvent = { orgId: string } & WebhookEvent;
 
 /** The rows that were written, plus the chat events they should produce once the sweep commits. */
-export type SweepOutcome = { counts: DeadlineCounts; events: SweepWebhookEvent[] };
+/**
+ * One reminder row the sweep wrote, for the alert email copy: WHO it was written for, in exactly
+ * the words of that row. The chat events above cannot serve here — they are one per task per
+ * company and carry no recipient — so the sweep hands back this second, per-person list.
+ */
+export type SweepAlertEmail = { userId: string } & WebhookEvent;
+
+/** The rows that were written, plus the chat events and alert emails they should produce. */
+export type SweepOutcome = {
+  counts: DeadlineCounts;
+  events: SweepWebhookEvent[];
+  emails: SweepAlertEmail[];
+};
 
 type Candidate = {
   userId: string;
@@ -180,6 +192,7 @@ export async function sweepDeadlineNotifications(
   return {
     counts: { approaching: approaching.count, overdue: overdue.count },
     events: [...approaching.events, ...overdue.events],
+    emails: [...approaching.emails, ...overdue.emails],
   };
 }
 
@@ -320,8 +333,8 @@ async function writeNew(
   type: "DEADLINE_APPROACHING" | "OVERDUE",
   rows: Candidate[],
   now: Date,
-): Promise<{ count: number; events: SweepWebhookEvent[] }> {
-  if (rows.length === 0) return { count: 0, events: [] };
+): Promise<{ count: number; events: SweepWebhookEvent[]; emails: SweepAlertEmail[] }> {
+  if (rows.length === 0) return { count: 0, events: [], emails: [] };
 
   const active = await tx.user.findMany({
     where: { id: { in: [...new Set(rows.map((row) => row.userId))] }, isActive: true },
@@ -357,9 +370,19 @@ async function writeNew(
       createdAt: now,
     }));
 
-  if (data.length === 0) return { count: 0, events: [] };
+  if (data.length === 0) return { count: 0, events: [], emails: [] };
 
   const result = await tx.notification.createMany({ data });
+
+  // One alert email per row written, addressed to the row's own person — whether that person wants
+  // it (alerts on, a confirmed address) is decided at send time, after the commit.
+  const emails: SweepAlertEmail[] = data.map((row) => ({
+    userId: row.userId,
+    type: row.type,
+    title: row.title,
+    body: row.body,
+    linkUrl: row.linkUrl,
+  }));
 
   // One chat event per company per task, even in the unlikely case two rows share a link. The
   // sweep's own caller posts these only after the transaction has committed.
@@ -374,5 +397,5 @@ async function writeNew(
     events.push({ orgId, type, title: row.title, body: row.body, linkUrl: row.linkUrl });
   }
 
-  return { count: result.count, events };
+  return { count: result.count, events, emails };
 }

@@ -1487,6 +1487,27 @@ export const MicrosoftStatusDTO = z.discriminatedUnion("configured", [
 ]);
 export type MicrosoftStatusDTO = z.infer<typeof MicrosoftStatusDTO>;
 
+/**
+ * The "Sign in with Microsoft" half of the Microsoft 365 card, as the company's own administrator
+ * sees it (`microsoftSignInStatus()` in src/server/services/microsoft-signin.ts). Company facts and a
+ * count only: never a tenant id, never a person's Microsoft id, never anybody's address.
+ */
+export const MicrosoftSignInStatusDTO = z.object({
+  /** True while this company has a Microsoft tenant linked (`Organization.entraTenantId` set). */
+  enabled: z.boolean(),
+  /** The work domain captured when it was switched on, e.g. "contoso.com"; null if unknown. */
+  domain: z.string().nullable(),
+  /** Who switched it on; null when that account has since left (the card says so in words). */
+  enabledByName: z.string().nullable(),
+  /** When it was switched on, as an ISO 8601 string; null when not on. */
+  enabledAt: z.string().nullable(),
+  /** How many people in this company have a Microsoft link. */
+  linkedPeople: z.number().int().nonnegative(),
+  /** Whether APP_BASE_URL is set, which the callback address is built from. */
+  callbackReady: z.boolean(),
+});
+export type MicrosoftSignInStatusDTO = z.infer<typeof MicrosoftSignInStatusDTO>;
+
 /** One place files live: the person's own OneDrive, or a SharePoint document library. */
 export const MicrosoftDriveDTO = z.object({
   id: graphId,
@@ -1766,18 +1787,31 @@ export type BroadcastSettingDTO = z.infer<typeof BroadcastSettingDTO>;
  * same choice `IntegrationKindSchema` and `PostKindSchema` made, so a fifth kind needs no
  * migration.
  *
- * **"EXPORT" and "TWOFA_PENDING" are the two that are never emailed.** EXPORT is the download
+ * **"EXPORT", "TWOFA_PENDING" and "TWOFA_PENDING_MICROSOFT" are the three that are never emailed.** EXPORT is the download
  * bearer for a finished workspace export; TWOFA_PENDING is the short-lived proof that somebody's
  * password was accepted a moment ago and they are now being asked for their six digits. Both are
  * the same hashed, expiring, single-use, per-person row an emailed link uses, handed straight to
  * the person on the screen they are already looking at. `EmailedPurposeName` below is what the
  * email side takes, so the compiler refuses to let either of them reach an inbox.
  */
-export const EmailPurposeSchema = z.enum(["INVITE", "RESET", "VERIFY", "EXPORT", "TWOFA_PENDING"]);
+// "TWOFA_PENDING_MICROSOFT" is the third never-emailed purpose: the same five-minute ticket, minted
+// when the FIRST step was a Microsoft sign-in rather than a password, so the second step can write
+// the truth (`method: "microsoft"`) in the LOGIN row.
+export const EmailPurposeSchema = z.enum([
+  "INVITE",
+  "RESET",
+  "VERIFY",
+  "EXPORT",
+  "TWOFA_PENDING",
+  "TWOFA_PENDING_MICROSOFT",
+]);
 export type EmailPurposeName = z.infer<typeof EmailPurposeSchema>;
 
 /** The purposes that really are sent by email. The other two are deliberately not among them. */
-export type EmailedPurposeName = Exclude<EmailPurposeName, "EXPORT" | "TWOFA_PENDING">;
+export type EmailedPurposeName = Exclude<
+  EmailPurposeName,
+  "EXPORT" | "TWOFA_PENDING" | "TWOFA_PENDING_MICROSOFT"
+>;
 
 /**
  * The raw token out of a link, exactly as it was minted: 32 random bytes as lower-case hex. Parsing
@@ -1826,6 +1860,55 @@ export type PasswordChangedDTO = z.infer<typeof PasswordChangedDTO>;
 /** What the resend actions hand back: that we tried, and nothing about the link itself. */
 export const EmailSentDTO = z.object({ sent: z.literal(true) });
 export type EmailSentDTO = z.infer<typeof EmailSentDTO>;
+
+/* ------------------------------------------------------------------ */
+/* Email preferences (alerts and briefs by email) and unsubscribe      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The signed-in person's own email choices, from Your account. No id: the only account it can
+ * reach is the session's. Strict, so an unknown field is refused rather than quietly ignored, and at
+ * least one of the three has to be there. The two brief flags are accepted from anybody and ignored
+ * by the service for a contractor, who is never sent either brief.
+ */
+export const EmailPreferencesInput = z
+  .object({
+    emailAlerts: z.boolean().optional(),
+    emailDailyBrief: z.boolean().optional(),
+    emailWeeklyBrief: z.boolean().optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.emailAlerts !== undefined ||
+      value.emailDailyBrief !== undefined ||
+      value.emailWeeklyBrief !== undefined,
+    { message: "Choose at least one setting to change." },
+  );
+export type EmailPreferencesInput = z.infer<typeof EmailPreferencesInput>;
+
+/**
+ * What the Email card draws. `verified` is whether the address has been confirmed — alert and brief
+ * emails only ever go to a confirmed one. `available` is whether this Tielora sends email at all
+ * (`emailAvailable()`); the card is not drawn while it is false. `email` is the person's own
+ * address, so the card can say where the emails go.
+ */
+export const EmailPreferencesDTO = z.object({
+  emailAlerts: z.boolean(),
+  emailDailyBrief: z.boolean(),
+  emailWeeklyBrief: z.boolean(),
+  verified: z.boolean(),
+  available: z.boolean(),
+  email: z.string(),
+});
+export type EmailPreferencesDTO = z.infer<typeof EmailPreferencesDTO>;
+
+/**
+ * Which kind of email an unsubscribe link switches off. A plain string validated here, never a
+ * database enum — the same choice `EmailPurposeSchema` made.
+ */
+export const UnsubscribeKindSchema = z.enum(["ALERTS", "DAILY", "WEEKLY"]);
+export type UnsubscribeKindName = z.infer<typeof UnsubscribeKindSchema>;
 
 /* ------------------------------------------------------------------ */
 /* Two-factor sign-in                                                  */
@@ -1987,6 +2070,14 @@ export const PersonalExportDTO = z.object({
     emailConfirmedAt: dateOut.nullable(),
     lastSignedInAt: dateOut.nullable(),
     accountCreatedAt: dateOut,
+    /** Your three email choices, as stored (a contractor is never sent a brief whatever they say). */
+    emailAlerts: z.boolean(),
+    emailDailyBrief: z.boolean(),
+    emailWeeklyBrief: z.boolean(),
+    /** When your daily brief email was last attempted, or null for never. */
+    lastDailyBriefEmailAt: dateOut.nullable(),
+    /** Whether your account is linked to a Microsoft sign-in — yes or no, never the identifier. */
+    signedInWithMicrosoft: z.boolean(),
   }),
   projects: z.array(
     z.object({
