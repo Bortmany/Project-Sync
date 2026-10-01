@@ -52,7 +52,11 @@ import { NotFoundError, ServiceError } from "@/server/errors";
 import { checkDto, checkDtoList } from "@/server/serialize";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
 import { assertStorageRoom } from "@/server/services/billing";
-import { assertCanUploadTo, uploadDocumentVersion } from "@/server/services/documents";
+import {
+  assertCanUploadTo,
+  assertFileSuitsRequirement,
+  uploadDocumentVersion,
+} from "@/server/services/documents";
 import {
   GraphUnauthorizedError,
   downloadItemContent,
@@ -607,6 +611,9 @@ export async function attachMicrosoftFile(
   // is when somebody drags one into the upload box.
   const checked = validateUpload(buffer, fileName);
   if (!checked.ok) throw new ServiceError(checked.error);
+
+  // The same mandatory-document rule the upload route applies, before a byte is written.
+  await assertFileSuitsRequirement(actor, meta, checked.ext);
 
   const stored = await storeFile(buffer, checked.ext);
 

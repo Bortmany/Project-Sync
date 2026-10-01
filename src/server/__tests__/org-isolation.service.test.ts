@@ -113,11 +113,14 @@ import {
 } from "@/server/services/posts";
 import { createProject, getProjectForActor, listProjectsForActor } from "@/server/services/projects";
 import {
+  addDependency,
   completeDisciplineTask,
+  createDisciplineTask,
   createMainTask,
   getDisciplineTaskForActor,
   getMainTaskForActor,
   listMainTasksForProject,
+  removeDependency,
   setMainTaskPhase,
   updateDisciplineTaskStatus,
 } from "@/server/services/tasks";
@@ -303,6 +306,45 @@ describe("an administrator of one company cannot reach another company's work", 
       where: { id: rival.disciplineTaskId },
     });
     expect(untouched.status).toBe("NOT_STARTED");
+  });
+
+  it("cannot add or remove a dependency on their tasks, or between theirs and ours", async () => {
+    // A second task on each side, so "both theirs" and "both ours" are real pairs too.
+    const second = async (company: Company, title: string) =>
+      (
+        await createDisciplineTask(company.admin, {
+          mainTaskId: company.mainTaskId,
+          disciplineId: company.fixture.disciplineId,
+          title,
+          deadline: inThirtyDays(),
+          priority: "MEDIUM",
+          isMandatory: true,
+          requiredDocuments: [],
+        })
+      ).id;
+    const theirsB = await second(rival, "Rival second task");
+    const mineB = await second(acme, "Acme second task");
+
+    const attempts = [
+      { predecessorId: rival.disciplineTaskId, successorId: theirsB }, // both theirs
+      { predecessorId: acme.disciplineTaskId, successorId: rival.disciplineTaskId }, // ours before theirs
+      { predecessorId: rival.disciplineTaskId, successorId: acme.disciplineTaskId }, // theirs before ours
+    ];
+    for (const attempt of attempts) {
+      await expect(addDependency(acme.admin, attempt)).rejects.toBeInstanceOf(NotFoundError);
+    }
+    expect(await prisma.taskDependency.count()).toBe(0);
+
+    // Their own link exists; the other company's administrator cannot take it away either.
+    await addDependency(rival.admin, { predecessorId: rival.disciplineTaskId, successorId: theirsB });
+    await expect(
+      removeDependency(acme.admin, { predecessorId: rival.disciplineTaskId, successorId: theirsB }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    expect(await prisma.taskDependency.count()).toBe(1);
+
+    // Their own company still works, which is what makes the refusals meaningful.
+    await addDependency(acme.admin, { predecessorId: acme.disciplineTaskId, successorId: mineB });
+    expect(await prisma.taskDependency.count()).toBe(2);
   });
 
   it("cannot list their documents or download one of their files", async () => {

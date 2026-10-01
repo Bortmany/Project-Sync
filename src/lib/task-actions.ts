@@ -17,6 +17,12 @@ export type TaskActionContext = {
   status: TaskStatusName;
   /** The completion gate's answer: mandatory documents in, dependencies closed. */
   canComplete: boolean;
+  /**
+   * The task sits in a locked phase (the stage gate). Nothing under a locked phase can be completed
+   * or even handed in for sign-off — the server refuses both — so the button is greyed out for a
+   * contractor as well, rather than looking pressable and then refusing.
+   */
+  phaseLocked?: boolean;
 };
 
 const OPEN_STATUSES: TaskStatusName[] = ["NOT_STARTED", "IN_PROGRESS", "BLOCKED", "AWAITING_REVIEW"];
@@ -47,12 +53,15 @@ export function statusChoicesFor(context: TaskActionContext): TaskStatusName[] {
  * For a colleague this is "Mark complete", and the completion gate decides whether it may be
  * pressed. For a contractor on a sign-off project it is "Submit for sign-off", and it is always
  * pressable: submitting is a request, and the gate is judged at the lead's confirmation, where the
- * person who can actually do something about a missing document sees it.
+ * person who can actually do something about a missing document sees it. The one exception is a
+ * locked phase, which refuses the submission itself.
  */
 export function completeButtonFor(context: TaskActionContext): {
   label: string;
   disabled: boolean;
 } {
-  if (submitsForSignoff(context)) return { label: "Submit for sign-off", disabled: false };
+  if (submitsForSignoff(context)) {
+    return { label: "Submit for sign-off", disabled: Boolean(context.phaseLocked) };
+  }
   return { label: "Mark complete", disabled: !context.canComplete };
 }

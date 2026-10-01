@@ -110,6 +110,8 @@ import {
   upsertMember,
 } from "@/server/services/projects";
 import {
+  addDependency,
+  removeDependency,
   completeDisciplineTask,
   confirmDisciplineTaskReview,
   createDisciplineTask,
@@ -156,7 +158,10 @@ async function uploadTo(
   target: { projectId: string; disciplineTaskId?: string; mainTaskId?: string; requiredDocumentId?: string },
   filename = "Report.csv",
 ) {
-  const buffer = Buffer.from(`line,value\n1,${filename}\n`, "utf8");
+  // A real PDF where the checklist is concerned: a CSV can no longer tick off a mandatory item.
+  const buffer = filename.endsWith(".pdf")
+    ? Buffer.from(`%PDF-1.4\n% ${filename}\n%%EOF\n`, "utf8")
+    : Buffer.from(`line,value\n1,${filename}\n`, "utf8");
   const checked = validateUpload(buffer, filename);
   if (!checked.ok) throw new Error(checked.error);
   const stored = await storeFile(buffer, checked.ext);
@@ -401,6 +406,58 @@ describe("a contractor only sees their own tasks", () => {
         requiredDocuments: [],
       }),
     ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+});
+
+describe("a contractor cannot sequence work", () => {
+  it("is refused when adding or removing a dependency, even on their own task", async () => {
+    // Two pieces of work that are both the contractor's own.
+    const mineToo = (
+      await createDisciplineTask(fixture.pmActor, {
+        mainTaskId: sharedMainTaskId,
+        disciplineId: fixture.disciplineId,
+        title: "Contractor punch list",
+        assigneeId: contractor.userId,
+        deadline: inThirtyDays(),
+        priority: "MEDIUM",
+        isMandatory: true,
+        requiredDocuments: [],
+      })
+    ).id;
+    const pair = { predecessorId: myTaskId, successorId: mineToo };
+
+    await expect(addDependency(contractor, pair)).rejects.toBeInstanceOf(ForbiddenError);
+    expect(await prisma.taskDependency.count()).toBe(0);
+
+    await addDependency(fixture.pmActor, pair);
+    await expect(removeDependency(contractor, pair)).rejects.toBeInstanceOf(ForbiddenError);
+    expect(await prisma.taskDependency.count()).toBe(1);
+  });
+
+  it("is a miss, not a refusal, on a task that is not theirs", async () => {
+    for (const pair of [
+      { predecessorId: myTaskId, successorId: theirTaskId },
+      { predecessorId: theirTaskId, successorId: myTaskId },
+    ]) {
+      await expect(addDependency(contractor, pair)).rejects.toBeInstanceOf(NotFoundError);
+    }
+    expect(await prisma.taskDependency.count()).toBe(0);
+  });
+
+  it("never names somebody else's task on the timeline, though a colleague sees the wait", async () => {
+    await addDependency(fixture.pmActor, { predecessorId: theirTaskId, successorId: myTaskId });
+
+    const colleague = await ganttForProject(fixture.pmActor, fixture.projectId);
+    const colleagueBar = colleague.mainTasks
+      .flatMap((task) => task.disciplineTasks)
+      .find((bar) => bar.id === myTaskId);
+    expect(colleagueBar?.waitingOn).toEqual([THEIRS]);
+
+    const theirs = await ganttForProject(contractor, fixture.projectId);
+    expect(JSON.stringify(theirs)).not.toContain(THEIRS);
+    expect(
+      theirs.mainTasks.flatMap((task) => task.disciplineTasks).every((bar) => bar.waitingOn?.length === 0),
+    ).toBe(true);
   });
 });
 
@@ -852,11 +909,11 @@ describe("the sign-off: a contractor hands work in, somebody here signs it off",
     const requirement = await prisma.requiredDocument.findFirstOrThrow({
       where: { disciplineTaskId: myTaskId, name: REQUIRED_DOC },
     });
-    await uploadTo(contractor, {
-      projectId: fixture.projectId,
-      disciplineTaskId: myTaskId,
-      requiredDocumentId: requirement.id,
-    });
+    await uploadTo(
+      contractor,
+      { projectId: fixture.projectId, disciplineTaskId: myTaskId, requiredDocumentId: requirement.id },
+      "Weld inspection report.pdf",
+    );
 
     const confirmed = await confirmDisciplineTaskReview(fixture.pmActor, { id: myTaskId });
     expect(confirmed.status).toBe("COMPLETED");
@@ -919,11 +976,11 @@ describe("the sign-off: a contractor hands work in, somebody here signs it off",
     const requirement = await prisma.requiredDocument.findFirstOrThrow({
       where: { disciplineTaskId: myTaskId, name: REQUIRED_DOC },
     });
-    await uploadTo(contractor, {
-      projectId: fixture.projectId,
-      disciplineTaskId: myTaskId,
-      requiredDocumentId: requirement.id,
-    });
+    await uploadTo(
+      contractor,
+      { projectId: fixture.projectId, disciplineTaskId: myTaskId, requiredDocumentId: requirement.id },
+      "Weld inspection report.pdf",
+    );
 
     const task = await completeDisciplineTask(contractor, { id: myTaskId });
     expect(task.status).toBe("COMPLETED");

@@ -91,6 +91,8 @@ export {
   reopenDisciplineTask,
   confirmDisciplineTaskReview,
   rejectDisciplineTaskReview,
+  addDependency,
+  removeDependency,
 } from "@/server/actions/discipline-tasks";
 
 // The noticeboard: announcements, the department board, and the company setting behind them.

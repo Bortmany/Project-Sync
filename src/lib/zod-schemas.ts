@@ -648,6 +648,13 @@ export const DisciplineTaskDTO = z.object({
   ),
   blockers: z.array(z.string()),
   canComplete: z.boolean(),
+  /**
+   * The stage gate's sentence (`phaseLockMessage()`) while this task sits in a locked phase, else
+   * null. Derived at read time exactly as the server's refusal derives it — never stored. It is
+   * ALSO the first entry in `blockers` and forces `canComplete` false, so the button is honest
+   * before the click; the server still refuses regardless.
+   */
+  phaseLockedReason: z.string().nullable().optional(),
 });
 export type DisciplineTaskDTO = z.infer<typeof DisciplineTaskDTO>;
 
@@ -991,6 +998,12 @@ export const GanttDTO = z.object({
           startDate: dateOut.nullable(),
           deadline: dateOut,
           status: TaskStatusSchema,
+          /**
+           * Titles of the earlier tasks this one is still waiting on (open ones only), so the
+           * timeline can say it is waiting and name them. Absent on schedules that do not carry it
+           * (My tasks), and always empty for a contractor.
+           */
+          waitingOn: z.array(z.string()).optional(),
         }),
       ),
     }),

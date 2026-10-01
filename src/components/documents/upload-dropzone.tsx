@@ -17,6 +17,7 @@ import {
 } from "@/components/documents/microsoft-file-picker";
 import { useMicrosoftStatus } from "@/components/hooks/use-api";
 import { Button, ErrorBanner, Field, Input, Modal, Tabs, Textarea, useToast } from "@/components/ui";
+import { ACCEPTED_FILES_HINT, mandatoryDocumentProblem } from "@/lib/upload-rules";
 import { DocumentVersionDTO } from "@/lib/zod-schemas";
 
 /** Where the file is going. The server checks all of this again before it writes anything. */
@@ -34,8 +35,7 @@ export type UploadTarget = {
 
 const ACCEPT = ".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.docx,.pptx,.zip,.csv,.txt,.dwg";
 
-export const UPLOAD_LIMITS_LINE =
-  "Drop a file here or browse — PDF, Office, images, CSV, DWG or ZIP, up to 25 MB";
+export const UPLOAD_LIMITS_LINE = `Drop a file here or browse — ${ACCEPTED_FILES_HINT}`;
 
 const GENERIC_FAILURE = "Couldn't upload this file. Try again or use a different file.";
 
@@ -128,6 +128,7 @@ export function UploadDropzone({
   mode = "zone",
   buttonLabel = "Upload",
   requirementName,
+  mandatoryRequirement = false,
   extraKeys = [],
   onUploaded,
 }: {
@@ -140,6 +141,8 @@ export function UploadDropzone({
   buttonLabel?: string;
   /** Named when this upload satisfies a checklist item, so the dialog can say what it's for. */
   requirementName?: string;
+  /** True when that checklist item is mandatory: plain text and CSV files cannot tick it off. */
+  mandatoryRequirement?: boolean;
   /** Extra query keys to refresh, e.g. the parent main task behind a discipline task. */
   extraKeys?: QueryKey[];
   onUploaded?: (version: DocumentVersionDTO) => void;
@@ -217,6 +220,16 @@ export function UploadDropzone({
 
   async function submit() {
     if (!file && !picked) return;
+    // A courtesy before the trip to the server, which refuses the same thing again.
+    if (mandatoryRequirement) {
+      const name = file?.name ?? picked?.name ?? "";
+      const ext = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : "";
+      const problem = mandatoryDocumentProblem(ext, requirementName);
+      if (problem) {
+        setError(problem);
+        return;
+      }
+    }
     setUploading(true);
     setError(null);
     try {
@@ -414,6 +427,9 @@ export function UploadDropzone({
           {requirementName ? (
             <p className="text-xs text-[var(--brand-text)]">
               This upload ticks off “{requirementName}” on the checklist.
+              {mandatoryRequirement
+                ? " It is a mandatory document, so it needs a drawing, a document or an image. CSV and text files cannot be used."
+                : ""}
             </p>
           ) : null}
 
@@ -458,9 +474,7 @@ export function UploadDropzone({
               <span className="block h-full w-1/3 animate-pulse rounded bg-[var(--brand-accent)]" />
             </div>
           ) : (
-            <p className="text-xs text-[var(--brand-gray)]">
-              PDF, Office, images, CSV, DWG or ZIP — up to 25 MB.
-            </p>
+            <p className="text-xs text-[var(--brand-gray)]">{ACCEPTED_FILES_HINT}.</p>
           )}
         </div>
       </Modal>

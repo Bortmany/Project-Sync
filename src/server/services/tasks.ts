@@ -8,6 +8,7 @@
 import type { Prisma } from "@/generated/prisma/client";
 import { activeMainTasks, notDeleted, prisma } from "@/lib/db";
 import { ForbiddenError, assertCan } from "@/lib/permissions";
+import { phaseLockMessage } from "@/lib/phase-lock";
 import {
   canCompleteDisciplineTask,
   deriveMainTask,
@@ -200,6 +201,27 @@ async function buildGantt(tasks: GanttTaskRow[], viewer?: ActorContext): Promise
   if (tasks.length === 0) return checkDto(GanttSchema, { mainTasks: [] }, "GanttDTO");
   const subtasks = await liveSubtasksFor(tasks.map((task) => task.id), viewer);
 
+  // "Waiting on ..." for the timeline: the open earlier tasks each bar still has to wait for, from
+  // one query for the whole schedule. A contractor is never told the title of somebody else's work,
+  // so for them the timeline carries no dependency names at all.
+  const waiting = new Map<string, string[]>();
+  const successorIds = [...subtasks.values()].flat().map((subtask) => subtask.id);
+  if (successorIds.length > 0 && !(viewer && isExternal(viewer))) {
+    const edges = await prisma.taskDependency.findMany({
+      where: {
+        successorId: { in: successorIds },
+        predecessor: { status: { not: "COMPLETED" }, ...notDeleted },
+      },
+      orderBy: { createdAt: "asc" },
+      select: { successorId: true, predecessor: { select: { title: true } } },
+    });
+    for (const edge of edges) {
+      const list = waiting.get(edge.successorId) ?? [];
+      list.push(edge.predecessor.title);
+      waiting.set(edge.successorId, list);
+    }
+  }
+
   const mainTasks = tasks.map((task) => ({
     id: task.id,
     title: task.title,
@@ -217,6 +239,7 @@ async function buildGantt(tasks: GanttTaskRow[], viewer?: ActorContext): Promise
       startDate: subtask.startDate,
       deadline: subtask.deadline,
       status: subtask.status,
+      waitingOn: waiting.get(subtask.id) ?? [],
     })),
   }));
 
@@ -1678,7 +1701,9 @@ export async function buildDisciplineTaskDTO(disciplineTaskId: string): Promise<
   const task = await prisma.disciplineTask.findFirst({
     where: { id: disciplineTaskId, ...notDeleted },
     include: {
-      mainTask: { select: { id: true, title: true, projectId: true, project: { select: { code: true } } } },
+      mainTask: {
+        select: { id: true, title: true, projectId: true, phaseId: true, project: { select: { code: true } } },
+      },
       discipline: true,
       assignee: { select: { name: true, companyName: true } },
       completedBy: { select: { name: true } },
@@ -1709,6 +1734,20 @@ export async function buildDisciplineTaskDTO(disciplineTaskId: string): Promise<
       .filter((dependency) => dependency.status !== "COMPLETED")
       .map((dependency) => dependency.title),
   });
+
+  // THE STAGE GATE, asked at read time so the screen is honest BEFORE the click. Locked is derived
+  // here exactly as assertPhaseUnlocked() derives it (and with the same sentence); it is never
+  // stored, and this is a courtesy only — completeDisciplineTask() still refuses on the server.
+  // An unphased task is never gated, so it costs no query at all.
+  let phaseLockedReason: string | null = null;
+  if (task.mainTask.phaseId) {
+    const state = (await phaseStatesFor(task.mainTask.projectId)).get(task.mainTask.phaseId);
+    if (state?.locked) phaseLockedReason = phaseLockMessage(state.name, state.lockedByPhaseName);
+  }
+  const blockers =
+    phaseLockedReason && task.status !== "COMPLETED"
+      ? [phaseLockedReason, ...check.blockers]
+      : check.blockers;
 
   const dto: DisciplineTaskDTO = {
     id: task.id,
@@ -1744,8 +1783,9 @@ export async function buildDisciplineTaskDTO(disciplineTaskId: string): Promise<
       isSatisfied: Boolean(doc.documentId),
     })),
     dependencies,
-    blockers: check.blockers,
-    canComplete: check.ok && task.status !== "COMPLETED",
+    blockers,
+    canComplete: check.ok && !phaseLockedReason && task.status !== "COMPLETED",
+    phaseLockedReason,
   };
 
   return checkDto(DisciplineTaskSchema, dto, "DisciplineTaskDTO");

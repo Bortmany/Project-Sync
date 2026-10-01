@@ -184,6 +184,14 @@ In practice:
    interaction (forms, drag, popovers). TanStack Query lives in `src/app/(app)/providers.tsx`.
 9. **Uploads:** always `validateUpload()` then `storeFile()` from `src/lib/upload.ts` — magic-number
    checked, 25 MB cap, random filename under `DATA_DIR`. Never trust the browser's content type.
+   **What may tick off a MANDATORY required document is narrower than what may be uploaded**: plain
+   text and CSV (accepted by extension only, no signature to check) can be attached as ordinary
+   documents but never satisfy a mandatory item, nor be filed as a new revision of a document that
+   does. `assertFileSuitsRequirement()` in `documents.ts` refuses it before `storeFile()` (the upload
+   route and the Microsoft attach both call it) and `uploadDocumentVersion()` refuses it again as the
+   backstop. The rule lives in `src/lib/upload-rules.ts`, which also holds the one honest
+   "what we accept" sentence every upload box shows. A per-requirement "expected file type" would
+   need a schema amendment and is not built.
 10. **Rate limiting:** `src/lib/rate-limit.ts` on every auth route, every mutation and every upload —
     `byIp` for anonymous, `byUser` for signed-in. Deny with HTTP 429, a plain-English message and a
     `Retry-After` header. Limits are per-process until a Redis store is added behind

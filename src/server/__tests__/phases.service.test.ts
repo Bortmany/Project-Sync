@@ -21,6 +21,7 @@ import {
   completeDisciplineTask,
   createDisciplineTask,
   createMainTask,
+  getDisciplineTaskForActor,
   getMainTaskForActor,
   overrideMainTaskStatus,
   reopenDisciplineTask,
@@ -561,5 +562,70 @@ describe("moving work between phases", () => {
     await expect(
       setMainTaskPhase(fixture.pmActor, { id: mainTask.id, phaseId: theirs.id }),
     ).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe("the screen is honest about the gate before the click (and is never the guard)", () => {
+  const SENTENCE =
+    "This task is in the 'Construction' phase, which is locked until 'Foundations' is complete. " +
+    "An administrator or project manager can override the gate.";
+
+  it("reports canComplete false with the phase sentence first while the phase is locked", async () => {
+    const [first, second] = await makePhases(["Foundations", "Construction"]);
+    const early = await makeTask(first.id, "Piling");
+    const later = await makeTask(second.id, "Pipe rack erection");
+
+    const locked = await getDisciplineTaskForActor(fixture.engineerActor, later.subtaskId);
+    expect(locked.canComplete).toBe(false);
+    expect(locked.phaseLockedReason).toBe(SENTENCE);
+    expect(locked.blockers[0]).toBe(SENTENCE);
+
+    // Not stored anywhere: the same read reports it open once the earlier phase is complete.
+    await completeDisciplineTask(fixture.engineerActor, { id: early.subtaskId });
+    const open = await getDisciplineTaskForActor(fixture.engineerActor, later.subtaskId);
+    expect(open.canComplete).toBe(true);
+    expect(open.phaseLockedReason).toBeNull();
+    expect(open.blockers).toEqual([]);
+  });
+
+  it("still refuses on the server, whatever the screen said", async () => {
+    const [first, second] = await makePhases(["Foundations", "Construction"]);
+    await makeTask(first.id, "Piling");
+    const later = await makeTask(second.id, "Pipe rack erection");
+
+    await expect(
+      completeDisciplineTask(fixture.engineerActor, { id: later.subtaskId }),
+    ).rejects.toThrow(SENTENCE);
+    const untouched = await prisma.disciplineTask.findUniqueOrThrow({ where: { id: later.subtaskId } });
+    expect(untouched.status).toBe("NOT_STARTED");
+  });
+
+  it("an authorised override opens the button, and an unphased task is never gated", async () => {
+    const [first, second] = await makePhases(["Foundations", "Construction"]);
+    await makeTask(first.id, "Piling");
+    const later = await makeTask(second.id, "Pipe rack erection");
+    const loose = await makeTask(null, "Cladding");
+
+    await overridePhaseLock(fixture.pmActor, { id: second.id, reason: "Client released the area early" });
+    expect((await getDisciplineTaskForActor(fixture.engineerActor, later.subtaskId)).canComplete).toBe(true);
+
+    const unphased = await getDisciplineTaskForActor(fixture.engineerActor, loose.subtaskId);
+    expect(unphased.canComplete).toBe(true);
+    expect(unphased.phaseLockedReason).toBeNull();
+  });
+
+  it("keeps the gate sentence ahead of the document and dependency blockers", async () => {
+    const [first, second] = await makePhases(["Foundations", "Construction"]);
+    await makeTask(first.id, "Piling");
+    const later = await makeTask(second.id, "Pipe rack erection");
+    await prisma.requiredDocument.create({
+      data: { disciplineTaskId: later.subtaskId, name: "Erection method statement", isMandatory: true },
+    });
+
+    const dto = await getDisciplineTaskForActor(fixture.engineerActor, later.subtaskId);
+    expect(dto.canComplete).toBe(false);
+    expect(dto.blockers).toHaveLength(2);
+    expect(dto.blockers[0]).toBe(SENTENCE);
+    expect(dto.blockers[1]).toMatch(/Erection method statement/);
   });
 });

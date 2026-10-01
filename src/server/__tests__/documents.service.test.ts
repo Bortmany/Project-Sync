@@ -17,6 +17,7 @@ import type { UploadMeta } from "@/lib/zod-schemas";
 import type { ActorContext } from "@/server/actor";
 import { ServiceError } from "@/server/errors";
 import {
+  assertFileSuitsRequirement,
   getVersionForDownload,
   listDocumentsForDisciplineTask,
   listDocumentsForMainTask,
@@ -116,6 +117,12 @@ async function upload(
     },
   );
 }
+
+/** Real PDF bytes: the only kind of file that can tick off a mandatory checklist item. */
+const PDF = {
+  filename: "Signed report.pdf",
+  body: "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n",
+};
 
 describe("revisions are only ever added, never altered or lost", () => {
   it("adds Rev 1 to the same document and leaves Rev 0 and its file untouched", async () => {
@@ -231,10 +238,11 @@ describe("mandatory documents open and close the completion gate", () => {
       ServiceError,
     );
 
-    await upload(fixture.engineerActor, {
-      disciplineTaskId: work.civilId,
-      requiredDocumentId: work.civilRequirementId,
-    });
+    await upload(
+      fixture.engineerActor,
+      { disciplineTaskId: work.civilId, requiredDocumentId: work.civilRequirementId },
+      PDF,
+    );
 
     const requirement = await prisma.requiredDocument.findUniqueOrThrow({
       where: { id: work.civilRequirementId },
@@ -292,11 +300,12 @@ describe("only people on the project see the files", () => {
 describe("removing a document never removes a revision", () => {
   it("is refused while the task it proves is complete, and reopens the checklist item afterwards", async () => {
     const work = await makeWork();
-    const version = await upload(fixture.engineerActor, {
-      disciplineTaskId: work.civilId,
-      requiredDocumentId: work.civilRequirementId,
-    });
-    await upload(fixture.engineerActor, { documentId: version.documentId });
+    const version = await upload(
+      fixture.engineerActor,
+      { disciplineTaskId: work.civilId, requiredDocumentId: work.civilRequirementId },
+      PDF,
+    );
+    await upload(fixture.engineerActor, { documentId: version.documentId }, PDF);
     await completeDisciplineTask(fixture.engineerActor, { id: work.civilId });
 
     await expect(softDeleteDocument(fixture.adminActor, { id: version.documentId })).rejects.toThrow(
@@ -367,5 +376,119 @@ describe("removing a document never removes a revision", () => {
       ForbiddenError,
     );
     expect(await prisma.documentVersion.count({ where: { documentId: version.documentId } })).toBe(1);
+  });
+});
+
+describe("a mandatory document needs a real deliverable, not a plain text file", () => {
+  const JUNK = { filename: "junk.txt", body: "not a drawing at all\n" };
+
+  it("refuses a 21-byte text file for a mandatory item: nothing stored, no tick, gate still shut", async () => {
+    const work = await makeWork();
+    const meta = {
+      projectId: fixture.projectId,
+      disciplineTaskId: work.civilId,
+      requiredDocumentId: work.civilRequirementId,
+    };
+
+    // The route's early check — before a byte is written to disk.
+    await expect(assertFileSuitsRequirement(fixture.engineerActor, meta, "txt")).rejects.toThrow(
+      /is a mandatory document, so it needs a drawing, a document or an image/i,
+    );
+    // And the service's own backstop, whichever road the file arrived by.
+    await expect(
+      upload(
+        fixture.engineerActor,
+        { disciplineTaskId: work.civilId, requiredDocumentId: work.civilRequirementId },
+        JUNK,
+      ),
+    ).rejects.toThrow(ServiceError);
+
+    const requirement = await prisma.requiredDocument.findUniqueOrThrow({
+      where: { id: work.civilRequirementId },
+    });
+    expect(requirement.documentId).toBeNull();
+    expect(requirement.satisfiedAt).toBeNull();
+    expect(await prisma.document.count()).toBe(0);
+    expect(await prisma.documentVersion.count()).toBe(0);
+    expect(await prisma.activityLog.count({ where: { action: "DOCUMENT_UPLOADED" } })).toBe(0);
+
+    await expect(completeDisciplineTask(fixture.engineerActor, { id: work.civilId })).rejects.toThrow(
+      /still missing/i,
+    );
+  });
+
+  it("refuses CSV the same way, and then accepts a real PDF that earns the tick", async () => {
+    const work = await makeWork();
+    const meta = { disciplineTaskId: work.civilId, requiredDocumentId: work.civilRequirementId };
+
+    await expect(
+      upload(fixture.engineerActor, meta, { filename: "register.csv", body: "a,b\n1,2\n" }),
+    ).rejects.toThrow(/plain text and csv files can still be attached as ordinary documents/i);
+
+    await upload(fixture.engineerActor, meta, PDF);
+    const requirement = await prisma.requiredDocument.findUniqueOrThrow({
+      where: { id: work.civilRequirementId },
+    });
+    expect(requirement.documentId).not.toBeNull();
+    expect((await completeDisciplineTask(fixture.engineerActor, { id: work.civilId })).status).toBe(
+      "COMPLETED",
+    );
+  });
+
+  it("does not let a text file be filed as the next revision of a mandatory document either", async () => {
+    const work = await makeWork();
+    const first = await upload(
+      fixture.engineerActor,
+      { disciplineTaskId: work.civilId, requiredDocumentId: work.civilRequirementId },
+      PDF,
+    );
+
+    await expect(
+      upload(fixture.engineerActor, { documentId: first.documentId }, JUNK),
+    ).rejects.toThrow(/mandatory document/i);
+    expect(await prisma.documentVersion.count({ where: { documentId: first.documentId } })).toBe(1);
+
+    // A real revision is still welcome.
+    const second = await upload(fixture.engineerActor, { documentId: first.documentId }, PDF);
+    expect(second.revisionNumber).toBe(1);
+  });
+
+  it("leaves ordinary documents and optional checklist items as forgiving as ever", async () => {
+    const work = await makeWork();
+    const optional = await prisma.requiredDocument.create({
+      data: { disciplineTaskId: work.civilId, name: "Site photographs", isMandatory: false },
+    });
+
+    // A plain attachment to the task, a text note on the main task, and an optional item.
+    await upload(fixture.engineerActor, { disciplineTaskId: work.civilId }, JUNK);
+    await upload(fixture.pmActor, { mainTaskId: work.mainTaskId });
+    await upload(
+      fixture.engineerActor,
+      { disciplineTaskId: work.civilId, requiredDocumentId: optional.id },
+      JUNK,
+    );
+
+    const ticked = await prisma.requiredDocument.findUniqueOrThrow({ where: { id: optional.id } });
+    expect(ticked.documentId).not.toBeNull();
+    // The mandatory item beside it is untouched.
+    const mandatory = await prisma.requiredDocument.findUniqueOrThrow({
+      where: { id: work.civilRequirementId },
+    });
+    expect(mandatory.documentId).toBeNull();
+  });
+
+  it("tells somebody who may not upload there that, not what file type is wanted", async () => {
+    const work = await makeWork();
+    await expect(
+      assertFileSuitsRequirement(
+        fixture.outsiderActor,
+        {
+          projectId: fixture.projectId,
+          disciplineTaskId: work.civilId,
+          requiredDocumentId: work.civilRequirementId,
+        },
+        "txt",
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenError);
   });
 });
