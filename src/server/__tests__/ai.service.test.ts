@@ -976,6 +976,26 @@ describe("the digest summary helper", () => {
     expect(await generateDigestSummary(fixture.orgId, LINES, { timeoutMs: 50 })).toBeNull();
   });
 
+  it("is null when the reply was cut off by the token ceiling, but still records the spend", async () => {
+    fetchMock.mockImplementation(async () => anthropicReply("Test project is 40%", { stopReason: "max_tokens" }));
+    expect(await generateDigestSummary(fixture.orgId, LINES)).toBeNull();
+    expect((await usageRows(fixture.orgId))[0]).toMatchObject({ requests: 1 });
+  });
+
+  it("is null when the summary holds a web address, a www. address, a domain with a path or an email", async () => {
+    for (const words of [
+      "See https://evil.example now.",
+      "See www.evil.example now.",
+      "See evil.com/offer now.",
+      "Mail boss@evil.example now.",
+    ]) {
+      fetchMock.mockImplementation(async () => anthropicReply(words));
+      expect(await generateDigestSummary(fixture.orgId, LINES)).toBeNull();
+    }
+    fetchMock.mockImplementation(async () => anthropicReply("Version 1.5 is 40% done. Done e.g. today."));
+    expect(await generateDigestSummary(fixture.orgId, LINES)).toBe("Version 1.5 is 40% done. Done e.g. today.");
+  });
+
   it("never reaches another company: its input is only the lines it was handed", async () => {
     const other = await addOtherCompany();
     await generateDigestSummary(fixture.orgId, LINES);

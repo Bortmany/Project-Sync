@@ -3,7 +3,7 @@
 //  - switch off or no key: no model call, a digest byte-for-byte the one it always was;
 //  - on and inside the allowance: a labelled summary above the computed lines, which are unchanged;
 //  - provider error, timeout, cap reached: the identical computed digest, no note;
-//  - a reply holding a Slack or Teams link is escaped so it cannot become a link;
+//  - a reply holding any link or email address is dropped, so the summary never links;
 //  - the once-a-day / once-a-week stamp means one model call per company per period;
 //  - the model only sees the company's own lines, and a "Your day" brief is untouched.
 
@@ -213,22 +213,44 @@ describe("the daily digest with an AI summary", () => {
     });
   }
 
-  it("escapes a malicious reply for Slack so it cannot become a link", async () => {
+  it("drops a summary that holds a link in Slack syntax, and sends the plain digest", async () => {
+    const plain = await plainDaily();
     reply = () => anthropicReply("Open <https://evil.example|click> now & [x](https://evil.example)");
     await postDailyDigests(morning());
-    const text = slackText(postsTo(SLACK_URL)[0]);
-    expect(text).toContain("&lt;https://evil.example|click&gt;");
-    expect(text).not.toContain("<https://evil");
+    expect(slackText(postsTo(SLACK_URL)[0])).toBe(plain);
   });
 
-  it("escapes a malicious reply for Teams so it cannot become a link", async () => {
+  it("drops a summary that holds a link when the channel is Teams", async () => {
     await prisma.orgIntegration.deleteMany({});
     await connect("TEAMS", TEAMS_URL, { dailyBrief: true });
     reply = () => anthropicReply("Click [x](https://evil.example) <https://evil.example|go>");
     await postDailyDigests(morning());
-    const text = teamsText(postsTo(TEAMS_URL)[0]);
-    expect(text).toContain("\\[x\\](https://evil.example)");
-    expect(text).not.toMatch(/(^|[^\\])\[x\]\(/);
+    expect(teamsText(postsTo(TEAMS_URL)[0])).not.toContain(AI_SUMMARY_LABEL);
+    expect(teamsText(postsTo(TEAMS_URL)[0])).not.toContain("evil.example");
+  });
+
+  for (const [name, words] of [
+    ["a bare https address", "See https://evil.example for details."],
+    ["a bare http address", "See http://evil.example for details."],
+    ["a www. address", "See www.evil.example for details."],
+    ["a domain with a path", "See evil.com/offer for details."],
+    ["an email address", "Write to boss@evil.example about it."],
+  ] as const) {
+    it(`gives no summary when the reply holds ${name}`, async () => {
+      const plain = await plainDaily();
+      reply = () => anthropicReply(words);
+      await postDailyDigests(morning());
+      const text = slackText(postsTo(SLACK_URL)[0]);
+      expect(text).toBe(plain);
+      expect(text).not.toContain(AI_SUMMARY_LABEL);
+    });
+  }
+
+  it("gives no summary when the model ran out of room mid-sentence", async () => {
+    const plain = await plainDaily();
+    reply = () => anthropicReply("Everything is on", { stopReason: "max_tokens" });
+    await postDailyDigests(morning());
+    expect(slackText(postsTo(SLACK_URL)[0])).toBe(plain);
   });
 
   it("caps the summary at 350 characters", async () => {
@@ -319,7 +341,7 @@ describe("the weekly digest with an AI summary", () => {
     expect(slackText(postsTo(SLACK_URL)[0])).toBe(plain);
   });
 
-  it("escapes a malicious reply", async () => {
+  it("drops a reply that holds a link", async () => {
     reply = () => anthropicReply("<https://evil.example|click>");
     await postWeeklyBriefs(monday(6));
     expect(slackText(postsTo(SLACK_URL)[0])).not.toContain("<https://evil");

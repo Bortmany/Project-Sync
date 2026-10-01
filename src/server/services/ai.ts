@@ -376,7 +376,7 @@ function tokenCount(value: unknown): number | null {
 export async function callModel(
   orgId: string,
   prompt: AiPrompt,
-  options: { maxTokens: number; timeoutMs: number },
+  options: { maxTokens: number; timeoutMs: number; discardIfCutOff?: boolean },
 ): Promise<AiCallResult> {
   const key = apiKey();
   const unavailable = (inputTokens: number, outputTokens = 0): AiCallResult => ({
@@ -410,6 +410,11 @@ export async function callModel(
     // Always the stop reason first.
     if (response.stop_reason === "refusal") {
       return { ok: false, reason: "refused", message: AI_REFUSED, inputTokens, outputTokens };
+    }
+
+    // A digest summary that ran out of room is half a sentence: it is never posted.
+    if (options.discardIfCutOff && response.stop_reason === "max_tokens") {
+      return { ok: false, reason: "incomplete", message: AI_INCOMPLETE, inputTokens, outputTokens };
     }
 
     const text = (Array.isArray(response.content) ? response.content : [])
@@ -465,6 +470,19 @@ const DIGEST_LINE_LIMIT = 20;
 const SUMMARY_CHAR_LIMIT = 700;
 
 /**
+ * True when the text holds anything a chat app would turn into a link: a web address with a
+ * scheme, `www.`, a `domain.tld/path`, or an email address. A summary never links.
+ */
+export function containsLink(text: string): boolean {
+  return (
+    /\b[a-z][a-z0-9+.-]*:\/\//i.test(text) ||
+    /\bwww\./i.test(text) ||
+    /[^\s@]+@[^\s@]+\.[a-z]{2,}/i.test(text) ||
+    /\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\/\S*/i.test(text)
+  );
+}
+
+/**
  * Two or three plain sentences about a company's digest, or null. NEVER THROWS, and null is the
  * ordinary answer: the digest then goes out exactly as it does today, with nothing missing.
  *
@@ -505,6 +523,7 @@ export async function generateDigestSummary(
     const result = await callModel(orgId, prompt, {
       maxTokens: DIGEST_MAX_TOKENS,
       timeoutMs: options.timeoutMs ?? DIGEST_TIMEOUT_MS,
+      discardIfCutOff: true,
     });
 
     // The call was made, so the spend is recorded whether or not the words were usable.
@@ -519,6 +538,8 @@ export async function generateDigestSummary(
       .replace(/\s+/g, " ")
       .trim();
     if (!text) return null;
+    // The summary never links: any web address or email address and the whole summary is dropped.
+    if (containsLink(text)) return null;
     return text.length > SUMMARY_CHAR_LIMIT ? `${text.slice(0, SUMMARY_CHAR_LIMIT - 1)}…` : text;
   } catch {
     logFailure(orgId, "digest_summary");

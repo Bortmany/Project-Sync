@@ -4,10 +4,10 @@
 // paragraph above them. Every way it can fail — no key, switch off, cap reached, provider error,
 // slow answer, no room — gives back the very same message object that went in, so the digest goes
 // out exactly as it did before. The model's words are untrusted: the chat payload builders escape
-// the whole body (`slackEscape` / `teamsEscape`), so a reply can never become a link in a channel.
+// the whole body (`slackEscape` / `teamsEscape`), so a reply can never become a link in a channel, and a reply that holds any address is dropped.
 // Writes nothing and audits nothing; the spend is recorded by `generateDigestSummary` itself.
 
-import { generateDigestSummary } from "@/server/services/ai";
+import { DIGEST_TIMEOUT_MS, containsLink, generateDigestSummary } from "@/server/services/ai";
 import type { ChatMessage } from "@/server/services/webhooks";
 
 /** The longest the written summary may be, in characters. */
@@ -30,6 +30,8 @@ function printedLines(message: ChatMessage): string[] {
 /** Collapses the reply to one line and caps it. */
 function tidy(text: string): string {
   const oneLine = text.replace(/\s+/g, " ").trim();
+  // The summary never links: with any web or email address in it, there is no summary.
+  if (containsLink(oneLine)) return "";
   return oneLine.length <= AI_SUMMARY_MAX_CHARS
     ? oneLine
     : `${oneLine.slice(0, AI_SUMMARY_MAX_CHARS - 1)}…`;
@@ -50,7 +52,11 @@ export async function withAiSummary(
   try {
     if (budgetLeftMs < MIN_BUDGET_LEFT_MS) return message;
     const lines = printedLines(message);
-    const raw = await generateDigestSummary(orgId, lines, { now });
+    const raw = await generateDigestSummary(orgId, lines, {
+      now,
+      // Never longer than the sweep has left.
+      timeoutMs: Math.min(DIGEST_TIMEOUT_MS, budgetLeftMs),
+    });
     if (!raw) return message;
     const summary = tidy(raw);
     if (!summary) return message;

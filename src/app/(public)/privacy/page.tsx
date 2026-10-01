@@ -300,7 +300,8 @@ export default function PrivacyPage() {
           an administrator, all of the company&apos;s projects). To write a summary, we send the same
           figures the daily brief already shows. They go to Anthropic, which is a{" "}
           <strong>sub-processor</strong>: it handles that text to produce the answer. Its handling is
-          governed by its own commercial terms with us rather than by this notice.
+          governed by its own commercial terms with us rather than by this notice. Your data may be processed outside your country.
+
         </p>
         <p>
           <strong>What is not sent.</strong> People&apos;s names or email addresses, comments,
