@@ -10,6 +10,7 @@ import type { RoleName } from "@/lib/zod-schemas";
 import { actorForUser, type ActorContext } from "@/server/actor";
 
 const TABLES = [
+  "AiUsage",
   "BillingEvent",
   "ActivityLog",
   "Notification",

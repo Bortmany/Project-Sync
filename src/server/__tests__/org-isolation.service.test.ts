@@ -95,7 +95,10 @@ import {
   listMicrosoftFolder,
   microsoftConnectionFor,
 } from "@/server/services/microsoft";
-import { orgDigest, personBrief, projectBrief } from "@/server/services/briefs";
+import { digestMessage, orgDigest, personBrief, projectBrief } from "@/server/services/briefs";
+import { generateDigestSummary } from "@/server/services/ai";
+import { askTielora } from "@/server/services/ai-ask";
+import { installFakeAnthropic, sentText, switchAiOn } from "@/server/__tests__/ai-harness";
 import { getDashboardForActor, listTileWork } from "@/server/services/dashboard";
 import {
   acknowledgePost,
@@ -1854,6 +1857,103 @@ describe("the dashboard's company-wide tiles never count another company's row",
     expect(everything.items.map((row) => row.id).sort()).toEqual(
       [acme.mainTaskId, acme.disciplineTaskId].sort(),
     );
+  });
+});
+
+// Ask Tielora sends project facts to an outside company, so the wall between companies has to hold
+// in what is SENT: every fact in a request is loaded through the scoped loaders with the asker's own
+// actor, and nothing a rival company holds can be in it. The provider is mocked; no test here
+// reaches Anthropic.
+describe("Ask Tielora never carries another company's fact, and one company's spend never moves another's", () => {
+  let fetchMock: ReturnType<typeof installFakeAnthropic>;
+  let acmeCode: string;
+  let rivalCode: string;
+
+  beforeEach(async () => {
+    fetchMock = installFakeAnthropic();
+    await switchAiOn(acme.fixture.orgId);
+    await switchAiOn(rival.fixture.orgId);
+    await prisma.mainTask.updateMany({ where: { projectId: rival.projectId }, data: { title: "RIVAL-ONLY-TITLE" } });
+    await prisma.mainTask.updateMany({ where: { projectId: acme.projectId }, data: { title: "ACME-ONLY-TITLE" } });
+    acmeCode = (await prisma.project.findUniqueOrThrow({ where: { id: acme.projectId } })).code;
+    rivalCode = (await prisma.project.findUniqueOrThrow({ where: { id: rival.projectId } })).code;
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("answers company A's administrator, and A's engineer, 'I can't find that project.' for company B's project id, with nothing sent, spent or audited", async () => {
+    for (const actor of [acme.admin, acme.engineer]) {
+      await expect(askTielora(actor, { question: "What is late?", projectId: rival.projectId })).rejects.toThrow(
+        "I can't find that project.",
+      );
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await prisma.aiUsage.count()).toBe(0);
+    expect(await prisma.activityLog.count({ where: { action: "AI_QUESTION_ASKED" } })).toBe(0);
+  });
+
+  it("never puts a company-B fact in company A's dashboard question, from an administrator or an engineer", async () => {
+    for (const actor of [acme.admin, acme.engineer]) {
+      fetchMock.mockClear();
+      await askTielora(actor, { question: "Which project is furthest behind?" });
+      const sent = sentText(fetchMock);
+      expect(sent).toContain(acmeCode);
+      expect(sent).not.toContain(rivalCode);
+      expect(sent).not.toContain(rival.projectId);
+      expect(sent).not.toContain("RIVAL-ONLY-TITLE");
+    }
+    // And the project question carries only that company's own work.
+    fetchMock.mockClear();
+    await askTielora(acme.admin, { question: "What is blocking this?", projectId: acme.projectId });
+    expect(sentText(fetchMock)).toContain("ACME-ONLY-TITLE");
+    expect(sentText(fetchMock)).not.toContain("RIVAL-ONLY-TITLE");
+  });
+
+  it("narrows the digest by the company as well as by the project ids: another company's id under this company's orgId finds nothing", async () => {
+    expect(await orgDigest(acme.fixture.orgId, new Date(), { onlyProjectIds: [rival.projectId] })).toBeNull();
+
+    const own = await orgDigest(acme.fixture.orgId);
+    expect(own?.lines.map((line) => line.code)).toEqual([acmeCode]);
+
+    // A digest summary's input is exactly the lines it is handed: company A's digest has no B line.
+    await generateDigestSummary(acme.fixture.orgId, digestMessage(own!).body.split("\n"));
+    const sent = sentText(fetchMock);
+    expect(sent).toContain(acmeCode);
+    expect(sent).not.toContain(rivalCode);
+    // And it spent company A's allowance only.
+    expect(await prisma.aiUsage.count({ where: { orgId: rival.fixture.orgId } })).toBe(0);
+  });
+
+  it("never lets A's spend move B's meter or cap", async () => {
+    await askTielora(acme.admin, { question: "What is late?" });
+    await askTielora(acme.admin, { question: "And now?" });
+
+    const mine = await billingStatus(acme.admin);
+    const theirs = await billingStatus(rival.admin);
+    expect(mine.ai?.requests).toBe(2);
+    expect(theirs.ai?.requests).toBe(0);
+    expect(theirs.ai?.usedUsd).toBe(0);
+
+    // A at its cap is refused; B, next door, is still answered.
+    await prisma.aiUsage.updateMany({
+      where: { orgId: acme.fixture.orgId },
+      data: { outputTokens: 10_000_000 },
+    });
+    await expect(askTielora(acme.admin, { question: "Again?" })).rejects.toThrow(/allowance/);
+    fetchMock.mockClear();
+    await askTielora(rival.admin, { question: "What is late?" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(await prisma.aiUsage.count({ where: { orgId: rival.fixture.orgId } })).toBe(1);
+  });
+
+  it("reads each company's own switch: B switched off stays off whatever A has done", async () => {
+    await prisma.organization.update({ where: { id: rival.fixture.orgId }, data: { aiAssistant: false } });
+    await expect(askTielora(rival.admin, { question: "What is late?" })).rejects.toThrow(/not switched on/);
+    await askTielora(acme.admin, { question: "What is late?" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

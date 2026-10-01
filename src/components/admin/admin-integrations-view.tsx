@@ -18,6 +18,7 @@ import {
   setEventToggles,
   setIntegrationEnabled,
 } from "@/components/actions";
+import { AdminAiCard } from "@/components/admin/admin-ai-card";
 import { AdminBroadcastCard } from "@/components/admin/admin-broadcast-card";
 import { AdminMicrosoftCard } from "@/components/admin/admin-microsoft-card";
 import { AdminTeamsAppCard } from "@/components/admin/admin-teams-app-card";
@@ -32,6 +33,7 @@ import type {
   MicrosoftSignInStatusDTO,
   OrgIntegrationDTO,
 } from "@/lib/zod-schemas";
+import type { AiCardData } from "@/server/services/ai-panel";
 
 const KIND_LABEL: Record<IntegrationKindName, string> = {
   SLACK: "Slack",
@@ -363,6 +365,7 @@ export function AdminIntegrationsView({
   emailAvailable,
   broadcastPolicy,
   teamsApp = false,
+  ai = null,
 }: {
   integrations: OrgIntegrationDTO[];
   microsoft: MicrosoftConnectionDTO;
@@ -376,6 +379,8 @@ export function AdminIntegrationsView({
   broadcastPolicy: BroadcastPolicyName;
   /** Whether this Tielora has set the Teams app up (TEAMS_APP_ID etc.). False = the card is absent. */
   teamsApp?: boolean;
+  /** The AI card's data. Null while this Tielora has no AI key: the card is then absent, not greyed out. */
+  ai?: AiCardData | null;
 }) {
   const chatCards = CHAT_ORDER.flatMap((kind) =>
     integrations.filter((integration) => integration.kind === kind),
@@ -409,6 +414,9 @@ export function AdminIntegrationsView({
         {chatCards.map((integration) => (
           <IntegrationCard key={integration.kind} integration={integration} />
         ))}
+
+        {/* The AI card: after the chat cards, absent while this Tielora has no AI key. */}
+        {ai ? <AdminAiCard settings={ai.settings} usedUsd={ai.usedUsd} atAllowance={ai.atAllowance} resetsOn={ai.resetsOn} /> : null}
 
         {/* Not a chat tool, but the same shape of thing: one company-wide setting, saved instantly. */}
         <AdminBroadcastCard policy={broadcastPolicy} />

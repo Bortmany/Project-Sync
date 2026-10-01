@@ -20,7 +20,7 @@ export default function PrivacyPage() {
   return (
     <LegalPage
       title="Privacy notice"
-      lastUpdated="30 Sep 2026"
+      lastUpdated="1 Oct 2026"
       notice="This notice is a template written to describe the app honestly. It has not yet been reviewed by a lawyer, and should be before the app is relied on for real projects."
       otherHref="/terms"
       otherLabel="Terms of use"
@@ -275,9 +275,79 @@ export default function PrivacyPage() {
           a dependable audit trail, and notifying people about work relevant to them. Nothing here is
           used for advertising and nothing is ever sold. The only information that leaves this app is
           the chat copy described above, while your administrator has that switched on, the emails
-          described above, and — if your company pays for a plan — your company&apos;s own
-          identifier passed to the payment provider, so they can tell us which company paid.
+          described above, the question and project details described under Ask Tielora below, while
+          your administrator has that switched on, and — if your company pays for a plan — your
+          company&apos;s own identifier passed to the payment provider, so they can tell us which
+          company paid.
         </p>
+      </section>
+
+      <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
+        <h2 className="text-base font-semibold text-[var(--brand-ink)]">
+          Ask Tielora and AI-written summaries, if your administrator switches them on
+        </h2>
+        <p>
+          Ask Tielora lets someone on your team type a question about their projects and get a short
+          written answer. AI-written briefs add two or three sentences, written by AI, to the top of
+          the company&apos;s daily and weekly brief, including the copy posted to Slack or Teams.
+          Both are off for every company until its
+          administrator switches them on, they can be switched off at any time in Admin →
+          Integrations, and contractors never see them.
+        </p>
+        <p>
+          <strong>What is sent.</strong> To answer a question, we send the question you typed and the
+          names, codes, deadlines, progress figures and task titles of the projects you are on (for
+          an administrator, all of the company&apos;s projects). To write a summary, we send the same
+          figures the daily brief already shows. They go to Anthropic, which is a{" "}
+          <strong>sub-processor</strong>: it handles that text to produce the answer. Its handling is
+          governed by its own commercial terms with us rather than by this notice.
+        </p>
+        <p>
+          <strong>What is not sent.</strong> People&apos;s names or email addresses, comments,
+          documents or their contents, passwords, sign-in details, or anything from another company.
+        </p>
+        <p>
+          <strong>What Tielora keeps.</strong> Not the question and not the answer: close the panel
+          or refresh the page and they are gone. We keep only a running total of how much the company
+          has used this month, and a record that a question was asked — who asked and when, never
+          what they asked or what came back. That record is part of the permanent audit trail
+          described above.
+        </p>
+        <p>
+          <strong>A monthly allowance.</strong> Each company has one, shown in Admin → Billing. When
+          it is used up, questions are declined until the next month and briefs go out without the
+          written summary.
+        </p>
+        <p>
+          <strong>Please be careful what you type.</strong> Do not put personal or confidential
+          information into a question. And <strong>answers can be wrong</strong>: check the task
+          before you act on one.
+        </p>
+      </section>
+
+      <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
+        <h2 className="text-base font-semibold text-[var(--brand-ink)]">
+          Who else handles information for us
+        </h2>
+        <p>
+          These companies process information on our behalf, each only for the purpose shown:
+        </p>
+        <ul className="list-disc space-y-1 pl-5">
+          <li>
+            <strong>Anthropic</strong> — writes AI answers and summaries, only if your administrator
+            switches them on.
+          </li>
+          <li>
+            <strong>Paddle</strong> — takes payments, only if your company pays for a plan.
+          </li>
+          <li>
+            <strong>Resend</strong> — delivers email, only if your company has email switched on.
+          </li>
+          <li>
+            <strong>Slack and Microsoft</strong> — chat, sign-in and files, only if your company
+            connects them.
+          </li>
+        </ul>
       </section>
 
       <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">

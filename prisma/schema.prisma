@@ -100,6 +100,11 @@ model Organization {
   /// what lets the sign-in callback turn a token's own `tid` into one company and only then look a
   /// person up inside it. An identifier, not a secret. Step 2c (Teams) reuses it.
   entraTenantId    String?  @unique
+  /// "Ask Tielora" is switched on for this company. Off for every company until its own
+  /// administrator turns it on (and only possible at all while the deployment has an Anthropic key).
+  aiAssistant      Boolean  @default(false)
+  /// "AI-written briefs" is switched on: the company digests open with a short written summary.
+  aiBriefs         Boolean  @default(false)
   createdAt        DateTime @default(now())
 
   deleteRequestedBy User? @relation("OrganizationDeleteRequestedBy", fields: [deleteRequestedById], references: [id], onDelete: SetNull)
@@ -111,6 +116,29 @@ model Organization {
   microsoft    MicrosoftConnection?
   posts        Post[]
   billingEvents BillingEvent[]
+  aiUsage      AiUsage[]
+}
+
+/// What one company has used of the AI provider in one calendar month (UTC, `YYYY-MM`). One row per
+/// company per month, so a new month is a new row and nothing ever needs cleaning up.
+///
+/// This is the ONE stored usage figure in the app: project, people and file counts can be worked out
+/// from rows that exist, but tokens spent at an outside provider cannot be recovered from anything
+/// else, and a spending cap is impossible without a running total. Only token counts and a request
+/// count are kept: never a question, an answer or a name. Dollars are worked out at read time from
+/// these tokens at the pinned model's prices (src/server/services/ai.ts).
+model AiUsage {
+  id           String   @id @default(cuid())
+  orgId        String
+  month        String
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  requests     Int      @default(0)
+  updatedAt    DateTime @updatedAt
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, month])
 }
 
 /// One webhook the payment provider has sent us, kept so the same event is never acted on twice.

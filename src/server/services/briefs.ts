@@ -1004,9 +1004,23 @@ const OPEN_WHERE = {
  * cap, so a busy company's digest is as true as a quiet one's; only the number of project LINES is
  * capped, and the card says how many were left out.
  */
-export async function orgDigest(orgId: string, now: Date = new Date()): Promise<OrgDigest | null> {
+export async function orgDigest(
+  orgId: string,
+  now: Date = new Date(),
+  options: { onlyProjectIds?: string[] } = {},
+): Promise<OrgDigest | null> {
+  // `onlyProjectIds` narrows the digest to those projects, applied in the same place `orgId` is.
+  // Absent, the digest is the whole company's, exactly as the sweep has always posted it. Ask
+  // Tielora passes the ids of `projectsVisibleTo(actor)`, so one person's question can never be
+  // handed the line of a project they are not on. An empty list means no projects, not "all".
+  const only = options.onlyProjectIds;
   const projects = await prisma.project.findMany({
-    where: { orgId, status: "ACTIVE", ...notDeleted },
+    where: {
+      orgId,
+      status: "ACTIVE",
+      ...notDeleted,
+      ...(only ? { id: { in: only } } : {}),
+    },
     orderBy: { createdAt: "desc" },
     take: DIGEST_PROJECT_LIMIT + 1,
     select: { id: true, name: true, code: true },

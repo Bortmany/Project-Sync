@@ -13,6 +13,7 @@ import { isMicrosoftConfigured } from "@/lib/ms-graph";
 import { signupMode } from "@/lib/signup-mode";
 import { teamsAppStatus } from "@/lib/teams-app";
 import { uploadsDir } from "@/lib/upload";
+import { aiHealth } from "@/server/services/ai";
 import { billingHealth } from "@/server/services/billing";
 import { emailStatus } from "@/server/services/email";
 import { integrationCounts } from "@/server/services/integrations";
@@ -95,6 +96,9 @@ export async function GET() {
       // Payments: "dormant" until all four provider variables are set, then "configured". A word
       // about configuration and nothing else — never a plan count, never a balance, never money.
       billing: billingHealth(),
+      // Ask Tielora and AI-written briefs: "dormant" until ANTHROPIC_API_KEY is set, then
+      // "configured". A word and nothing else: never a company count, a spend or part of the key.
+      ai: aiHealth(),
       // Who may create a new company here: "open", "invite" or "closed". The mode and nothing
       // else — never a code, never how many there are.
       signups: signupMode(),

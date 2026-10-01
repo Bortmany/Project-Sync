@@ -538,6 +538,12 @@ function tableReaders(orgId: string): { name: string; read: PageReader }[] {
         }),
     },
     {
+      // How much of the AI allowance the company used, month by month: token and request counts
+      // only. No question, answer or project fact is ever stored, so none can be exported.
+      name: "ai-usage.json",
+      read: (cursor, take) => prisma.aiUsage.findMany({ where: { orgId }, ...page(cursor, take) }),
+    },
+    {
       name: "chat-integrations.json",
       // The saved webhook address is a bearer secret: the export shows exactly what the admin
       // screen shows — scheme and host — and never the address itself.
@@ -578,7 +584,8 @@ const README = (workspace: string, when: Date) =>
     "            main tasks, discipline tasks, dependencies, required documents, documents and",
     "            every revision's details, comments, announcements and board posts, who",
     "            acknowledged or dismissed them, notifications, the full activity log, and any",
-    "            chat channels this workspace has connected.",
+    "            chat channels this workspace has connected, and how much of the monthly AI",
+    "            allowance was used (counts only; questions and answers are never kept).",
     "  files/    Every uploaded file, including every past revision, under the name Tielora",
     "            stored it as. document-versions.json says which file belongs to which document,",
     "            and what it was originally called.",

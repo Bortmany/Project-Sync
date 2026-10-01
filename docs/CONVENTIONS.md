@@ -246,6 +246,15 @@ In practice:
       `/api/teams/manifest` and `/teams/tab` answer "not found", the two session routes answer 503
       "not set up", `?via=teams` is "not set up", and nothing else looks or behaves differently.
       `/api/health` reports `"teams_app": "dormant" | "configured"`. See "Teams app" below.
+    - **Ask Tielora and AI-written briefs are per deployment AND per company, and off until an
+      administrator switches them on.** `ANTHROPIC_API_KEY` (a real secret) is the deployment's half;
+      unset means **dormant**: no Ask Tielora button, no dashboard card, no panel, no AI card on
+      Admin → Integrations, no AI meter on Admin → Billing, no summary in any brief, `POST
+      /api/ai/ask` answers "Ask Tielora is not set up.", and `/api/health` reports `"ai":
+      "dormant"`. Every page is byte-for-byte what it was. Once the key is set, **nothing changes
+      for any company until its own administrator switches on** Ask Tielora and/or AI-written
+      briefs (two columns on `Organization`, both off for every company). **A contractor never sees
+      any of it.** See "Ask Tielora and AI briefs" below.
     - **Delivery is best-effort and per-process**, the same accepted limitation rate limiting
       carries: one attempt, one retry on 429 respecting `Retry-After` (capped at ten seconds), then
       the message is dropped with a logged line. There is no queue table. In-app Notifications
@@ -528,6 +537,17 @@ In practice:
     is stored anywhere. The generated migration's five trigram `DropIndex` lines were deleted by
     hand, and `pg_indexes` was checked on both databases afterwards — five rows each.)
 
+  - `20261001120552_ai_usage` (Ask Tielora and the monthly AI cap. ONE new model, `AiUsage` — `orgId`
+    cascading from `Organization`, `month` as text `YYYY-MM` (UTC), `inputTokens`, `outputTokens`,
+    `requests`, `updatedAt`, and `@@unique([orgId, month])`, so there is one row per company per
+    month — and TWO defaulted Boolean columns on `Organization`: `aiAssistant` and `aiBriefs`, both
+    `false`, so nothing changes for any existing company when it is applied. **Additive only**:
+    nothing dropped, renamed or made stricter, safe on a populated database. `AiUsage` is the one
+    place this app stores a usage figure, for the reason "Plans and limits" gives: tokens spent at an
+    outside provider cannot be recovered from any other row. **No question text, no answer and no
+    person is stored in it.** The generated migration's five trigram `DropIndex` lines were deleted
+    by hand, and `pg_indexes` was checked on both databases afterwards — five rows each.)
+
 - **Careful with `prisma migrate dev`:** the trigram search indexes are hand-written raw SQL that the
   Prisma schema does not know about, so the generated migration will try to DROP them. Delete those
   `DropIndex` lines from the generated `migration.sql` before it goes anywhere near a real database.
@@ -584,8 +604,9 @@ shape. All types below come from `src/lib/zod-schemas.ts`.
 | `/api/email/unsubscribe` | GET | query: `t` | **Changes nothing** — 303 to `/unsubscribe?t=…`. Mail scanners open every link in a message, so a GET must never unsubscribe anybody |
 | `/unsubscribe` (page) | GET | query: `t` | The one-button "Stop these emails?" page on the `AuthSplit` shell. Never looks the token up and is identical whatever it holds; the button posts to the route above. `byIp`, 300 a minute |
 | `/api/auth/me` | GET | — | signed-in user |
-| `/api/health` | GET | — | health JSON (adds `integrations` — how many companies have each chat kind switched on, numbers only: `{"slack": 0, "teams": 0}` when nobody has — `microsoft`: `{"status": "dormant"\|"configured", "connectedOrgs": n, "signInOrgs": n}` — `signInOrgs` is how many companies have Sign in with Microsoft switched on, a count and never a tenant id — and `email`: `"dormant"` or `"configured"`, a word and nothing else. `"configured"` means all three of `RESEND_API_KEY`, `EMAIL_FROM` and `APP_BASE_URL` are set, because an email with no link is no use — and `billing`: `"dormant"` or `"configured"`, a word about this deployment's own set-up and nothing about anybody's money, plan or balance — and `signups`: `"open"`, `"invite"` or `"closed"`, the mode and never a code — and `teams_app`: `"dormant"` or `"configured"`, a word and nothing else, never the app id or the host) |
+| `/api/health` | GET | — | health JSON (adds `integrations` — how many companies have each chat kind switched on, numbers only: `{"slack": 0, "teams": 0}` when nobody has — `microsoft`: `{"status": "dormant"\|"configured", "connectedOrgs": n, "signInOrgs": n}` — `signInOrgs` is how many companies have Sign in with Microsoft switched on, a count and never a tenant id — and `email`: `"dormant"` or `"configured"`, a word and nothing else. `"configured"` means all three of `RESEND_API_KEY`, `EMAIL_FROM` and `APP_BASE_URL` are set, because an email with no link is no use — and `billing`: `"dormant"` or `"configured"`, a word about this deployment's own set-up and nothing about anybody's money, plan or balance — and `signups`: `"open"`, `"invite"` or `"closed"`, the mode and never a code — and `teams_app`: `"dormant"` or `"configured"`, a word and nothing else, never the app id or the host — and `ai`: `"dormant"` or `"configured"`, a word and nothing else: never a company count, a spend figure or any part of the key) |
 | `/api/billing/webhook` | POST | the provider's raw JSON body, with a `Paddle-Signature` header | `{ received: true }` — **public, and nobody signs in for it**: the signature IS the authentication, checked over the raw body before anything is parsed and before any database read. 200 for anything handled, recorded or already seen (an unknown company included — never a 404); 400 for a signature that is missing, wrong or stale; 503 while the provider is not set up; 500 on anything unexpected, so the provider retries. `byIp` limited generously (600 a minute) because webhooks arrive in bursts |
+| `/api/ai/ask` | POST | `AskTieloraInput` (`question` 1–500 characters, optional `projectId`; nothing else is read) | `AiAnswerDTO` (`answer`, `basedOn`) — one whole answer, never streamed, never saved. Order is the law: zod parse, signed in, **a contractor is "not found" HERE, before the key check, the company switch, the rate limit or any load**, `assertCan(ASK_ASSISTANT)`, the rate limits (per person 5 a minute and 60 an hour, per company 300 a day, keyed on the session's company → 429 with `Retry-After` and "You are asking quickly. Try again in a moment."), then the service (configured, company switch on, scoped facts, cap check, call, spend + audit). Refusals are the server's own full sentences: "I can't find that project." (another company's, a project the person is not on, or an id that does not exist — identical, and nothing is called or spent), the allowance sentence (administrator: "See Admin → Billing."; anyone else: "Ask your administrator."), "Ask Tielora could not answer just now. Try again in a minute." (no provider detail), "Ask Tielora is not set up.", "Ask Tielora is not switched on for your company." |
 | `/api/integrations/microsoft/connect` | GET | — | 302 to Microsoft's sign-in (ADMIN; signed `state` binds the attempt to this person and company) |
 | `/api/integrations/microsoft/callback` | GET | query: `code`, `state` (or `error`) | 302 back to `/admin/integrations?microsoft=connected\|denied\|failed\|setup` |
 | `/api/integrations/microsoft/status` | GET | — | `MicrosoftStatusDTO` — **200 either way**: `{ configured: false }` while dormant (no session read, no error, and the upload tab stays hidden on that flag), or the `MicrosoftConnectionDTO` shape plus `configured: true` once the Azure app is registered |
@@ -682,6 +703,8 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `billingStatus` (a READ rather than an action, called by `/admin/billing` the way `workspaceExportStatus` is: ADMIN of their own company, `MANAGE_BILLING`. Plan, usage and limits — every number counted at read time — plus `provider`: whether the four environment variables are set, whether we hold a subscription id, and whether the last payment signal we were sent was a failure. No price, no card, no invoice, no renewal date: none of that is stored here) | — | `BillingStatusDTO` |
 | `startUpgrade` (ADMIN, `MANAGE_BILLING`; no input at all. Asks the provider for a checkout, audits `BILLING_CHECKOUT_STARTED` **without the address**, and returns the address for the browser to navigate to. Refused in plain English while the provider is dormant, when the company is already on Pro, and when the provider hands back an address it does not host itself. Ten presses a minute per person) | — | `ActionResult<BillingRedirectDTO>` |
 | `openBillingPortal` (ADMIN, `MANAGE_BILLING`; no input. Mints a FRESH single-use portal address every press — never cached, never stored — audits `BILLING_PORTAL_OPENED` without it, and returns it. Refused plainly while dormant and while no subscription is on file. Ten presses a minute per person) | — | `ActionResult<BillingRedirectDTO>` |
+| `aiSettingsFor` (a READ rather than an action, called by `/admin/integrations` the way `billingStatus` is: ADMIN of their own company, `MANAGE_INTEGRATIONS`. Whether this deployment has the key, the company's two switches and the plan's monthly allowance in dollars — never the key) | — | `AiSettingsDTO` |
+| `setAiSettings` (ADMIN, `MANAGE_INTEGRATIONS`, own company only — no id in the input. Switches **Ask Tielora** and/or **AI-written briefs** on or off; a switch left out is left alone. Refused in plain English while this deployment has no key. Audits `AI_SETTINGS_CHANGED` (who, which switch, on or off) inside the same transaction, and only when something actually changed. Ten presses a minute per person) | `SetAiSettingsInput` | `ActionResult<AiSettingsDTO>` |
 | `cancelWorkspaceDeletion` (ANY ADMIN of that company during the grace period; no typed confirmation — undoing a dangerous thing should be the easiest press on the screen. Clears both columns, writes `WORKSPACE_DELETION_CANCELLED`, notifies the administrators) | — | `ActionResult<WorkspaceDeletionDTO>` |
 
 ## Notifications and the deadline sweep
@@ -1097,6 +1120,10 @@ the noticeboard.
     email only `weeklyBriefEmailedAt`). It is the same exception again, not a new kind; the
     specification numbers it the fourth documented exception, the verification banner being counted
     as the fourth above.
+  - **An AI-written summary writes nothing either.** It is the fourth entry in the digest's
+    "writes nothing" list (the daily chat digest, the daily brief email, the weekly brief, and now the
+    summary on top of the company-wide digest): no audit row, no notification, no stored text. Its
+    spend is counted in `AiUsage` and nowhere else. See "Ask Tielora and AI briefs".
 - Payloads are Slack Block Kit and the Teams Adaptive Card envelope (version 1.4 pinned), both
   bounded by the 28 KB Teams cap — an oversized message is dropped rather than sent to be rejected.
   Links use `APP_BASE_URL`; unset, the message names the page instead.
@@ -2088,6 +2115,12 @@ second, and the second company's files are still on disk.
   public `/pricing` page and the landing page's teaser all read that one constant.
 - **`null` means unlimited** — never 0 and never a very large number, so "no ceiling" can never be
   confused with "a ceiling nobody has reached yet".
+  **The one exception is `aiMonthlyUsd`**, the monthly AI allowance in US dollars: it is never
+  `null`, because AI costs real money per use and no plan may be uncapped by accident. `0` means
+  "this plan has no AI allowance". FREE is $2 and PRO is $25 (the owner's numbers, 30 Sep 2026).
+  `planOf()` still reads an unrecognised plan as FREE, so an unreadable plan can never hand out a
+  bigger allowance. It is not a fourth choke point: it is judged by `ai.ts` in dollars, before each
+  call.
 - **An unrecognised plan reads as FREE.** `planOf()` is the same defensiveness `broadcastPolicyOf()`
   carries, pointed in the safe direction: a value from a newer build, a typo or a blank can never
   hand a company limits nobody paid for.
@@ -2113,8 +2146,14 @@ second, and the second company's files are still on disk.
   contractor's access. Without it, deactivating ten people, adding ten more and switching the first
   ten back on would leave a ten-seat company with twenty people who can sign in. The question is
   asked with the same definition of "counts" that the count itself uses, so the two can never drift.
-- **Nothing about usage is stored.** Every number is counted at read time from the rows themselves,
-  exactly as OVERDUE and a locked phase are. There is no usage column and there must not be one.
+- **Nothing about usage is stored — with ONE exception: AI spend.** Projects, people and bytes are
+  counted at read time from the rows themselves, exactly as OVERDUE and a locked phase are, and
+  there is no usage column for them and there must not be one. Tokens spent at an outside provider
+  are different: they cannot be recovered from anything Tielora holds, and a monthly cap is
+  impossible without a running total. So `AiUsage` (one row per company per month: token counts and
+  a request count, never text, never a person, never a dollar figure — dollars are worked out at
+  read time at the pinned model's prices) is the one stored usage figure. See "Ask Tielora and AI
+  briefs".
 - **The storage cap is checked BEFORE the bytes reach disk, and again in the service.** The upload
   route judges it on the browser's own `file.size` before `storeFile()`, and `attachMicrosoftFile`
   judges it on Microsoft's declared size before a byte is fetched — the same place each already
@@ -2281,6 +2320,95 @@ towards another company's limits.
 stubbed and every webhook body is crafted and signed with a test secret, so no test ever reaches a
 real payment provider — and the tenant half in `org-isolation.service.test.ts`, which proves a
 verified webhook only ever moves the company its payload names.
+
+## Ask Tielora and AI briefs
+
+> The model reads what the server hands it and writes words. It has no tools, no database and no
+> say in what it is shown. The guarantee is what is SENT, never what the model says.
+
+- **ONE FILE HOLDS EVERYTHING ABOUT THE PROVIDER: `src/server/services/ai.ts`**, the way `paddle.ts`
+  holds everything about Paddle. It reads `ANTHROPIC_API_KEY`, pins the ONE model (id, input price
+  and output price per million tokens, and the output and size ceilings are constants there and
+  nowhere else), builds the prompt, makes the call through the official `@anthropic-ai/sdk`, and
+  reads the reply. No other file reads the key, names a model or a price, or parses a provider reply.
+  Changing the pinned model re-prices that month's stored tokens, because dollars are worked out at
+  read time; that is accepted.
+- **Dormant until the key is set** (house rule 11). Unset: nothing is drawn anywhere, the route
+  answers "Ask Tielora is not set up.", the digests are untouched, `/api/health` says `"ai":
+  "dormant"`. **Per deployment AND per company**: the key is the deployment's half, and each
+  company's administrator must also switch on **Ask Tielora** and/or **AI-written briefs** in Admin
+  → Integrations (`Organization.aiAssistant`, `aiBriefs`, both off for every company, switching on
+  asks for confirmation because it sends project information to Anthropic). The key never leaves
+  `ai.ts`: never returned by a read, put in an error, written to an audit row or logged. A failure
+  is logged with the organisation id, a kind word and an HTTP status only — never the prompt, never
+  the provider's reply.
+- **A contractor (EXTERNAL) sees nothing** (THE EXTERNAL RULE). Whether a page draws the panel is
+  decided on the SERVER when the page is built (`askTieloraAvailable` and `askTieloraProjects` in
+  `src/server/services/ai-panel.ts`: internal role first, then the permission, then the key, then
+  the company's switch; the dashboard also needs at least one project) and handed to the screen as
+  one yes/no or a list. A contractor's page is built without it: not hidden with styling. The route
+  answers a contractor "not found" before anything else is looked at, so they learn nothing about
+  whether AI exists. `ASK_ASSISTANT` is internal roles only and is not one of a contractor's four
+  actions.
+- **What the model sees** (THE TENANT RULE): only facts loaded through the existing scoped loaders
+  with the signed-in person's own `ActorContext` — `projectBrief` for one project, `projectsVisibleTo`
+  plus `orgDigest` narrowed with `onlyProjectIds` for "all my projects". Titles, codes, dates,
+  percentages and counts. **No people's names or emails, no comments, no document names.** The
+  project comes from the request, never from the model. A project that is another company's, one
+  the person is not on, or one that does not exist is the identical sentence "I can't find that
+  project.", with no provider call, no spend and no audit row.
+- **Prompt-injection guard.** Instructions live in the system message; the facts sit in a separate
+  fenced data block with a fresh random boundary marker per request, every value quoted, and any
+  fence or marker inside a value neutralised. The system message calls the data untrusted. The model
+  has **no tools**, so a fully "convinced" model can only change the words of one answer to one
+  person, and the panel prints plain text only (no links, images or markdown). Model text bound for
+  a chat channel goes through `slackEscape` / `teamsEscape`. The tests check what is sent and what
+  the server does, not whether the model obeys.
+- **The spending cap.** `aiMonthlyUsd` per plan in `plan-limits.ts` (never `null`; FREE $2, PRO $25).
+  **Checked BEFORE each call**: refuse when this month's spend plus the worst case of this one
+  request would pass the cap. **Recorded AFTER**, in one atomic increment on the company's
+  `AiUsage` row for the month (in the same transaction as the audit row for a question). **Stated
+  limits:** two questions in flight in the same second can each pass the check, so a company can
+  overshoot by a few requests' worth, which the rate limits bound to cents; and cost is worked out
+  from tokens at the pinned model's current prices. Reads are never blocked, only new AI calls. The
+  month resets by itself (a new key is a new row). The owner's spend limit in the Anthropic console
+  is the second fence.
+- **Audit.** A question writes ONE `AI_QUESTION_ASKED` row — who, when, project or dashboard, how
+  many projects, outcome, token counts — **with no question text and no answer, and no project id**
+  (so it never appears in a project's activity feed). The audit trail can never be edited or
+  deleted, so putting a typed question in it would build the permanent personal-data store the
+  privacy page says does not exist. Switching a setting writes `AI_SETTINGS_CHANGED`. Refusals
+  ("I can't find that project", the cap, "not set up", a 429, a contractor's not-found) write
+  nothing. **A digest summary writes no audit row**: it is the fourth entry in the digest's "writes
+  nothing" list (see "Chat delivery"); its spend is in `AiUsage`.
+- **AI-written briefs.** With the key set, the company's switch on and inside the allowance, the
+  company-wide digest opens with a labelled two or three sentence summary above the unchanged
+  computed lines. Anything else (off, dormant, capped, provider error, slower than 15 seconds)
+  sends the digest exactly as it is today: no error line, no "unavailable" note. No retry. At most
+  one call per company per day or week, because the existing sent stamps still hold. Never in a
+  contractor's message, a "Your day" brief or a notice email.
+  The summary rides only the company-wide chat digest, because no company-wide email digest exists;
+  the per-person weekly emails carry none.
+- **The refusal fallback is an opt-in the pinned model takes** (`server-side-fallback-2026-07-01`).
+  Cost is recorded from the usage the API returns, and a fallback model's price may differ from the
+  pinned constants, so the in-app cap is approximate in that case and the owner's Anthropic console
+  spend limit is the second fence.
+- **Rate limits** (house rule 10): asking is 5 a minute and 60 an hour per person and 300 a day per
+  company (keyed on the session's company, never the request), all 429 with `Retry-After`;
+  switching the two settings is 10 a minute per person. One answer at a time, never streamed, never
+  saved; a question is at most 500 characters, an answer about 150 words.
+- **The screens** (`src/components/ai/`): `ask-tielora-panel.tsx` (bottom sheet under 1024px, a
+  non-dimming side panel above), `ask-tielora-entry.tsx` (the project header button and the
+  dashboard launcher card), `admin-ai-card.tsx` on Integrations and the "AI this month" meter on
+  Billing. Every refusal sentence is the server's, shown as it arrives and never re-worded.
+- **Privacy and terms** name Anthropic as a sub-processor and say what is and is not sent. Anything
+  about Anthropic's own retention or training is to be confirmed by the owner against Anthropic's
+  current commercial terms before launch (`docs/GO-LIVE.md`); the pages claim nothing more than that
+  it handles the text to produce the answer under its commercial terms.
+
+**Any change touching this area adds or extends a test in `src/server/__tests__/ai.service.test.ts`
+— and in `org-isolation.service.test.ts` and `external-scoping.service.test.ts` for the tenant and
+external halves. Tests never reach Anthropic: `global.fetch` is mocked and the key is stubbed.**
 
 ## The public pages (the front door)
 

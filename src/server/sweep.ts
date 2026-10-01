@@ -11,6 +11,7 @@
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { IntegrationEventToggles as TogglesSchema } from "@/lib/zod-schemas";
+import { withAiSummary } from "@/server/services/ai-digest";
 import { digestMessage, orgDigest } from "@/server/services/briefs";
 import {
   sweepAccessExpiryNotifications,
@@ -232,7 +233,10 @@ export async function postDailyDigests(
       // EXACTLY the channels that were due are posted to, and exactly those are stamped. Handing
       // the ids over rather than letting the delivery look them up is what stops a channel enabled
       // later in the day from making an already-sent channel receive a second digest.
-      if (digest) channels += await deliverDailyBrief(orgId, integrationIds, digestMessage(digest));
+      if (digest) {
+        const message = await withAiSummary(orgId, digestMessage(digest), now, deadline - Date.now());
+        channels += await deliverDailyBrief(orgId, integrationIds, message);
+      }
       orgs += 1;
 
       // Stamped after the attempt, not before: a run that never happened must be able to happen
@@ -314,7 +318,13 @@ export async function postWeeklyBriefs(
       try {
         const brief = await orgWeeklyBrief(orgId, now);
         if (brief) {
-          channels += await deliverWeeklyBrief(orgId, integrationIds, weeklyBriefMessage(brief));
+          const message = await withAiSummary(
+            orgId,
+            weeklyBriefMessage(brief),
+            now,
+            deadline - Date.now(),
+          );
+          channels += await deliverWeeklyBrief(orgId, integrationIds, message);
         }
       } catch (error) {
         logger.error("A weekly brief could not be put together", {

@@ -719,6 +719,31 @@ built from the subscription id plus the event name plus the record's `updated_at
 portal is a pre-signed URL already sitting on the subscription record rather than something you mint
 per press.
 
+## 8b. Ask Tielora and AI-written briefs — switching the AI on (owner's one-off setup)
+
+Everything here is optional. With no `ANTHROPIC_API_KEY` the AI is completely invisible and the app
+is exactly as it was (`/api/health` says `"ai": "dormant"`). Do these in order before you set a key
+on a real deployment:
+
+1. **Create the key.** In the Anthropic console create an API key, then add it to the Railway
+   service's Variables as `ANTHROPIC_API_KEY`. Never put it in the repo, a commit or a chat. After
+   the redeploy `/api/health` says `"ai": "configured"` and shows no part of it.
+2. **Set a spend limit in the Anthropic console.** The app caps each company per month (Free $2,
+   Pro $25, in `src/lib/plan-limits.ts`), but that is the first fence. The console limit is the
+   second, and the only thing that bounds a bug in the first.
+3. **Check retention settings** on your Anthropic account for API inputs and outputs, and confirm
+   they are what you are happy to tell customers.
+4. **Add Anthropic to your sub-processor list** (the privacy page now has one; keep it in step with
+   any list you give customers).
+5. **Privacy review.** Have the privacy and terms wording reviewed, including the new Ask Tielora
+   sections. **Confirm against Anthropic's current commercial terms before launch** what Anthropic
+   does with API inputs and outputs (training, retention, where it is processed). The pages
+   deliberately say only that Anthropic is a sub-processor handling the text to produce the answer
+   under its commercial terms, with no retention period and no location, because those were not
+   verified when the pages were written. Add them only once you have checked.
+6. **Nothing turns on by itself.** Even with the key set, each company's administrator must switch
+   Ask Tielora and/or AI-written briefs on in Admin → Integrations. Contractors never see either.
+
 ---
 
 ## 9. What is deliberately not built

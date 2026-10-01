@@ -168,6 +168,10 @@ async function seedEverything(target: Fixture, marker: string): Promise<Seeded> 
       refreshTokenEnc: "not-a-real-token",
     },
   });
+  // The company's AI usage for the month: counts only, but company data all the same.
+  await prisma.aiUsage.create({
+    data: { orgId: target.orgId, month: "2026-10", inputTokens: 1200, outputTokens: 300, requests: 1 },
+  });
   await prisma.session.create({
     data: {
       userId: target.engineerActor.userId,
@@ -240,6 +244,7 @@ async function rowCounts(orgId: string): Promise<Record<string, number>> {
     session: await prisma.session.count({ where: { user: { orgId } } }),
     orgIntegration: await prisma.orgIntegration.count({ where: { orgId } }),
     microsoftConnection: await prisma.microsoftConnection.count({ where: { orgId } }),
+    aiUsage: await prisma.aiUsage.count({ where: { orgId } }),
   };
 }
 

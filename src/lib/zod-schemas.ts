@@ -2264,8 +2264,28 @@ export const PlanLimitsDTO = z.object({
   projects: z.number().int().positive().nullable(),
   users: z.number().int().positive().nullable(),
   documentBytes: z.number().int().positive().nullable(),
+  /**
+   * The monthly AI allowance in US dollars. The ONE limit that is never `null`: AI costs real money
+   * per use, so no plan may be uncapped by accident. 0 means "this plan has no AI allowance".
+   */
+  aiMonthlyUsd: z.number().nonnegative(),
 });
 export type PlanLimitsDTO = z.infer<typeof PlanLimitsDTO>;
+
+/**
+ * This month's AI use for one company, for the "AI this month" meter. Dollars are worked out at read
+ * time from the stored token counts at the pinned model's prices; no dollar figure is ever stored.
+ * `resetsOn` is the first of next month, UTC.
+ */
+export const BillingAiUsageDTO = z.object({
+  usedUsd: z.number().nonnegative(),
+  requests: z.number().int().nonnegative(),
+  capUsd: z.number().nonnegative(),
+  /** Server-computed with the same worst-case rule the ask route refuses by, so screen and refusal agree. */
+  atAllowance: z.boolean(),
+  resetsOn: dateOut,
+});
+export type BillingAiUsageDTO = z.infer<typeof BillingAiUsageDTO>;
 
 /**
  * What the Billing page is told about the payment provider — CONFIGURATION, never money. There is
@@ -2305,5 +2325,63 @@ export const BillingStatusDTO = z.object({
   usage: PlanUsageDTO,
   limits: PlanLimitsDTO,
   provider: BillingProviderDTO,
+  /** Present ONLY on a deployment that has the AI key; absent otherwise, so Billing is unchanged. */
+  ai: BillingAiUsageDTO.optional(),
 });
 export type BillingStatusDTO = z.infer<typeof BillingStatusDTO>;
+
+
+/* ------------------------------------------------------------------ */
+/* Ask Tielora (the AI assistant)                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A question for Ask Tielora. The question is at most 500 characters and is never stored.
+ * `projectId` is optional: absent means "all my projects" (the dashboard). It is deliberately a
+ * loose string, not an id-shaped one, so a made-up id gets the same "I can't find that project."
+ * as another company's real one.
+ */
+export const AskTieloraInput = z.object({
+  question: z
+    .string()
+    .trim()
+    .min(1, "Type a question first.")
+    .max(500, "Keep your question to 500 characters or fewer."),
+  projectId: z.string().min(1).max(100).optional(),
+});
+export type AskTieloraInput = z.infer<typeof AskTieloraInput>;
+
+/**
+ * What comes back: the answer (plain text, never saved) and the names the answer was built from.
+ * `basedOn` is written by the server from its own records, never by the model.
+ */
+export const AiAnswerDTO = z.object({
+  answer: z.string(),
+  basedOn: z.array(z.string()),
+});
+export type AiAnswerDTO = z.infer<typeof AiAnswerDTO>;
+
+/** An administrator's two AI switches. Anything not sent is left as it is. */
+export const SetAiSettingsInput = z
+  .object({
+    aiAssistant: z.boolean().optional(),
+    aiBriefs: z.boolean().optional(),
+  })
+  .strict()
+  .refine((value) => value.aiAssistant !== undefined || value.aiBriefs !== undefined, {
+    message: "Choose at least one setting to change.",
+  });
+export type SetAiSettingsInput = z.infer<typeof SetAiSettingsInput>;
+
+/**
+ * What the AI card on Admin → Integrations draws. `configured` is whether this deployment has the
+ * key (the card is not drawn while it is false). `monthlyUsd` is the plan's allowance; 0 means the
+ * plan has none, and the card says so instead of offering switches that could never do anything.
+ */
+export const AiSettingsDTO = z.object({
+  configured: z.boolean(),
+  aiAssistant: z.boolean(),
+  aiBriefs: z.boolean(),
+  monthlyUsd: z.number().nonnegative(),
+});
+export type AiSettingsDTO = z.infer<typeof AiSettingsDTO>;

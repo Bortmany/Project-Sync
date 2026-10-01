@@ -30,7 +30,14 @@ import { TEAMS_COOKIE } from "@/lib/teams-app";
 import { signInWithTeamsToken } from "@/server/services/teams-signin";
 import { GET as microsoftCallbackRoute } from "@/app/api/auth/microsoft/callback/route";
 import { homePathFor } from "@/components/shell/nav-items";
-import { SESSION_COOKIE, getSessionUser } from "@/lib/auth";
+import { POST as askRoute } from "@/app/api/ai/ask/route";
+import { SESSION_COOKIE, getSessionUser, mintSession } from "@/lib/auth";
+import DashboardPage from "@/app/(app)/dashboard/page";
+import ProjectPage from "@/app/(app)/projects/[id]/page";
+import { askTielora } from "@/server/services/ai-ask";
+import { askTieloraAvailable, askTieloraProjects } from "@/server/services/ai-panel";
+import { aiSettingsFor, setAiSettings } from "@/server/services/ai-settings";
+import { goDormantAi, installFakeAnthropic, sentText, switchAiOn } from "@/server/__tests__/ai-harness";
 import { signingKeys } from "@/server/services/microsoft-signin";
 import { sendDailyBriefEmails, sendWeeklyBriefEmails } from "@/server/sweep";
 import {
@@ -59,7 +66,7 @@ import {
 process.env.DATA_DIR = path.join(os.tmpdir(), "tielora-test-data");
 
 import { prisma } from "@/lib/db";
-import { ForbiddenError } from "@/lib/permissions";
+import { ForbiddenError, can } from "@/lib/permissions";
 import { searchEverything } from "@/lib/search";
 import { storeFile, validateUpload } from "@/lib/upload";
 import { actorForUser, type ActorContext } from "@/server/actor";
@@ -1667,5 +1674,170 @@ describe("a contractor in the Teams tab", () => {
     const outcome = await signInWithTeamsToken(signToken(teamsClaimsFor({ tid: employerTenant, oid }), key), {});
     expect(outcome.kind).toBe("refused");
     expect(await prisma.session.count()).toBe(0);
+  });
+});
+
+// Ask Tielora does not exist for a contractor: not found, before the key, the switch, the rate
+// limit or any load, so they learn nothing about whether AI is even configured. And when an INTERNAL
+// person asks about a project where a contractor works, the contractor is not in the prompt as a
+// person: v1 sends no names and no emails at all. The provider is mocked; nothing reaches Anthropic.
+describe("a contractor and Ask Tielora", () => {
+  let fetchMock: ReturnType<typeof installFakeAnthropic>;
+
+  beforeEach(async () => {
+    jar.clear();
+    fetchMock = installFakeAnthropic();
+    await switchAiOn(fixture.orgId);
+  });
+
+  afterEach(() => {
+    jar.clear();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  async function signInAsContractor(): Promise<void> {
+    const minted = mintSession();
+    await prisma.session.create({
+      data: { tokenHash: minted.tokenHash, userId: contractor.userId, expiresAt: minted.expiresAt },
+    });
+    jar.set(SESSION_COOKIE, { value: minted.rawToken });
+  }
+
+  const post = (body: unknown) =>
+    askRoute(new Request("http://localhost/api/ai/ask", { method: "POST", body: JSON.stringify(body) }));
+
+  it("is refused by the permission table, whatever the contractor holds", () => {
+    expect(can(contractor, "ASK_ASSISTANT")).toBe(false);
+    expect(
+      can(contractor, "ASK_ASSISTANT", {
+        projectId: fixture.projectId,
+        orgId: fixture.orgId,
+        assigneeId: contractor.userId,
+      }),
+    ).toBe(false);
+  });
+
+  it("answers the route 'not found' — with the key set, with it unset, with the switch off — and calls nothing", async () => {
+    await signInAsContractor();
+
+    for (const state of ["configured", "switched-off", "dormant"]) {
+      if (state === "switched-off") await switchAiOn(fixture.orgId, { assistant: false, briefs: false });
+      if (state === "dormant") goDormantAi();
+      const response = await post({ question: "What is late?", projectId: fixture.projectId });
+      expect(response.status).toBe(404);
+      expect((await response.json()).error).toBe("We could not find that.");
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await prisma.aiUsage.count()).toBe(0);
+    expect(await prisma.activityLog.count({ where: { action: "AI_QUESTION_ASKED" } })).toBe(0);
+  });
+
+  it("answers the service 'not found' as well, so no other door lets a contractor through", async () => {
+    await expect(askTielora(contractor, { question: "What is late?" })).rejects.toBeInstanceOf(NotFoundError);
+    await expect(
+      askTielora(contractor, { question: "What is late?", projectId: fixture.projectId }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("gives them no AI settings and no way to change them", async () => {
+    await expect(aiSettingsFor(contractor)).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(setAiSettings(contractor, { aiAssistant: false })).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("puts no contractor name, email or company in an internal person's prompt, and no AI text in the contractor's own brief", async () => {
+    const contractorRow = await prisma.user.findUniqueOrThrow({ where: { id: contractor.userId } });
+
+    // The engineer asks about the project the contractor works on, and across all their projects.
+    await askTielora(fixture.engineerActor, { question: "What is late?", projectId: fixture.projectId });
+    await askTielora(fixture.engineerActor, { question: "What is late?" });
+    await askTielora(fixture.adminActor, { question: "What is late?" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    for (let call = 0; call < 3; call++) {
+      const sent = sentText(fetchMock, call);
+      expect(sent).not.toContain("Yusuf Contractor");
+      expect(sent).not.toContain(contractorRow.email);
+      expect(sent).not.toContain("Al Hassan Engineering");
+      expect(sent).not.toContain(contractor.userId);
+    }
+
+    // Their own "Your day" is per person and carries no AI text at all.
+    const brief = JSON.stringify(await personBrief(contractor));
+    expect(brief).not.toMatch(/written by AI/i);
+    expect(brief).not.toMatch(/Ask Tielora/i);
+  });
+});
+
+// THE EXTERNAL RULE on screen: the panel is never DRAWN for a contractor. The server decides when
+// the page is built (isExternal), so the flag handed to the project page, and the project list handed
+// to the dashboard, are the whole story: there is nothing for CSS to hide. These call the real pages
+// with a real session cookie, then read what each page hands its screen.
+describe("a contractor's pages carry no Ask Tielora panel", () => {
+  beforeEach(async () => {
+    jar.clear();
+    installFakeAnthropic();
+    await switchAiOn(fixture.orgId);
+  });
+
+  afterEach(() => {
+    jar.clear();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  async function signInAs(userId: string): Promise<void> {
+    const minted = mintSession();
+    await prisma.session.create({ data: { tokenHash: minted.tokenHash, userId, expiresAt: minted.expiresAt } });
+    jar.set(SESSION_COOKIE, { value: minted.rawToken });
+  }
+
+  async function projectPageFlag(): Promise<boolean> {
+    const element = (await ProjectPage({ params: Promise.resolve({ id: fixture.projectId }) })) as unknown as {
+      props: { askTielora: boolean };
+    };
+    return element.props.askTielora;
+  }
+
+  it("builds the project page without the panel for a contractor, with the key set and the switch on", async () => {
+    await signInAs(contractor.userId);
+    expect(await projectPageFlag()).toBe(false);
+    expect(await askTieloraAvailable(contractor)).toBe(false);
+  });
+
+  it("builds the project page with the panel for an internal person on the same project", async () => {
+    await signInAs(fixture.engineerActor.userId);
+    expect(await projectPageFlag()).toBe(true);
+  });
+
+  it("never gives a contractor a dashboard that draws the card: they are redirected, and the card's list is null", async () => {
+    await signInAs(contractor.userId);
+    await expect(DashboardPage()).rejects.toMatchObject({ digest: expect.stringContaining("NEXT_REDIRECT") });
+    expect(await askTieloraProjects(contractor)).toBeNull();
+  });
+
+  it("hands an internal person's dashboard only the projects they are on", async () => {
+    await signInAs(fixture.engineerActor.userId);
+    const element = (await DashboardPage()) as unknown as {
+      props: { children: { props: { askProjects?: { id: string }[] | null } }[] };
+    };
+    const view = element.props.children.find((child) => child?.props && "askProjects" in child.props);
+    // The engineer is a member of exactly these two projects of the company, and no others.
+    expect(view?.props.askProjects?.map((project) => project.id).sort()).toEqual(
+      [fixture.projectId, otherProjectId].sort(),
+    );
+  });
+
+  it("draws nothing for anybody while the company switch is off or the key is unset", async () => {
+    await signInAs(fixture.engineerActor.userId);
+    await switchAiOn(fixture.orgId, { assistant: false, briefs: false });
+    expect(await projectPageFlag()).toBe(false);
+    expect(await askTieloraProjects(fixture.engineerActor)).toBeNull();
+
+    await switchAiOn(fixture.orgId);
+    goDormantAi();
+    expect(await projectPageFlag()).toBe(false);
+    expect(await askTieloraProjects(fixture.adminActor)).toBeNull();
   });
 });

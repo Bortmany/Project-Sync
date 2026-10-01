@@ -50,6 +50,12 @@ export type Action =
   | "MANAGE_BILLING"
   | "POST_ANNOUNCEMENT"
   | "POST_BOARD"
+  /**
+   * Asking Ask Tielora a question. Any internal role, with no project context: what the question may
+   * be ABOUT is decided by the scoped loaders, not here. A contractor is refused in `canExternal`
+   * like every action outside their four, and the route answers them "not found" before this runs.
+   */
+  | "ASK_ASSISTANT"
   | "VIEW_PROJECT";
 
 /**
@@ -233,6 +239,10 @@ export function can(actor: Actor, action: Action, ctx: PermissionContext = {}): 
   // membership gate below: a company-wide post names no project at all.
   if (POST_ACTIONS.includes(action)) return canPostToAudience(actor, ctx);
 
+  // Asking the assistant needs no project: every internal role may. Which facts it may read is the
+  // loaders' job (projectBrief / projectsVisibleTo), each already scoped to this person.
+  if (action === "ASK_ASSISTANT") return true;
+
   // Creating a project needs no project context — project managers may start one.
   if (action === "CREATE_PROJECT") return actor.role === "PROJECT_MANAGER";
 
@@ -300,12 +310,13 @@ export const PERMISSION_MATRIX: Record<RoleValue, { always: Action[]; conditiona
       "MANAGE_BILLING",
       "POST_ANNOUNCEMENT",
       "POST_BOARD",
+      "ASK_ASSISTANT",
       "VIEW_PROJECT",
     ],
     conditional: [],
   },
   PROJECT_MANAGER: {
-    always: ["CREATE_PROJECT"],
+    always: ["CREATE_PROJECT", "ASK_ASSISTANT"],
     conditional: [
       "EDIT_PROJECT",
       "DELETE_PROJECT",
@@ -330,7 +341,7 @@ export const PERMISSION_MATRIX: Record<RoleValue, { always: Action[]; conditiona
     ],
   },
   DISCIPLINE_LEAD: {
-    always: [],
+    always: ["ASK_ASSISTANT"],
     conditional: [
       "VIEW_PROJECT",
       "COMMENT",
@@ -344,7 +355,7 @@ export const PERMISSION_MATRIX: Record<RoleValue, { always: Action[]; conditiona
     ],
   },
   ENGINEER: {
-    always: [],
+    always: ["ASK_ASSISTANT"],
     conditional: [
       "VIEW_PROJECT",
       "COMMENT",

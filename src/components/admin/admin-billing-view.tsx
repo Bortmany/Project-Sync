@@ -6,13 +6,15 @@
 // paying. While no payment provider is set up there are no buttons at all: not greyed out, not
 // disabled with a tooltip, simply absent, the same discipline the Microsoft card follows.
 //
-// Every number here is counted at read time by billingStatus(); nothing about usage is stored.
+// Every number here is counted at read time by billingStatus(); nothing about usage is stored,
+// except AI spend (the one stored usage figure: tokens at an outside provider cannot be recounted).
 //
 // WHAT THIS SCREEN DELIBERATELY DOES NOT SAY: a renewal date, an amount, a card, an invoice. None
 // of it is stored in this app — the provider holds it, and "Manage billing" is the door to it. The
 // copy below says so rather than inventing a date it cannot know.
 
 import { BillingButtons, BillingReturnStrip } from "@/components/admin/admin-billing-actions";
+import { formatDateUtc } from "@/components/format";
 import { Badge, Card, ProgressBar } from "@/components/ui";
 import {
   PLANS,
@@ -24,7 +26,7 @@ import {
   usagePct,
   type LimitKind,
 } from "@/lib/plan-limits";
-import type { BillingStatusDTO, PlanName } from "@/lib/zod-schemas";
+import type { BillingAiUsageDTO, BillingStatusDTO, PlanName } from "@/lib/zod-schemas";
 
 /**
  * What each plan includes, in the order the meters below run — BUILT FROM `PLANS`, never typed out.
@@ -124,6 +126,65 @@ function Meter({
   );
 }
 
+/** "$0.42": dollars with cents, the way the allowance and the spend are always shown. */
+function dollars(value: number): string {
+  return `$${value.toFixed(2)}`;
+}
+
+/**
+ * The "AI this month" meter. Drawn only when billingStatus() carries an `ai` block, which it does
+ * only on a deployment that has the AI key. A plan with no AI allowance gets a plain row, no bar.
+ * "At the allowance" uses the existing red "over" look: the app has no amber token.
+ */
+function AiMeter({ ai }: { ai: BillingAiUsageDTO }) {
+  if (ai.capUsd <= 0) {
+    return (
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="text-sm text-[var(--brand-text)]">AI this month</span>
+        <span className="text-sm text-[var(--brand-ink)]">Not included in your plan</span>
+      </div>
+    );
+  }
+
+  const atAllowance = ai.atAllowance;
+  const reset = formatDateUtc(ai.resetsOn);
+
+  return (
+    <div className="space-y-1" data-testid="ai-meter">
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="text-sm text-[var(--brand-text)]">AI this month</span>
+        <span
+          className="text-sm tabular-nums"
+          style={{ color: atAllowance ? "var(--status-blocked)" : "var(--brand-ink)" }}
+        >
+          {dollars(ai.usedUsd)} / {dollars(ai.capUsd)}
+        </span>
+      </div>
+      <span className="inline-flex w-full items-center">
+        {atAllowance ? (
+          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--brand-gray)]/40">
+            <span
+              className="block h-full rounded-full bg-[var(--status-blocked)]"
+              style={{ width: "100%" }}
+            />
+          </span>
+        ) : (
+          <ProgressBar pct={usagePct(ai.usedUsd, ai.capUsd)} />
+        )}
+      </span>
+      <p className="break-words text-xs text-[var(--brand-text)]">
+        {ai.requests} AI {ai.requests === 1 ? "request" : "requests"} this month · Resets on {reset}
+      </p>
+      {atAllowance ? (
+        <p className="break-words text-xs text-[var(--status-blocked)]">
+          You have used this month&rsquo;s AI allowance. Ask Tielora and AI-written summaries are
+          paused until {reset}. Everything else works as normal.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function CurrentPlanCard({ status }: { status: BillingStatusDTO }) {
   const pro = status.plan === "PRO";
 
@@ -164,6 +225,8 @@ function CurrentPlanCard({ status }: { status: BillingStatusDTO }) {
             used={status.usage.documentBytes}
             limit={status.limits.documentBytes}
           />
+          {/* Absent on a deployment with no AI key, so Billing is unchanged there. */}
+          {status.ai ? <AiMeter ai={status.ai} /> : null}
         </div>
 
         {status.provider.configured ? (

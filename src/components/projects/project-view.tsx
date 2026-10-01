@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { setExternalSignoffRequired, updateProject } from "@/components/actions";
 import { ProjectActivity } from "@/components/activity/activity-feeds";
+import { AskTieloraProjectButton } from "@/components/ai/ask-tielora-entry";
 import { ProjectDocumentsTab } from "@/components/documents/project-documents";
 import { ProjectTimelineTab } from "@/components/gantt/timeline-tab";
 import { ExportMenu } from "@/components/projects/export-menu";
@@ -171,7 +172,17 @@ function lateHint(main: number, discipline: number): string {
   return `${count(main, "main task")} and ${count(discipline, "discipline task")} are past their deadline.`;
 }
 
-export function ProjectView({ projectId }: { projectId: string }) {
+export function ProjectView({
+  projectId,
+  askTielora = false,
+}: {
+  projectId: string;
+  /**
+   * Decided by the SERVER for this person (key set, company switch on, internal role). A contractor's
+   * page is built with this false, so the button is not drawn: not hidden, not there.
+   */
+  askTielora?: boolean;
+}) {
   const me = useMe();
   const project = useProject(projectId);
   const [editOpen, setEditOpen] = useState(false);
@@ -223,6 +234,7 @@ export function ProjectView({ projectId }: { projectId: string }) {
                   Edit
                 </Button>
               ) : null}
+              {askTielora && !external ? <AskTieloraProjectButton project={data} /> : null}
               <ExportMenu projectId={data.id} projectCode={data.code} />
             </div>
           ) : null}

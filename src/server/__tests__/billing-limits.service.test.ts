@@ -8,7 +8,7 @@
 import { readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Test uploads go to a throwaway folder, never the development data directory.
 process.env.DATA_DIR = path.join(os.tmpdir(), "nexus-test-data");
@@ -29,6 +29,7 @@ import { storeFile, uploadsDir, validateUpload } from "@/lib/upload";
 import type { ActorContext } from "@/server/actor";
 import { ServiceError } from "@/server/errors";
 import { createUser, updateUser } from "@/server/services/admin";
+import { monthKey, nextMonthStart } from "@/server/services/ai";
 import { billingStatus } from "@/server/services/billing";
 import { uploadDocumentVersion } from "@/server/services/documents";
 import { createProject, listProjectsForActor } from "@/server/services/projects";
@@ -559,5 +560,72 @@ describe("the storage cap is judged before the bytes reach the disk", () => {
     const response = await postUpload(fixture.adminActor, mainTaskId);
     expect(response.status).toBe(200);
     expect(await filesOnDisk()).toBe(before + 1);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The monthly AI allowance                                            */
+/* ------------------------------------------------------------------ */
+
+describe("the monthly AI allowance (aiMonthlyUsd)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("exists for both plans as a real number, and is never null", () => {
+    for (const plan of ["FREE", "PRO"] as const) {
+      expect(typeof PLANS[plan].aiMonthlyUsd).toBe("number");
+      expect(PLANS[plan].aiMonthlyUsd).toBeGreaterThanOrEqual(0);
+    }
+    expect(PLANS.FREE.aiMonthlyUsd).toBe(2);
+    expect(PLANS.PRO.aiMonthlyUsd).toBe(25);
+  });
+
+  it("reads an unrecognised plan as FREE's allowance, and upgrading raises it at once", async () => {
+    await setPlan(fixture.orgId, "PLATINUM");
+    expect((await billingStatus(fixture.adminActor)).limits.aiMonthlyUsd).toBe(PLANS.FREE.aiMonthlyUsd);
+
+    await setPlan(fixture.orgId, "PRO");
+    expect((await billingStatus(fixture.adminActor)).limits.aiMonthlyUsd).toBe(PLANS.PRO.aiMonthlyUsd);
+  });
+
+  it("carries the month's dollars, requests and cap only while the deployment is configured, worked out from tokens", async () => {
+    await prisma.aiUsage.create({
+      data: { orgId: fixture.orgId, month: monthKey(new Date()), inputTokens: 250_000, outputTokens: 40_000, requests: 17 },
+    });
+
+    vi.stubEnv("ANTHROPIC_API_KEY", "");
+    expect(await billingStatus(fixture.adminActor)).not.toHaveProperty("ai");
+
+    vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test-not-a-real-key");
+    const status = await billingStatus(fixture.adminActor);
+    // 250,000 in at $4/M plus 40,000 out at $20/M.
+    expect(status.ai?.usedUsd).toBeCloseTo(1.8, 10);
+    expect(status.ai?.requests).toBe(17);
+    expect(status.ai?.atAllowance).toBe(false);
+    expect(status.ai?.capUsd).toBe(PLANS.FREE.aiMonthlyUsd);
+    expect(status.ai?.resetsOn.getTime()).toBe(nextMonthStart(new Date()).getTime());
+  });
+
+  it("says 'at the allowance' as soon as the next question would be refused, not only once spent", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test-not-a-real-key");
+    // $1.98 of the $2 allowance: under the cap, but the worst case of one question ($0.04) no longer fits.
+    await prisma.aiUsage.create({
+      data: { orgId: fixture.orgId, month: monthKey(new Date()), inputTokens: 0, outputTokens: 99_000, requests: 50 },
+    });
+    const status = await billingStatus(fixture.adminActor);
+    expect(status.ai?.usedUsd).toBeLessThan(status.ai?.capUsd ?? 0);
+    expect(status.ai?.atAllowance).toBe(true);
+  });
+
+  it("never blocks a read when a company is over its AI allowance", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test-not-a-real-key");
+    await prisma.aiUsage.create({
+      data: { orgId: fixture.orgId, month: monthKey(new Date()), inputTokens: 0, outputTokens: 10_000_000, requests: 99 },
+    });
+    const status = await billingStatus(fixture.adminActor);
+    expect(status.ai?.usedUsd).toBeGreaterThan(status.ai?.capUsd ?? 0);
+    expect(status.ai?.atAllowance).toBe(true);
+    expect((await listProjectsForActor(fixture.adminActor)).length).toBeGreaterThan(0);
   });
 });

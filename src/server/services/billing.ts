@@ -42,6 +42,7 @@ import type { ActorContext } from "@/server/actor";
 import { NotFoundError, ServiceError } from "@/server/errors";
 import { checkDto } from "@/server/serialize";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
+import { aiUsageSummary } from "@/server/services/ai";
 import {
   BILLING_NOT_CONFIGURED,
   BILLING_PROVIDER,
@@ -181,7 +182,15 @@ export async function billingStatus(actor: ActorContext): Promise<BillingStatusD
   const usage: PlanUsageDTO = { projects, users, documentBytes };
   const limits: PlanLimitsDTO = limitsFor(plan);
 
-  return checkDto(BillingStatusSchema, { plan, usage, limits, provider }, "BillingStatusDTO");
+  // This month's AI use: present only while the deployment has the AI key, so the Billing page is
+  // unchanged without one. Dollars are worked out here from the stored tokens, never stored.
+  const ai = await aiUsageSummary(actor.orgId, plan);
+
+  return checkDto(
+    BillingStatusSchema,
+    { plan, usage, limits, provider, ...(ai ? { ai } : {}) },
+    "BillingStatusDTO",
+  );
 }
 
 /** What /api/health reports. A word about configuration, and nothing about anybody's money. */

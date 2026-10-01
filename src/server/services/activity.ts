@@ -152,6 +152,17 @@ export const ACTIVITY = {
    * provider's event id, which is exactly enough to trace it back without copying a payload.
    */
   BILLING_PLAN_CHANGED: "BILLING_PLAN_CHANGED",
+  // Ask Tielora. Neither row ever carries the key, a question, an answer, a project id or a project
+  // fact: only who, what kind of question, how many projects, the outcome and the token counts.
+  /**
+   * Somebody asked Ask Tielora a question and the provider was called. One row per call, written in
+   * the same transaction as the spend counter, with NO project id (so it never shows in a project's
+   * feed) and NO question or answer text. A refusal (not found, over the allowance, not set up)
+   * writes nothing: nothing happened.
+   */
+  AI_QUESTION_ASKED: "AI_QUESTION_ASKED",
+  /** An administrator changed the company's two AI switches. `metadata: { changed }`. */
+  AI_SETTINGS_CHANGED: "AI_SETTINGS_CHANGED",
 } as const;
 
 export type ActivityAction = (typeof ACTIVITY)[keyof typeof ACTIVITY];

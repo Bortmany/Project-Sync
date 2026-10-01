@@ -12,25 +12,34 @@
 // nothing else — no migration, no re-wording, no test rewrite. The Billing screen and the public
 // pricing page both read them from here.
 //
-// Nothing about usage is stored. Projects, people and stored bytes are counted from the rows
-// themselves at write time and at read time, the same way OVERDUE and a locked phase are derived.
+// Nothing about usage is stored, with ONE exception: AI spend. Projects, people and stored bytes are
+// counted from the rows themselves at write time and at read time, the same way OVERDUE and a locked
+// phase are derived; tokens spent at an outside provider cannot be recovered from anything else, so
+// `AiUsage` (see src/server/services/ai.ts) keeps a running total per company per month.
 
 import { PlanSchema, type PlanLimitsDTO, type PlanName, type RoleName } from "@/lib/zod-schemas";
 
 /**
  * What each plan allows. `null` means unlimited — never 0, never a very large number, so "no
  * ceiling" can never be confused with "a ceiling nobody has reached yet".
+ *
+ * **THE ONE EXCEPTION is `aiMonthlyUsd`**, the monthly AI allowance in US dollars. It is never
+ * `null`: AI costs real money per use, so no plan may be uncapped by accident. `0` means "this plan
+ * has no AI allowance" (Ask Tielora refuses and the AI-written briefs go out without a summary).
+ * FREE = $2 and PRO = $25 are the owner's numbers (30 Sep 2026).
  */
 export const PLANS: Record<PlanName, PlanLimitsDTO> = {
   FREE: {
     projects: 1,
     users: 10,
     documentBytes: 500 * 1024 * 1024,
+    aiMonthlyUsd: 2,
   },
   PRO: {
     projects: null,
     users: null,
     documentBytes: 10 * 1024 ** 3,
+    aiMonthlyUsd: 25,
   },
 };
 
@@ -65,7 +74,7 @@ export function limitsFor(plan: PlanName): PlanLimitsDTO {
   return PLANS[plan];
 }
 
-/** The three things a plan puts a ceiling on. */
+/** The three things a plan puts a ceiling on (the AI allowance is judged by `ai.ts`, in dollars). */
 export type LimitKind = "projects" | "users" | "documentBytes";
 
 /* ------------------------------------------------------------------ */

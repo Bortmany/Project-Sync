@@ -4,10 +4,10 @@
 
 import type {
   ButtonHTMLAttributes,
+  ComponentProps,
   InputHTMLAttributes,
   ReactNode,
   SelectHTMLAttributes,
-  TextareaHTMLAttributes,
 } from "react";
 
 export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
@@ -74,7 +74,8 @@ export function DateInput({ className = "", ...rest }: InputHTMLAttributes<HTMLI
   return <input type="date" {...rest} className={`${FIELD_CLASS} ${className}`} />;
 }
 
-export function Textarea({ className = "", ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+// ComponentProps (not just the HTML attributes) so a screen can hold a ref to focus the box.
+export function Textarea({ className = "", ...rest }: ComponentProps<"textarea">) {
   return <textarea {...rest} className={`${FIELD_CLASS} min-h-24 ${className}`} />;
 }
 

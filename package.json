@@ -18,6 +18,7 @@
     "verify": "npx prisma generate && npx prisma migrate deploy && npm run seed && npm run seed:check && npm run lint && npx tsc --noEmit && npm test && npm run build"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "@microsoft/teams-js": "^2.57.0",
     "@prisma/adapter-pg": "7.10",
     "@prisma/client": "7.10",

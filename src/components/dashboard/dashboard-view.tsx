@@ -5,6 +5,7 @@
 
 import Link from "next/link";
 import { ActivityFeed, ActivitySkeleton } from "@/components/activity/activity-item";
+import { AskTieloraDashboardCard } from "@/components/ai/ask-tielora-entry";
 import { AnnouncementStrip } from "@/components/posts/announcement-strip";
 import { MyTaskGroups } from "@/components/tasks/my-task-rows";
 import { isManager, useDashboard, useMe } from "@/components/hooks/use-api";
@@ -23,6 +24,7 @@ import {
 } from "@/components/ui";
 import type { MeDTO } from "@/components/hooks/use-api";
 import type { DashboardDTO } from "@/lib/zod-schemas";
+import type { AskProject } from "@/server/services/ai-panel";
 
 const TILES = [
   { label: "All tasks", key: "total", href: "/dashboard/list?tile=all", hint: "Every main task and discipline task in the projects you can see." },
@@ -90,7 +92,7 @@ function FirstRun({ me }: { me: MeDTO | undefined }) {
   );
 }
 
-export function DashboardView() {
+export function DashboardView({ askProjects = null }: { askProjects?: AskProject[] | null }) {
   const dashboard = useDashboard();
   const me = useMe();
   const data = dashboard.data;
@@ -118,6 +120,11 @@ export function DashboardView() {
         else decided it mattered. It renders nothing at all when there is none, and fails silently.
       */}
       <AnnouncementStrip />
+
+      {/* Ask Tielora: the server only hands over a list when the key is set, the company has it
+          switched on, the person is internal and on at least one project. Null draws nothing. It
+          arrives with the tiles (never a skeleton of its own) and not at all if the page failed. */}
+      {askProjects && !loading && !failed && data ? <AskTieloraDashboardCard projects={askProjects} /> : null}
 
       <p className="-mb-3 text-xs text-[var(--brand-text)]">
         {data?.scope === "OWN" ? "Your work" : "Across the whole company"}

@@ -20,6 +20,7 @@ vi.mock("@/server/session", async (importOriginal) => {
 import { GET as healthRoute } from "@/app/api/health/route";
 import { prisma } from "@/lib/db";
 import { makeOrg, resetDatabase } from "@/server/__tests__/harness";
+import { AI_TEST_KEY } from "@/server/__tests__/ai-harness";
 import {
   TEAMS_TEST_APP_ID,
   TEST_CLIENT_SECRET,
@@ -29,6 +30,7 @@ import {
 describe("GET /api/health", () => {
   afterEach(() => {
     session.actor = null;
+    vi.unstubAllEnvs();
   });
 
   it("tells an anonymous caller only whether the app is up", async () => {
@@ -78,6 +80,27 @@ describe("GET /api/health", () => {
     } finally {
       restore();
     }
+  });
+
+  it("reports Ask Tielora as a single word: dormant without ANTHROPIC_API_KEY, configured with it, never any part of the key", async () => {
+    session.actor = { userId: "someone", orgId: "org", role: "ENGINEER" };
+
+    vi.stubEnv("ANTHROPIC_API_KEY", "");
+    const before = await (await healthRoute()).json();
+    expect(before.ai).toBe("dormant");
+
+    vi.stubEnv("ANTHROPIC_API_KEY", AI_TEST_KEY);
+    const after = await (await healthRoute()).json();
+    expect(after.ai).toBe("configured");
+    expect(JSON.stringify(after.ai)).toBe('"configured"');
+    expect(JSON.stringify(after)).not.toContain(AI_TEST_KEY);
+    expect(JSON.stringify(after)).not.toContain(AI_TEST_KEY.slice(0, 14));
+  });
+
+  it("keeps the AI word out of the anonymous answer", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", AI_TEST_KEY);
+    const body = await (await healthRoute()).json();
+    expect(body).not.toHaveProperty("ai");
   });
 
   it("keeps the Teams app out of the anonymous answer", async () => {

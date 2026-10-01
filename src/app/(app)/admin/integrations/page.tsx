@@ -7,6 +7,7 @@ import { teamsAppConfig } from "@/lib/teams-app";
 import { AdminIntegrationsView } from "@/components/admin/admin-integrations-view";
 import { NoAccess } from "@/components/admin/no-access";
 import { currentActor } from "@/server/session";
+import { aiCardFor } from "@/server/services/ai-panel";
 import { emailAvailable } from "@/server/services/email";
 import { listIntegrationsForAdmin } from "@/server/services/integrations";
 import { microsoftConnectionFor } from "@/server/services/microsoft";
@@ -28,11 +29,13 @@ export default async function AdminIntegrationsPage({
   if (!actor) redirect("/login");
   if (!can(actor, "MANAGE_INTEGRATIONS")) return <NoAccess />;
 
-  const [integrations, microsoft, microsoftSignIn, broadcastPolicy, params] = await Promise.all([
+  const [integrations, microsoft, microsoftSignIn, broadcastPolicy, ai, params] = await Promise.all([
     listIntegrationsForAdmin(actor),
     microsoftConnectionFor(actor),
     microsoftSignInStatus(actor),
     broadcastPolicyFor(actor),
+    // Null on a deployment with no AI key: the card is then not drawn at all.
+    aiCardFor(actor),
     searchParams,
   ]);
 
@@ -46,6 +49,7 @@ export default async function AdminIntegrationsPage({
       emailAvailable={emailAvailable()}
       broadcastPolicy={broadcastPolicy}
       teamsApp={teamsAppConfig() !== null}
+      ai={ai}
     />
   );
 }

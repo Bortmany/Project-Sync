@@ -207,10 +207,35 @@ describe("the legal pages", () => {
     const terms = renderToStaticMarkup(TermsPage());
 
     expect(privacy).toContain("Privacy notice");
-    expect(privacy).toContain("Last updated 30 Sep 2026");
+    expect(privacy).toContain("Last updated 1 Oct 2026");
     expect(privacy).toContain("What is stored");
     expect(terms).toContain("Terms of use");
     expect(terms).toContain("How access works");
+    expect(terms).toContain("Last updated 1 Oct 2026");
+  });
+
+  it("describe Ask Tielora and name Anthropic, without inventing any retention or location claim", () => {
+    const privacy = renderToStaticMarkup(PrivacyPage());
+    const terms = renderToStaticMarkup(TermsPage());
+
+    expect(privacy).toContain("Ask Tielora and AI-written summaries, if your administrator switches them on");
+    expect(privacy).toContain("sub-processor");
+    expect(privacy).toContain("Not the question and not the answer");
+    expect(privacy).toContain("answers can be wrong");
+    expect(privacy).toContain("Who else handles information for us");
+    for (const name of ["Anthropic", "Paddle", "Resend", "Slack and Microsoft"]) {
+      expect(privacy).toContain(name);
+    }
+    // The "only information that leaves this app" sentence now includes the AI text.
+    expect(privacy).toContain("described under Ask Tielora below");
+    // Nothing the owner has not verified: no retention period, no processing location.
+    expect(privacy).not.toMatch(/\b\d+\s*days?\b[^.]*Anthropic|Anthropic[^.]*\b\d+\s*days?\b/);
+    expect(privacy).not.toMatch(/United States|data cent(er|re)/i);
+    expect(privacy).not.toContain("[Verify");
+
+    expect(terms).toContain("Ask Tielora and AI summaries");
+    expect(terms).toContain("do not replace engineering judgment, formal approvals or your company");
+    expect(terms).toContain("monthly allowance");
   });
 
   it("name the operator beside the workspace administrator, as a mailto link", () => {
