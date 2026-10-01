@@ -641,3 +641,105 @@ describe("with the provider keys set", () => {
     expect(billingHealth()).toBe("configured");
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* 6. Pro is one flat price                                            */
+/* ------------------------------------------------------------------ */
+//
+// The October 2026 pricing decision: one Paddle price, quantity 1, no seat syncing. People and
+// contractors never change what is charged, and nothing about money is stored here.
+
+describe("Pro is one flat price: one item, quantity 1, no seat syncing", () => {
+  beforeEach(() => configureProvider());
+
+  it("the checkout request carries exactly one item — the configured price id, quantity 1", async () => {
+    const calls = stubFetch({
+      data: { id: "txn_01", checkout: { url: "https://sandbox-buy.paddle.com/checkout/abc" } },
+    });
+
+    // However many people and contractors the company has, the request is the same one item.
+    const { bulkUsers } = await import("@/server/__tests__/harness");
+    await bulkUsers(fixture.orgId, 8, "ENGINEER", { disciplineId: fixture.disciplineId });
+    await bulkUsers(fixture.orgId, 6, "EXTERNAL");
+    await startUpgrade(fixture.adminActor);
+
+    expect(calls).toHaveLength(1);
+    const sent = JSON.parse(String(calls[0].init.body)) as { items: { price_id: string; quantity: number }[] };
+    expect(sent.items).toEqual([{ price_id: PRICE_ID, quantity: 1 }]);
+  });
+
+  it("no webhook path reads a quantity: a payload full of seat counts moves the plan and nothing else", async () => {
+    const calls = stubFetch({});
+    const raw = JSON.stringify({
+      event_id: "evt_seats",
+      event_type: "subscription.updated",
+      occurred_at: new Date().toISOString(),
+      data: {
+        id: "sub_seats",
+        customer_id: "ctm_seats",
+        status: "active",
+        custom_data: { org_id: fixture.orgId },
+        items: [{ quantity: 250, price: { id: "pri_seats", unit_price: { amount: "1", currency_code: "USD" } } }],
+      },
+    });
+    const orgBefore = await prisma.organization.findUniqueOrThrow({ where: { id: fixture.orgId } });
+    const peopleBefore = await prisma.user.count({ where: { orgId: fixture.orgId } });
+
+    await processBillingWebhook(raw, sign(raw));
+
+    const orgAfter = await prisma.organization.findUniqueOrThrow({ where: { id: fixture.orgId } });
+    const moved = (Object.keys(orgAfter) as (keyof typeof orgAfter)[]).filter(
+      (key) => JSON.stringify(orgAfter[key]) !== JSON.stringify(orgBefore[key]),
+    );
+    expect(moved.sort()).toEqual(["billingCustomerId", "billingSubscriptionId", "plan"]);
+    expect(await prisma.user.count({ where: { orgId: fixture.orgId } })).toBe(peopleBefore);
+    // And it never called the provider back to change a quantity.
+    expect(calls).toHaveLength(0);
+
+    // The source itself never reads one: billing.ts has no word "quantity", and paddle.ts says it
+    // once — the checkout's own `quantity: 1`.
+    const { readFileSync } = await import("node:fs");
+    const billingSource = readFileSync("src/server/services/billing.ts", "utf8");
+    const paddleSource = readFileSync("src/server/services/paddle.ts", "utf8");
+    expect(billingSource.toLowerCase()).not.toContain("quantity");
+    expect(paddleSource.match(/quantity/gi)?.length ?? 0).toBe(
+      (paddleSource.match(/quantity: 1/g) ?? []).length,
+    );
+  });
+
+  it("a replayed webhook still changes nothing", async () => {
+    const raw = body("subscription.activated", { orgId: fixture.orgId, eventId: "evt_flat_replay" });
+    await processBillingWebhook(raw, sign(raw));
+    await setPlan(fixture.orgId, "FREE");
+    const again = await processBillingWebhook(raw, sign(raw));
+
+    expect(again.httpStatus).toBe(200);
+    expect(await planOfOrg(fixture.orgId)).toBe("FREE");
+    expect(await prisma.billingEvent.count({ where: { eventId: "evt_flat_replay" } })).toBe(1);
+  });
+
+  it("stores no price, card, amount or seat count: the two models hold only their documented columns", async () => {
+    const { Prisma } = await import("@/generated/prisma/client");
+    expect(Object.keys(Prisma.OrganizationScalarFieldEnum).sort()).toEqual(
+      [
+        "id",
+        "name",
+        "slug",
+        "industryTemplate",
+        "createdAt",
+        "broadcastPolicy",
+        "deleteRequestedAt",
+        "deleteRequestedById",
+        "plan",
+        "billingCustomerId",
+        "billingSubscriptionId",
+        "entraTenantId",
+        "aiAssistant",
+        "aiBriefs",
+      ].sort(),
+    );
+    expect(Object.keys(Prisma.BillingEventScalarFieldEnum).sort()).toEqual(
+      ["id", "provider", "eventId", "eventType", "orgId", "occurredAt", "processedAt"].sort(),
+    );
+  });
+});

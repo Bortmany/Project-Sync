@@ -21,7 +21,7 @@
 // activate, deactivate or nothing".
 
 import type { Prisma } from "@/generated/prisma/client";
-import { ACCESS_EXPIRY_GRACE_MS } from "@/lib/access-expiry";
+import { ACCESS_EXPIRY_GRACE_MS, isAccessExpired } from "@/lib/access-expiry";
 import { notDeleted, prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { assertCan } from "@/lib/permissions";
@@ -33,6 +33,7 @@ import type {
   PlanLimitsDTO,
   PlanName,
   PlanUsageDTO,
+  RoleName,
 } from "@/lib/zod-schemas";
 import {
   BillingRedirectDTO as BillingRedirectSchema,
@@ -75,33 +76,58 @@ export async function countProjects(orgId: string): Promise<number> {
 }
 
 /**
- * People who can still sign in — and the count means exactly that, in both directions.
+ * OFFICE STAFF: people who can still sign in and are not contractors. This is the count the plan's
+ * `users` ceiling judges, and it NEVER includes a contractor — contractors are free and have a
+ * ceiling of their own (see `countContractors`).
  *
  * A DEACTIVATED ACCOUNT DOES NOT COUNT, deliberately: an administrator who has deactivated somebody
- * has given the seat back, and charging a company for accounts nobody can use would make
+ * has given the place back, and charging a company for accounts nobody can use would make
  * deactivation pointless. The account, its work and its audit trail all stay exactly where they are
- * — this is a count, not a deletion.
- *
- * **AND NEITHER DOES A CONTRACTOR WHOSE ACCESS HAS RUN OUT.** `getSessionUser()` and the sign-in
- * route turn them away exactly as they turn away a deactivated account, so counting them would
- * charge a company for a seat nobody can use. The rule is the one in `isAccessExpired()` and this
- * is the same rule written as a query: not a contractor, or no end date, or an end date still
- * inside its one-day grace. It is spelled out as an OR rather than a NOT because a NULL end date
- * under a negated comparison would quietly drop everybody who has none.
+ * — this is a count, not a deletion. No expiry rule is needed here: only a contractor can carry an
+ * access end date.
  */
-export async function countUsers(orgId: string, now: Date = new Date()): Promise<number> {
+export async function countOfficeStaff(orgId: string): Promise<number> {
+  return prisma.user.count({ where: { orgId, isActive: true, role: { not: "EXTERNAL" } } });
+}
+
+/**
+ * CONTRACTORS: active EXTERNAL accounts whose access has not run out. Never added to the office
+ * staff count.
+ *
+ * **A contractor whose access has ended counts for nothing**: `getSessionUser()` and the sign-in
+ * route turn them away exactly as they turn away a deactivated account, so counting them would
+ * charge a company for a door nobody can open. The rule is the one in `isAccessExpired()` written as
+ * a query: no end date, or an end date still inside its one-day grace. It is spelled out as an OR
+ * rather than a NOT because a NULL end date under a negated comparison would quietly drop everybody
+ * who has none.
+ */
+export async function countContractors(orgId: string, now: Date = new Date()): Promise<number> {
   const graceCutoff = new Date(now.getTime() - ACCESS_EXPIRY_GRACE_MS);
   return prisma.user.count({
     where: {
       orgId,
       isActive: true,
-      OR: [
-        { role: { not: "EXTERNAL" } },
-        { accessExpiresAt: null },
-        { accessExpiresAt: { gt: graceCutoff } },
-      ],
+      role: "EXTERNAL",
+      OR: [{ accessExpiresAt: null }, { accessExpiresAt: { gt: graceCutoff } }],
     },
   });
+}
+
+/** The two ceilings that count people. */
+export type PeopleGroup = "users" | "contractors";
+
+/**
+ * Which group, if any, one account counts in RIGHT NOW. `updateUser` asks this before and after a
+ * change, so the question it asks is defined by the same `isAccessExpired()` the two counts above
+ * are written from — the two cannot drift (a test proves they agree for every combination).
+ */
+export function peopleGroupOf(
+  user: { role: RoleName; isActive: boolean; accessExpiresAt?: Date | null },
+  now: Date = new Date(),
+): PeopleGroup | null {
+  if (!user.isActive) return null;
+  if (user.role !== "EXTERNAL") return "users";
+  return isAccessExpired(user, now) ? null : "contractors";
 }
 
 /**
@@ -172,14 +198,15 @@ export async function billingStatus(actor: ActorContext): Promise<BillingStatusD
   if (!org) throw new NotFoundError("We could not find that workspace.");
   const plan = planOf(org);
 
-  const [projects, users, documentBytes, provider] = await Promise.all([
+  const [projects, users, contractors, documentBytes, provider] = await Promise.all([
     countProjects(actor.orgId),
-    countUsers(actor.orgId),
+    countOfficeStaff(actor.orgId),
+    countContractors(actor.orgId),
     storedBytes(actor.orgId),
     providerStatusFor(actor.orgId, org.billingSubscriptionId),
   ]);
 
-  const usage: PlanUsageDTO = { projects, users, documentBytes };
+  const usage: PlanUsageDTO = { projects, users, contractors, documentBytes };
   const limits: PlanLimitsDTO = limitsFor(plan);
 
   // This month's AI use: present only while the deployment has the AI key, so the Billing page is
@@ -264,9 +291,18 @@ export async function assertProjectRoomInTransaction(
   throw new ServiceError(limitRefusal("projects", plan, actor.role));
 }
 
-/** Before an account is created — the password path and the invite path both come through here. */
-export async function assertUserRoom(actor: ActorContext): Promise<void> {
-  await assertRoom(actor, "users", await countUsers(actor.orgId), 1);
+/**
+ * Before somebody is added to a counted group — a new account (password or invite path), a
+ * reactivation, an extended contractor, or a move between office staff and contractors. The role
+ * decides which ceiling is asked: a contractor asks the contractor ceiling, anybody else asks the
+ * office-staff ceiling, and the two counts never add together.
+ */
+export async function assertUserRoom(actor: ActorContext, role: RoleName): Promise<void> {
+  if (role === "EXTERNAL") {
+    await assertRoom(actor, "contractors", await countContractors(actor.orgId), 1);
+  } else {
+    await assertRoom(actor, "users", await countOfficeStaff(actor.orgId), 1);
+  }
 }
 
 /** Before a revision's bytes are recorded. Every upload path in the app passes this way. */

@@ -1318,6 +1318,98 @@ describe("a company's plan usage is counted from its own rows and nobody else's"
   });
 });
 
+describe("office staff and contractors are counted per company, never across the door", () => {
+  async function fill(orgId: string, disciplineId: string, staff: number, contractors: number) {
+    const { bulkUsers } = await import("@/server/__tests__/harness");
+    await bulkUsers(orgId, staff, "ENGINEER", { disciplineId });
+    await bulkUsers(orgId, contractors, "EXTERNAL");
+  }
+
+  function addStaff(actor: ActorContext, disciplineId: string) {
+    return createUser(actor, {
+      email: `iso.staff.${Date.now()}.${Math.random()}@test.example`,
+      name: "Nadia Hassan",
+      password: "A-strong-test-password-1",
+      role: "ENGINEER",
+      disciplineId,
+    });
+  }
+
+  function addContractor(actor: ActorContext) {
+    return createUser(actor, {
+      email: `iso.contractor.${Date.now()}.${Math.random()}@test.example`,
+      name: "Sami al-Harthy",
+      password: "A-strong-test-password-1",
+      role: "EXTERNAL",
+      companyName: "Gulf Inspection Services",
+    });
+  }
+
+  it("company A full on staff and on contractors never stops company B adding either", async () => {
+    await prisma.organization.updateMany({ data: { plan: "FREE" } });
+    // A is full in both groups (fixture staff + bulk). B has only its fixture people.
+    await fill(acme.admin.orgId, acme.fixture.disciplineId, 6, 10);
+
+    await expect(addStaff(acme.admin, acme.fixture.disciplineId)).rejects.toThrow(/room for 10 office staff/);
+    await expect(addContractor(acme.admin)).rejects.toThrow(/room for 10 contractors/);
+
+    const staff = await addStaff(rival.admin, rival.fixture.disciplineId);
+    const contractor = await addContractor(rival.admin);
+    expect(staff.id).toBeTruthy();
+    expect(contractor.id).toBeTruthy();
+
+    const mine = await billingStatus(acme.admin);
+    const theirs = await billingStatus(rival.admin);
+    expect(mine.usage.users).toBe(10);
+    expect(mine.usage.contractors).toBe(10);
+    expect(theirs.usage.users).toBe(5);
+    expect(theirs.usage.contractors).toBe(1);
+  });
+
+  it("reactivating in A asks A's counts only: B being full changes nothing, and A being full is A's own refusal", async () => {
+    await prisma.organization.updateMany({ data: { plan: "FREE" } });
+    const { bulkUsers } = await import("@/server/__tests__/harness");
+
+    // B is full on both groups; A has room.
+    await fill(rival.admin.orgId, rival.fixture.disciplineId, 6, 10);
+    const [aOffStaff] = await bulkUsers(acme.admin.orgId, 1, "ENGINEER", {
+      isActive: false,
+      disciplineId: acme.fixture.disciplineId,
+    });
+    const [aOffContractor] = await bulkUsers(acme.admin.orgId, 1, "EXTERNAL", { isActive: false });
+    expect((await updateUser(acme.admin, { id: aOffStaff, isActive: true })).isActive).toBe(true);
+    expect((await updateUser(acme.admin, { id: aOffContractor, isActive: true })).isActive).toBe(true);
+
+    // Now A is full too, and a reactivation in B is refused on B's own count — A's rows are no part of it.
+    await fill(acme.admin.orgId, acme.fixture.disciplineId, 6, 10);
+    await prisma.user.updateMany({
+      where: { orgId: acme.admin.orgId, role: "EXTERNAL" },
+      data: { isActive: false },
+    });
+    const [bOff] = await bulkUsers(rival.admin.orgId, 1, "EXTERNAL", { isActive: false });
+    await expect(updateUser(rival.admin, { id: bOff, isActive: true })).rejects.toThrow(/room for 10 contractors/);
+
+    // Free a place in B, and it works — while A, still holding its own deactivated contractors,
+    // is unaffected either way.
+    const [bContractor] = await prisma.user.findMany({
+      where: { orgId: rival.admin.orgId, role: "EXTERNAL", isActive: true },
+      select: { id: true },
+      take: 1,
+    });
+    await updateUser(rival.admin, { id: bContractor.id, isActive: false });
+    expect((await updateUser(rival.admin, { id: bOff, isActive: true })).isActive).toBe(true);
+  });
+
+  it("an administrator cannot move another company's contractor into staff — that person is not found", async () => {
+    await prisma.organization.updateMany({ data: { plan: "FREE" } });
+    const { bulkUsers } = await import("@/server/__tests__/harness");
+    const [theirContractor] = await bulkUsers(rival.admin.orgId, 1, "EXTERNAL");
+    await expect(
+      updateUser(acme.admin, { id: theirContractor, role: "ENGINEER", disciplineId: acme.fixture.disciplineId }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
 /* ------------------------------------------------------------------ */
 /* The payment provider's webhook                                      */
 /* ------------------------------------------------------------------ */

@@ -1841,3 +1841,107 @@ describe("a contractor's pages carry no Ask Tielora panel", () => {
     expect(await askTieloraProjects(fixture.adminActor)).toBeNull();
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Contractors are free: they are never counted as office staff        */
+/* ------------------------------------------------------------------ */
+
+describe("a contractor and the plan's people ceilings", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  async function onFree() {
+    const { setPlan } = await import("@/server/__tests__/harness");
+    await setPlan(fixture.orgId, "FREE");
+  }
+
+  async function bulk(count: number, role: "ENGINEER" | "EXTERNAL", extra: { accessExpiresAt?: Date; isActive?: boolean } = {}) {
+    const { bulkUsers } = await import("@/server/__tests__/harness");
+    return bulkUsers(fixture.orgId, count, role, { ...extra, disciplineId: role === "ENGINEER" ? fixture.disciplineId : null });
+  }
+
+  async function addContractor() {
+    const { createUser } = await import("@/server/services/admin");
+    return createUser(fixture.adminActor, {
+      email: `ext.${Date.now()}.${Math.random()}@test.example`,
+      name: "Another Contractor",
+      password: "A-strong-test-password-1",
+      role: "EXTERNAL",
+      companyName: "Al Hassan Engineering",
+    });
+  }
+
+  async function addStaff() {
+    const { createUser } = await import("@/server/services/admin");
+    return createUser(fixture.adminActor, {
+      email: `staff.${Date.now()}.${Math.random()}@test.example`,
+      name: "Another Engineer",
+      password: "A-strong-test-password-1",
+      role: "ENGINEER",
+      disciplineId: fixture.disciplineId,
+    });
+  }
+
+  it("a contractor is not counted as office staff: contractors up to the ceiling still leave room for staff, and the reverse", async () => {
+    await onFree();
+    const { billingStatus } = await import("@/server/services/billing");
+
+    // The company has 4 staff and the one contractor from the fixture. Fill contractors to 10.
+    await bulk(9, "EXTERNAL");
+    let usage = (await billingStatus(fixture.adminActor)).usage;
+    expect(usage.contractors).toBe(10);
+    expect(usage.users).toBe(4);
+
+    // Contractors are full; one more is refused, but staff are still welcome.
+    await expect(addContractor()).rejects.toThrow(/Your plan has room for 10 contractors\./);
+    expect((await addStaff()).role).toBe("ENGINEER");
+
+    // Fill staff to 10; the 11th staff is refused while contractors are untouched.
+    await bulk(5, "ENGINEER");
+    usage = (await billingStatus(fixture.adminActor)).usage;
+    expect(usage.users).toBe(10);
+    expect(usage.contractors).toBe(10);
+    await expect(addStaff()).rejects.toThrow(/Your plan has room for 10 office staff\./);
+  });
+
+  it("a contractor whose access has ended is not counted, and re-extending is what is refused when the group is full", async () => {
+    await onFree();
+    const { billingStatus } = await import("@/server/services/billing");
+
+    await bulk(9, "EXTERNAL"); // 10 active contractors with the fixture's one
+    const [ended] = await bulk(1, "EXTERNAL", { accessExpiresAt: new Date(Date.now() - 5 * DAY_MS) });
+    expect((await billingStatus(fixture.adminActor)).usage.contractors).toBe(10);
+
+    await expect(
+      updateUser(fixture.adminActor, { id: ended, accessExpiresAt: new Date(Date.now() + 30 * DAY_MS) }),
+    ).rejects.toThrow(/Your plan has room for 10 contractors\./);
+
+    // Make room, and the same extension works: the ended contractor never held a place.
+    await updateUser(fixture.adminActor, { id: contractor.userId, isActive: false });
+    const back = await updateUser(fixture.adminActor, {
+      id: ended,
+      accessExpiresAt: new Date(Date.now() + 30 * DAY_MS),
+    });
+    expect(back.isActive).toBe(true);
+  });
+
+  it("billingStatus refuses a contractor — they hold no billing permission and never see a meter", async () => {
+    const { billingStatus } = await import("@/server/services/billing");
+    await expect(billingStatus(contractor)).rejects.toBeInstanceOf(ForbiddenError);
+    expect(can(contractor, "MANAGE_BILLING")).toBe(false);
+    expect(can(contractor, "MANAGE_USERS")).toBe(false);
+  });
+
+  it("a company over its contractor ceiling locks no contractor out: their own reads carry on, and nothing about counts reaches them", async () => {
+    await onFree();
+    await bulk(14, "EXTERNAL");
+
+    // The contractor can still read their own work, and the people directory stays empty for them.
+    expect((await listMainTasksForProject(contractor, fixture.projectId)).length).toBeGreaterThan(0);
+    expect(await listUsers(contractor)).toEqual([]);
+    const stillActive = await prisma.user.findUniqueOrThrow({
+      where: { id: contractor.userId },
+      select: { isActive: true },
+    });
+    expect(stillActive.isActive).toBe(true);
+  });
+});

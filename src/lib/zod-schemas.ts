@@ -2252,8 +2252,10 @@ export type WorkspaceDeletionDTO = z.infer<typeof WorkspaceDeletionDTO>;
 export const PlanUsageDTO = z.object({
   /** Live projects (a soft-deleted project frees its place). */
   projects: z.number().int().nonnegative(),
-  /** People who can still sign in. A deactivated account does not count. */
+  /** OFFICE STAFF: active people who are not contractors. A deactivated account does not count. */
   users: z.number().int().nonnegative(),
+  /** Contractors: active, access not run out. Never added to `users`. */
+  contractors: z.number().int().nonnegative(),
   /** Every stored revision's bytes, including the revisions of soft-deleted documents. */
   documentBytes: z.number().int().nonnegative(),
 });
@@ -2262,7 +2264,10 @@ export type PlanUsageDTO = z.infer<typeof PlanUsageDTO>;
 /** What this plan allows. `null` in any slot means unlimited. */
 export const PlanLimitsDTO = z.object({
   projects: z.number().int().positive().nullable(),
+  /** OFFICE STAFF ceiling (the name is kept to avoid churn). */
   users: z.number().int().positive().nullable(),
+  /** Contractor ceiling — a separate count, never added to `users`. */
+  contractors: z.number().int().positive().nullable(),
   documentBytes: z.number().int().positive().nullable(),
   /**
    * The monthly AI allowance in US dollars. The ONE limit that is never `null`: AI costs real money

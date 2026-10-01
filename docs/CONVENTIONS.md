@@ -238,8 +238,8 @@ In practice:
       checkout needs the way email needs it, and the optional `PADDLE_ENV`. With any of the four
       unset there are **no buttons at all** on Admin → Billing, both billing actions refuse in plain
       English, `/api/billing/webhook` answers "not set up", and `/api/health` reports
-      `"billing": "dormant"`. Plans and limits carry on working exactly as they do today. See
-      "Billing provider" below.
+      `"billing": "dormant"`. Plans and limits carry on working exactly as they do today. Pro is a
+      single flat price; the deployment holds one price id. See "Billing provider" below.
     - **The Teams app is per deployment and nothing else**: `TEAMS_APP_ID` (a GUID, not a secret),
       plus `APP_BASE_URL` (https) and the same `MS_GRAPH_*` registration; optional
       `TEAMS_SSO_AUDIENCE`. Any of the first three missing means **dormant**: no admin card,
@@ -663,8 +663,8 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `softDeleteDocument` (ADMIN / PM; never deletes a revision) | `{ id }` | `ActionResult<{ deleted: true }>` |
 | `markNotificationRead` (own notification only — someone else's is refused) | `{ id }` | `ActionResult<NotificationDTO>` |
 | `markAllNotificationsRead` (the signed-in person's unread only) | — | `ActionResult<{ count: number }>` |
-| `createUser` (always into the actor's own organisation; `CreateUserInput` and `UpdateUserInput` both now carry an optional, nullable `accessExpiresAt`, which zod refuses on any role but EXTERNAL and the service clears for one. `CreateUserInput` also carries an optional `mode` — `"PASSWORD"` (left out means this, and it is the only path while email is dormant) or `"INVITE"`, which creates the account with an unusable random password hash, mints an INVITE link in the same transaction and emails it after the commit. Zod refuses a password sent with `"INVITE"` and refuses `"PASSWORD"` with none. **Both paths are refused once the plan's people limit is reached** — an invitation and a first password both end in one more account that can sign in; deactivated accounts are not counted) | `CreateUserInput` | `ActionResult<UserDTO>` |
-| `updateUser` (an access end date sent for somebody who is no longer a contractor is cleared, exactly as `companyName` is; the audit row names "access end date" as a field that moved, never the date itself) | `UpdateUserInput` | `ActionResult<UserDTO>` |
+| `createUser` (always into the actor's own organisation; `CreateUserInput` and `UpdateUserInput` both now carry an optional, nullable `accessExpiresAt`, which zod refuses on any role but EXTERNAL and the service clears for one. `CreateUserInput` also carries an optional `mode` — `"PASSWORD"` (left out means this, and it is the only path while email is dormant) or `"INVITE"`, which creates the account with an unusable random password hash, mints an INVITE link in the same transaction and emails it after the commit. Zod refuses a password sent with `"INVITE"` and refuses `"PASSWORD"` with none. **Both paths are refused once the plan's office-staff or contractor ceiling is reached, by the role chosen** — an invitation and a first password both end in one more account that can sign in; contractors never count as office staff; deactivated accounts and contractors whose access has ended are not counted) | `CreateUserInput` | `ActionResult<UserDTO>` |
+| `updateUser` (an access end date sent for somebody who is no longer a contractor is cleared, exactly as `companyName` is; the audit row names "access end date" as a field that moved, never the date itself. **A role change between staff and contractor is a move between counts and asks the ceiling it moves into**, exactly as reactivating somebody or extending an ended contractor's access does; deactivating, renaming and same-group moves are never refused) | `UpdateUserInput` | `ActionResult<UserDTO>` |
 | `deactivateUser` | `{ id }` | `ActionResult<UserDTO>` |
 | `resendInvite` (ADMIN in their own company; only for somebody who has never signed in — `lastLoginAt` null — and only while email is configured. Re-issuing retires the link already in their inbox; audited with a second `EMAIL_SENT` row. Three a minute per person) | `ResendInviteInput` | `ActionResult<EmailSentDTO>` |
 | `resendVerificationEmail` (the banner's action; your OWN address and nobody else's, three a minute per person. An address that is already verified answers the same `{ sent: true }` rather than an error) | — | `ActionResult<EmailSentDTO>` |
@@ -2105,19 +2105,24 @@ second, and the second company's files are still on disk.
 > hidden, locked or taken away — a company over its limit reads, opens, downloads and works exactly
 > as it did the day before.
 
-- **ONE FILE HOLDS THE NUMBERS.** `src/lib/plan-limits.ts` carries `PLANS` (the three ceilings per
-  plan), `planOf()`, the plain-English helpers and the refusal wording. There is no second copy in a
-  component, a message, a route or a database column — changing a limit is an edit to that one file,
-  and the screens and the services both change with it. **The three ceilings are still the roadmap's
-  placeholders — the owner sets the real numbers at the pause point before launch. The price is
-  settled**: `PRO_PRICE` in that same file is **USD $249/month, owner-approved on 1 September 2026**,
-  so the Billing screen no longer carries the "placeholder price" footnote, and Admin → Billing, the
-  public `/pricing` page and the landing page's teaser all read that one constant.
+- **ONE FILE HOLDS THE NUMBERS.** `src/lib/plan-limits.ts` carries `PLANS` (the four ceilings per
+  plan — projects, office staff, contractors, storage — plus the AI allowance), `planOf()`, the
+  plain-English helpers and the refusal wording. There is no second copy in a component, a message,
+  a route or a database column — changing a limit is an edit to that one file, and the screens and
+  the services both change with it. **The numbers are settled** by the owner's answers of 30 Sep
+  2026 (item 1): Free 1 project / 10 office staff / 10 contractors / 500 MB, Pro unlimited projects
+  / 100 office staff / 50 contractors / 10 GB, AI allowance $2 / $25 a month. **The price is
+  settled**: `PRO_PRICE` in that same file is **USD $249/month, owner-approved on 1 September 2026**
+  and one flat price; Admin → Billing, the public `/pricing` page and the landing page's teaser all
+  read that one constant. `users` in `PLANS` and in `PlanLimitsDTO` / `PlanUsageDTO` means OFFICE
+  STAFF (the name was kept to avoid churn); `contractors` is its own ceiling and its own count.
 - **`null` means unlimited** — never 0 and never a very large number, so "no ceiling" can never be
   confused with "a ceiling nobody has reached yet".
   **The one exception is `aiMonthlyUsd`**, the monthly AI allowance in US dollars: it is never
   `null`, because AI costs real money per use and no plan may be uncapped by accident. `0` means
   "this plan has no AI allowance". FREE is $2 and PRO is $25 (the owner's numbers, 30 Sep 2026).
+  **Staff and contractors are real numbers on both plans** (10 / 100 and 10 / 50); `null` is legal
+  in the type but nothing uses it for either.
   `planOf()` still reads an unrecognised plan as FREE, so an unreadable plan can never hand out a
   bigger allowance. It is not a fourth choke point: it is judged by `ai.ts` in dollars, before each
   call.
@@ -2125,27 +2130,35 @@ second, and the second company's files are still on disk.
   carries, pointed in the safe direction: a value from a newer build, a typo or a blank can never
   hand a company limits nobody paid for.
 - **Three choke points, and nowhere else** (`src/server/services/billing.ts`, called before the
-  mutation in each case): `createProject`, `createUser` — **both the password and the invite path,
-  because both end in one more account that can sign in** — and `uploadDocumentVersion`, which every
+  mutation in each case): `createProject`, `createUser` and `updateUser` (`assertUserRoom(actor,
+  role)` — the role decides whether the staff or the contractor ceiling is asked; **both the
+  password and the invite path, because both end in one more account that can sign in**) and `uploadDocumentVersion`, which every
   upload in the app walks through, the browser's dropzone and a Microsoft 365 attachment alike. No
   other service has to know that plans exist.
-- **What is counted.** Live projects (a soft-deleted project frees its place). People who can still
-  sign in — **a deactivated account does not count**, deliberately: an administrator who deactivated
-  somebody has given the seat back, and the account, its work and its audit trail all stay where
-  they are. **Nor does a contractor whose access has run out**: `getSessionUser()` and the sign-in
-  route turn them away exactly as they turn away a deactivated account, so charging a company for
-  that seat would be charging for a door nobody can open. The count uses the same rule
-  `isAccessExpired()` uses, written as an OR (not a contractor, or no end date, or an end date still
-  inside its one-day grace) — a NULL end date under a negated comparison would quietly drop
-  everybody who has none. And **every stored byte, including the revisions of soft-deleted
-  documents**: nothing in
-  this app ever deletes a revision or its file, so counting only the live ones would let a company
-  remove a document, upload it again and use the same disk twice.
-- **GIVING A SEAT BACK IS TAKING A SEAT.** `updateUser` asks for room whenever somebody who was not
-  counted will be afterwards — reactivating a deactivated account, or extending an expired
-  contractor's access. Without it, deactivating ten people, adding ten more and switching the first
-  ten back on would leave a ten-seat company with twenty people who can sign in. The question is
-  asked with the same definition of "counts" that the count itself uses, so the two can never drift.
+- **What is counted.** Live projects (a soft-deleted project frees its place). **Office staff** =
+  active people who are not contractors. **Contractors** = active EXTERNAL accounts whose access has
+  not run out. **Each is counted separately and neither adds to the other** — contractors are free
+  and never take an office-staff place. A **deactivated account counts for neither**, deliberately:
+  an administrator who deactivated somebody has given the place back, and the account, its work and
+  its audit trail all stay where they are. **Nor does a contractor whose access has run out**:
+  `getSessionUser()` and the sign-in route turn them away exactly as they turn away a deactivated
+  account, so charging a company for that place would be charging for a door nobody can open. The
+  contractor count uses the same rule `isAccessExpired()` uses, written as an OR (no end date, or an
+  end date still inside its one-day grace) — a NULL end date under a negated comparison would quietly
+  drop everybody who has none. The counts are `countOfficeStaff()` and `countContractors()` in
+  `billing.ts`; `peopleGroupOf()` answers the same question for one account. And **every stored byte,
+  including the revisions of soft-deleted documents**: nothing in this app ever deletes a revision
+  or its file, so counting only the live ones would let a company remove a document, upload it again
+  and use the same disk twice.
+- **MOVING INTO A COUNTED GROUP IS TAKING A PLACE.** `updateUser` asks which group, if any, the
+  person was in before and which after (`peopleGroupOf()`), and asks the ceiling of the group they
+  are moving INTO whenever it is a group they were not in already. One rule covers reactivating a
+  deactivated account, extending an expired contractor's access, and **changing somebody between
+  office staff and contractor** (a move from one count to the other). Without it, deactivating ten
+  people, adding ten more and switching the first ten back on would leave a ten-place company with
+  twenty. Never asked: deactivating, renaming, changing job title, discipline or company, resending
+  an invite, a move within a group, or changing the date of a contractor who is still counted. A
+  test proves the question and the counts agree for every combination of role, active and date.
 - **Nothing about usage is stored — with ONE exception: AI spend.** Projects, people and bytes are
   counted at read time from the rows themselves, exactly as OVERDUE and a locked phase are, and
   there is no usage column for them and there must not be one. Tokens spent at an outside provider
@@ -2175,8 +2188,13 @@ second, and the second company's files are still on disk.
   because their ceiling is the smallest — one, on a free plan — so an overshoot is the one anybody
   would actually see.
 - **GRANDFATHERING is the rule, not an exception.** Reads are never blocked. A company already over
-  a limit — after a future downgrade, say — is refused only from adding MORE. Three projects on a
-  free plan means three readable projects and a refused fourth, and that exact case is a test.
+  a limit — after a downgrade, or because a ceiling was tightened — is refused only from adding
+  MORE. Three projects on a free plan means three readable projects and a refused fourth; a Free
+  company with 12 office staff or 14 contractors, and a Pro company with 105 staff and 60
+  contractors that drops to Free, keep everyone signed in, un-deactivated, un-re-roled and
+  un-re-dated, and are refused only additions until they are back under (then only up to the
+  ceiling). Those cases are tests, the people ones in
+  `src/server/__tests__/billing-grandfathering.service.test.ts`.
 - **The refusal is written server-side, in full, and shown exactly as it arrives.** It is
   role-branched by the server the way everything else is decided by the server: an ADMIN is pointed
   at Admin → Billing, everybody else is told to ask their administrator. The pointer is words rather
@@ -2197,13 +2215,16 @@ second, and the second company's files are still on disk.
   a tooltip, simply absent, the same discipline `AdminMicrosoftCard` follows. The dormant line says
   upgrading is not turned on and that nothing else about the plan changes meanwhile.
 - **Test companies are on PRO** (`makeOrg` in the test harness), deliberately: a plan limit must
-  never quietly decide the result of a test about phases, comments or documents. The billing tests
-  set the plan they mean with `setPlan()`.
+  never quietly decide the result of a test about phases, comments or documents; `makeOrg` stays
+  Pro so 100 / 50 never surprise an unrelated test. The billing tests set the plan they mean with
+  `setPlan()`, and put a company over a line with `bulkUsers()` rather than through the services.
 
 **Any change touching this area adds or extends a test in
-`src/server/__tests__/billing-limits.service.test.ts` in the same change** — and the tenant half in
-`org-isolation.service.test.ts`, which proves one company's projects, people and files never count
-towards another company's limits.
+`src/server/__tests__/billing-limits.service.test.ts` in the same change** (and
+`billing-grandfathering.service.test.ts` for the over-the-limit cases) — and the tenant half in
+`org-isolation.service.test.ts`, which proves one company's projects, office staff, contractors and
+files never count towards another company's limits, and the external half in
+`external-scoping.service.test.ts`, which proves a contractor is never counted as office staff.
 
 ## Billing provider (taking the money)
 
@@ -2217,6 +2238,12 @@ towards another company's limits.
   other file — `billing.ts`, the route, the screens — only ever hears "there is a provider", "here
   is one address to navigate to" and "this webhook means ACTIVATE, DEACTIVATE or NONE". Swapping to
   the Lemon Squeezy fallback (docs/GO-LIVE.md, section 8) is a rewrite of that one file.
+- **Pro is one flat price.** One price, `PADDLE_PRICE_ID_PRO`, quantity 1. There is no seat
+  syncing, no quantity update and no second price; people and contractors never change what is
+  charged. A second flat plan later would be one more price and one more variable, never seat
+  syncing. No price, amount, card or seat count is stored anywhere in this app (already true; now a
+  recorded decision, and a test checks the `Organization` and `BillingEvent` columns). The Lemon
+  Squeezy fallback below stays true: it is still a rewrite of `paddle.ts` and nothing else.
 - **Dormant until configured** (house rule 11), and it takes all four: `PADDLE_API_KEY`,
   `PADDLE_WEBHOOK_SECRET`, `PADDLE_PRICE_ID_PRO` and `APP_BASE_URL`. `PADDLE_ENV` chooses
   `sandbox-api.paddle.com` (the default, and what anything unrecognised reads as — the safe

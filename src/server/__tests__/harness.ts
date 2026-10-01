@@ -191,3 +191,38 @@ export async function subtaskIdsByTitle(mainTaskId: string): Promise<Map<string,
 }
 
 export const inThirtyDays = (): Date => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+let bulkCounter = 0;
+
+/**
+ * Many accounts at once, inserted straight into the table so a 100-person case runs in a blink.
+ * Contractors get a company name (the service insists on one) and may be given an end date. Used
+ * by the plan tests, where the number of people is the whole point.
+ */
+export async function bulkUsers(
+  orgId: string,
+  count: number,
+  role: RoleName,
+  options: { isActive?: boolean; accessExpiresAt?: Date | null; disciplineId?: string | null } = {},
+): Promise<string[]> {
+  const rows = Array.from({ length: count }, () => {
+    bulkCounter += 1;
+    return {
+      orgId,
+      email: `bulk.${bulkCounter}.${Date.now()}.${Math.floor(Math.random() * 1e9)}@test.example`,
+      name: `Bulk person ${bulkCounter}`,
+      passwordHash: "not-a-real-hash",
+      role,
+      isActive: options.isActive ?? true,
+      companyName: role === "EXTERNAL" ? "Gulf Inspection Services" : null,
+      accessExpiresAt: options.accessExpiresAt ?? null,
+      disciplineId: options.disciplineId ?? null,
+    };
+  });
+  await prisma.user.createMany({ data: rows });
+  const made = await prisma.user.findMany({
+    where: { orgId, email: { in: rows.map((row) => row.email) } },
+    select: { id: true },
+  });
+  return made.map((user) => user.id);
+}

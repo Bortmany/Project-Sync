@@ -107,6 +107,13 @@ describe("the landing page, signed out", () => {
     expect(html).toContain('href="/pricing"');
   });
 
+  it("adds the one short line under the Pro price, and no limit number that could drift", async () => {
+    const html = await landingHtml();
+
+    expect(html).toContain("Flat price. Contractors are free.");
+    expect(html).not.toMatch(/Up to \d/);
+  });
+
   it("asks for no photograph at all while the file is not there", async () => {
     // The hero is the ink gradient on its own. An <Image> for a file that does not exist would
     // still be fetched, still 400 at the image optimiser and still log errors in the console.
@@ -167,22 +174,68 @@ describe("the pricing page", () => {
     const html = renderToStaticMarkup(PricingPage());
 
     expect(html).toContain("1 project");
-    expect(html).toContain("Up to 10 people");
+    expect(html).toContain(`Up to ${limitAmount("users", PLANS.FREE.users)}`);
+    expect(html).toContain(`Up to ${limitAmount("users", PLANS.PRO.users)}`);
+    expect(html).toContain(`Up to ${limitAmount("contractors", PLANS.FREE.contractors)}`);
+    expect(html).toContain(`Up to ${limitAmount("contractors", PLANS.PRO.contractors)}`);
+    // The words themselves, read from the plan numbers rather than typed twice.
+    expect(html).toContain("Up to 10 office staff");
+    expect(html).toContain("Up to 100 office staff");
+    expect(html).toContain("Up to 10 contractors");
+    expect(html).toContain("Up to 50 contractors");
+    expect(html).not.toContain("Up to 10 people");
+    expect(html).not.toContain("Unlimited people");
     expect(html).toContain("500 MB of documents");
     expect(html).toContain("Unlimited projects");
-    expect(html).toContain("Unlimited people");
     expect(html).toContain("10 GB of documents");
     expect(html).toContain("Nothing is ever locked behind a higher plan.");
   });
 
+  it("says Pro is one flat price, and that contractors never count or cost extra", () => {
+    const html = renderToStaticMarkup(PricingPage());
+
+    expect(html).toContain("One flat price — it doesn’t change when you add people.");
+    expect(html).toContain("Outside contractors never count as office staff and never cost extra.");
+    expect(html).toContain("projects, office staff, contractors, and storage");
+  });
+
+  describe("the AI line", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("appears in dollars, read from the plan file, only when the deployment has the AI key", () => {
+      vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test-not-a-real-key");
+      const html = renderToStaticMarkup(PricingPage());
+
+      expect(html).toContain(
+        `Ask Tielora, our AI assistant, is included with a monthly allowance: $${PLANS.FREE.aiMonthlyUsd} of use on Free, $${PLANS.PRO.aiMonthlyUsd} on Pro.`,
+      );
+      expect(html).toContain("$2 of use on Free, $25 on Pro.");
+    });
+
+    it("says nothing about AI at all with no key set", () => {
+      vi.stubEnv("ANTHROPIC_API_KEY", "");
+      const html = renderToStaticMarkup(PricingPage());
+
+      expect(html).not.toMatch(/Ask Tielora/);
+      expect(html).not.toMatch(/\bAI\b/);
+      expect(html).not.toContain("allowance");
+    });
+  });
+
   it("DERIVES every number: change a limit and the page changes with it", () => {
     PLANS.FREE.projects = 7;
+    PLANS.FREE.users = 12;
+    PLANS.FREE.contractors = 3;
     PLANS.FREE.documentBytes = 2 * 1024 ** 3;
 
     const html = renderToStaticMarkup(PricingPage());
 
     expect(html).toContain(limitAmount("projects", 7));
     expect(html).toContain("7 projects");
+    expect(html).toContain("Up to 12 office staff");
+    expect(html).toContain("Up to 3 contractors");
     expect(html).toContain("2 GB of documents");
     // The old numbers are gone — which is only possible if nothing was typed out.
     expect(html).not.toContain("1 project");
@@ -222,6 +275,7 @@ describe("the legal pages", () => {
     expect(privacy).toContain("sub-processor");
     expect(privacy).toContain("Not the question and not the answer");
     expect(privacy).toContain("answers can be wrong");
+    expect(privacy).toContain("Your data may be processed outside your country.");
     expect(privacy).toContain("Who else handles information for us");
     for (const name of ["Anthropic", "Paddle", "Resend", "Slack and Microsoft"]) {
       expect(privacy).toContain(name);

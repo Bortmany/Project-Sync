@@ -548,23 +548,30 @@ set — see "Switching payments on" below.
 
 - Every company is on **FREE** until something changes it, and FREE is what an unrecognised plan
   value reads as, so nothing can accidentally hand a company more than it paid for.
-- The three limits — **projects, people, storage** — are enforced server-side at three points only:
-  creating a project, adding a person (a first password or an emailed invitation alike) and any
-  upload (the browser's and Microsoft 365's both). Everything else is untouched.
+- The limits — **projects, office staff, contractors, storage** — and the **monthly AI allowance**
+  are decided in one file. The first four are enforced server-side at three points only: creating a
+  project, adding a person (a first password or an emailed invitation alike; also bringing one back,
+  extending a contractor whose access had ended, or changing somebody between office staff and
+  contractor) and any upload (the browser's and Microsoft 365's both). Everything else is
+  untouched. **Contractors never count as office staff** — they are free, with a safety ceiling of
+  their own.
 - **Nothing already there is ever blocked.** A company over a limit reads, opens, downloads and
   works exactly as before; only adding more is refused, in plain English, with an administrator
   pointed at Admin → Billing and everybody else told to ask their administrator.
-- **Admin → Billing** shows the plan, what it includes, and three live usage meters. Over a limit,
+- **Admin → Billing** shows the plan, what it includes, and live usage meters (projects, office
+  staff, contractors, documents, and AI this month when the AI key is set). Over a limit,
   that one meter turns amber and says so — it is the only place in the app that mentions it.
 - **Until the provider's keys are set, the page draws no buttons at all** and says upgrading is not
   turned on yet. With them set, a Free company gets "Upgrade to Pro" and a Pro company gets
   "Manage billing", and nothing else on the screen changes.
 
-**Before launch — the owner's decisions, still open**
+**Before launch — the owner's decisions**
 
-- [ ] **The real numbers.** The FREE limits (1 project, 10 people, 500 MB) and the PRO storage cap
-      (10 GB) are placeholders in `src/lib/plan-limits.ts`. Setting the real ones is an edit to that
-      one file — no migration, no re-wording, no test rewrite.
+- [x] **The real numbers — DONE, 30 September 2026.** Free is 1 project / 10 office staff /
+      10 contractors / 500 MB; Pro is unlimited projects / 100 office staff / 50 contractors / 10 GB;
+      the monthly AI allowance is $2 on Free and $25 on Pro; Pro is one flat $249 price that does
+      not change when a company adds people. Changing any of them later is an edit to
+      `src/lib/plan-limits.ts` and nothing else — no migration, no re-wording, no test rewrite.
 - [x] **The real price — DONE, 1 September 2026.** Pro is **USD $249/month**: `PRO_PRICE` in
       `src/lib/plan-limits.ts`, beside the limits. It is shown in three places — Admin → Billing,
       the public `/pricing` page and the landing page's teaser — and all three read that one
@@ -611,7 +618,9 @@ payouts should be treated in your own filings.
    then a recurring monthly price on it. Copy the price id (`pri_…`) — that is
    `PADDLE_PRICE_ID_PRO`. **Make Paddle's price match the app's**: the Billing page shows
    `USD $249/month` (`PRO_PRICE`, see the checklist above), so the recurring monthly price you
-   create here must be the same number.
+   create here must be the same number. **One product, one price, no per-seat price**: people and
+   contractors never change what is charged, and the app never sends a seat count to Paddle.
+   Confirm the **$249/month price exists in the sandbox** now, and again in **live** at step 9.
 4. **Create the API key.** Dashboard → Developer tools → Authentication → new API key. That is
    `PADDLE_API_KEY`. It is a real secret and is shown once.
 5. **Register the webhook.** Dashboard → Developer tools → Notifications → new destination, pointed
@@ -674,6 +683,14 @@ ends in a plain refusal rather than a broken screen, but both are worth five min
   (several plausible names are tried, and an answer we cannot read ends in a plain refusal rather
   than a guess). If either button refuses with "we couldn't reach the payment page" while Paddle's
   own dashboard shows the request succeeding, the response shape is the thing to look at.
+
+### If a company says it is over a limit
+
+Nothing is taken away, ever. A company over a limit (say 12 office staff on Free, or 14 contractors)
+keeps signing in and keeps all its work; the only thing refused is adding one more person to that
+group. Tell them: **deactivate someone who no longer needs to sign in**, or, for a contractor, let
+their access end (or deactivate them), and adding works again up to the ceiling. Or upgrade. Their
+Admin → Billing page shows the meter in amber with the same explanation.
 
 ### What a company sees, and what we keep
 
