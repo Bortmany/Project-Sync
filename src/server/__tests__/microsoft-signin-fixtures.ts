@@ -137,6 +137,57 @@ function restore(name: string, value: string | undefined): void {
   else process.env[name] = value;
 }
 
+/* ------------------------------------------------------------------ */
+/* The Teams app                                                       */
+/* ------------------------------------------------------------------ */
+
+/** The app GUID a configured deployment has in `TEAMS_APP_ID`. */
+export const TEAMS_TEST_APP_ID = "9f2b8c1e-4d7a-4e63-8b1f-3a5c6d7e8f90";
+
+/** One of the two Teams clients the Azure registration pre-authorises (Teams desktop and mobile). */
+export const TEAMS_DESKTOP_CLIENT_ID = "1fec8e78-bce4-4aaf-ab1b-5451cc387264";
+
+/** The claims a genuine Teams single-sign-on token for this person would carry (v2.0, no nonce). */
+export function teamsClaimsFor(options: {
+  tid: string;
+  oid: string;
+  aud?: string;
+  scp?: string;
+  azp?: string;
+  email?: string;
+  now?: number;
+}): ClaimSet {
+  const nowSec = Math.floor((options.now ?? Date.now()) / 1000);
+  const claims: ClaimSet = {
+    aud: options.aud ?? TEST_CLIENT_ID,
+    iss: `https://login.microsoftonline.com/${options.tid}/v2.0`,
+    iat: nowSec,
+    nbf: nowSec,
+    exp: nowSec + 3600,
+    tid: options.tid,
+    oid: options.oid,
+    scp: options.scp ?? "access_as_user",
+    azp: options.azp ?? TEAMS_DESKTOP_CLIENT_ID,
+    name: "Test Person",
+    ver: "2.0",
+  };
+  if (options.email !== undefined) claims.email = options.email;
+  return claims;
+}
+
+/** Sets the environment a deployment with the Teams app set up has. Returns a function that puts it back. */
+export function configureTeamsEnv(): () => void {
+  const restoreMicrosoft = configureMicrosoftEnv();
+  const saved = { app: process.env.TEAMS_APP_ID, audience: process.env.TEAMS_SSO_AUDIENCE };
+  process.env.TEAMS_APP_ID = TEAMS_TEST_APP_ID;
+  delete process.env.TEAMS_SSO_AUDIENCE;
+  return () => {
+    restoreMicrosoft();
+    restore("TEAMS_APP_ID", saved.app);
+    restore("TEAMS_SSO_AUDIENCE", saved.audience);
+  };
+}
+
 /** Clears the three Microsoft variables, as an unregistered deployment has them. */
 export function unsetMicrosoftEnv(): void {
   delete process.env.MS_GRAPH_CLIENT_ID;

@@ -10,6 +10,11 @@
 //                   route's own sentence. One answer, whatever went wrong.
 // Switch-on outcomes: 302 to `/admin/integrations?microsoftSignIn=<outcome>`.
 //
+// Started from Teams (`attempt.via === "teams"`, set only by `/api/auth/microsoft?via=teams`): the
+// same identity rule runs, but the ENDING differs — no session and no cookie here. A success is a
+// 302 to `/teams/auth-end#code=<one-time hand-off code>` (the fragment never reaches a server), a
+// refusal a 302 to `/teams/auth-end#failed=1`. Every check and every refusal is otherwise identical.
+//
 // Neither the code, the ID token, nor anything Microsoft sent is ever echoed into an address or a
 // log line.
 
@@ -17,6 +22,7 @@ import { NextResponse } from "next/server";
 import { pruneExpiredSessions, setSessionCookie } from "@/lib/auth";
 import { logger } from "@/lib/logger";
 import { MICROSOFT_NOT_CONFIGURED } from "@/lib/ms-graph";
+import { TEAMS_AUTH_END_PATH } from "@/lib/teams-app";
 import { byIp, checkOnly, clientIp, limit, recordFailure } from "@/lib/rate-limit";
 import { homePathFor } from "@/components/shell/nav-items";
 import { fail } from "@/server/http";
@@ -92,7 +98,14 @@ export async function GET(request: Request) {
 
     if (outcome.kind === "refused") {
       recordFailure(failureKey, FAILURE_WINDOW_MS);
-      return redirectTo(request, SIGN_IN_FAILED_PATH);
+      return redirectTo(
+        request,
+        attempt.via === "teams" ? `${TEAMS_AUTH_END_PATH}#failed=1` : SIGN_IN_FAILED_PATH,
+      );
+    }
+
+    if (outcome.kind === "teams-handoff") {
+      return redirectTo(request, `${TEAMS_AUTH_END_PATH}#code=${outcome.handoffCode}`);
     }
 
     if (outcome.kind === "two-factor") {
@@ -109,8 +122,12 @@ export async function GET(request: Request) {
       reason: "unexpected",
       category: error instanceof Error ? error.name : "unknown",
     });
-    return attempt.purpose === "enable"
-      ? redirectTo(request, "/admin/integrations?microsoftSignIn=failed")
-      : redirectTo(request, SIGN_IN_FAILED_PATH);
+    if (attempt.purpose === "enable") {
+      return redirectTo(request, "/admin/integrations?microsoftSignIn=failed");
+    }
+    return redirectTo(
+      request,
+      attempt.via === "teams" ? `${TEAMS_AUTH_END_PATH}#failed=1` : SIGN_IN_FAILED_PATH,
+    );
   }
 }

@@ -53,6 +53,9 @@ export type IdTokenRefusal =
   | "wrong-issuer"
   | "missing-oid";
 
+/** The refusals both token profiles share — everything but the nonce, which only an ID token has. */
+type CommonRefusal = Exclude<IdTokenRefusal, "wrong-nonce">;
+
 export type IdTokenResult =
   | { ok: true; identity: MicrosoftIdentity }
   | { ok: false; reason: IdTokenRefusal };
@@ -108,15 +111,17 @@ function sameString(a: string, b: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+type SignedClaims =
+  | { ok: true; claims: Record<string, unknown> }
+  | { ok: false; reason: CommonRefusal };
+
 /**
- * Validates a Microsoft v2.0 ID token completely, or says (by category only) why not.
- * The key set is consulted through `keys`, which may re-fetch once on an unknown `kid`.
+ * Steps 1 and 2 of every Microsoft token check: the shape, the algorithm (RS256 only) and the
+ * signature against the published key. Shared by the sign-in ID token and the Teams token, so there
+ * is ONE copy of the part an attacker would aim at. Claims are only returned once the signature is
+ * proved.
  */
-export async function validateIdToken(
-  token: string,
-  expect: IdTokenExpectations,
-  keys: KeyLookup,
-): Promise<IdTokenResult> {
+async function verifySignedClaims(token: string, keys: KeyLookup): Promise<SignedClaims> {
   if (typeof token !== "string" || token.length > 16_384) return { ok: false, reason: "malformed" };
   const parts = token.split(".");
   if (parts.length !== 3 || !parts[2]) return { ok: false, reason: "malformed" };
@@ -149,24 +154,30 @@ export async function validateIdToken(
   }
   if (!signatureOk) return { ok: false, reason: "bad-signature" };
 
-  // Only now, with the signature proved, are the claims worth reading.
-  if (typeof claims.aud !== "string" || !sameString(claims.aud, expect.clientId)) {
-    return { ok: false, reason: "wrong-audience" };
-  }
-  if (typeof claims.nonce !== "string" || !sameString(claims.nonce, expect.nonce)) {
-    return { ok: false, reason: "wrong-nonce" };
-  }
+  return { ok: true, claims };
+}
 
-  const nowSec = Math.floor((expect.now ?? Date.now()) / 1000);
+/** `exp` / `nbf` with the two minutes of tolerance. Null when the token is inside its life. */
+function timeProblem(claims: Record<string, unknown>, now: number | undefined): CommonRefusal | null {
+  const nowSec = Math.floor((now ?? Date.now()) / 1000);
   if (typeof claims.exp !== "number" || nowSec > claims.exp + CLOCK_TOLERANCE_SEC) {
-    return { ok: false, reason: "expired" };
+    return "expired";
   }
   if (claims.nbf !== undefined) {
     if (typeof claims.nbf !== "number" || nowSec < claims.nbf - CLOCK_TOLERANCE_SEC) {
-      return { ok: false, reason: "not-yet-valid" };
+      return "not-yet-valid";
     }
   }
+  return null;
+}
 
+/**
+ * `tid` is a GUID and not the personal-account tenant, `iss` is rebuilt from the token's OWN `tid`
+ * and compared exactly, and `oid` is present. Returns the two identifiers or the reason.
+ */
+function tenantAndObject(
+  claims: Record<string, unknown>,
+): { ok: true; tid: string; oid: string } | { ok: false; reason: CommonRefusal } {
   if (!looksLikeGuid(claims.tid)) return { ok: false, reason: "bad-tenant" };
   const tid = claims.tid.toLowerCase();
   if (tid === PERSONAL_ACCOUNTS_TENANT) return { ok: false, reason: "personal-account" };
@@ -180,6 +191,35 @@ export async function validateIdToken(
   if (typeof claims.oid !== "string" || !claims.oid.trim() || claims.oid.length > 100) {
     return { ok: false, reason: "missing-oid" };
   }
+  return { ok: true, tid, oid: claims.oid.trim().toLowerCase() };
+}
+
+/**
+ * Validates a Microsoft v2.0 ID token completely, or says (by category only) why not.
+ * The key set is consulted through `keys`, which may re-fetch once on an unknown `kid`.
+ */
+export async function validateIdToken(
+  token: string,
+  expect: IdTokenExpectations,
+  keys: KeyLookup,
+): Promise<IdTokenResult> {
+  const signed = await verifySignedClaims(token, keys);
+  if (!signed.ok) return signed;
+  const claims = signed.claims;
+
+  // Only now, with the signature proved, are the claims worth reading.
+  if (typeof claims.aud !== "string" || !sameString(claims.aud, expect.clientId)) {
+    return { ok: false, reason: "wrong-audience" };
+  }
+  if (typeof claims.nonce !== "string" || !sameString(claims.nonce, expect.nonce)) {
+    return { ok: false, reason: "wrong-nonce" };
+  }
+
+  const timeRefusal = timeProblem(claims, expect.now);
+  if (timeRefusal) return { ok: false, reason: timeRefusal };
+
+  const who = tenantAndObject(claims);
+  if (!who.ok) return who;
 
   const email =
     typeof claims.email === "string" && claims.email.includes("@") && claims.email.length <= 320
@@ -189,8 +229,8 @@ export async function validateIdToken(
   return {
     ok: true,
     identity: {
-      tid,
-      oid: claims.oid.trim().toLowerCase(),
+      tid: who.tid,
+      oid: who.oid,
       email,
       emailDomainVerified: claims.xms_edov === true,
       name: typeof claims.name === "string" ? claims.name.slice(0, 200) : null,
@@ -199,11 +239,83 @@ export async function validateIdToken(
 }
 
 /* ------------------------------------------------------------------ */
+/* The Teams single sign-on token — the second "audience profile"      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The two Microsoft Teams client applications that may ask for a token on the tab's behalf
+ * (Teams desktop/mobile and Teams web). Listed in the research note, part 2; the Azure registration
+ * pre-authorises exactly these two. Re-check on Microsoft Learn ("Update manifest to enable SSO for
+ * tabs") when the owner sets the registration up.
+ */
+export const TEAMS_CLIENT_IDS: readonly string[] = [
+  "1fec8e78-bce4-4aaf-ab1b-5451cc387264",
+  "5e3ce6c0-2b1f-4285-8d4b-75ee78787346",
+];
+
+/** The one scope the Azure registration exposes for the tab. */
+export const TEAMS_SSO_SCOPE = "access_as_user";
+
+export type TeamsTokenRefusal =
+  | Exclude<IdTokenRefusal, "wrong-nonce">
+  | "wrong-scope"
+  | "unknown-client";
+
+/** A Teams token proves a tenant and an object id — and deliberately nothing else. No email. */
+export type TeamsIdentity = { tid: string; oid: string };
+
+export type TeamsTokenResult =
+  | { ok: true; identity: TeamsIdentity }
+  | { ok: false; reason: TeamsTokenRefusal };
+
+export type TeamsTokenExpectations = {
+  /** The ONE audience this deployment's Azure registration issues. Nothing else is accepted. */
+  audience: string;
+  now?: number;
+};
+
+/**
+ * Validates the token Teams hands the tab (single sign-on) — the same signature, tenant, issuer and
+ * `oid` rules as the ID token, with its own audience profile: no nonce (there is no browser
+ * round-trip), but the granted scope must be `access_as_user` and the calling client one of the two
+ * Teams clients. **The email is never read**: the token has no reliable verified address, so the tab
+ * matches on `tid` + `oid` only and a person not yet linked goes through the popup path instead.
+ */
+export async function validateTeamsToken(
+  token: string,
+  expect: TeamsTokenExpectations,
+  keys: KeyLookup,
+): Promise<TeamsTokenResult> {
+  const signed = await verifySignedClaims(token, keys);
+  if (!signed.ok) return signed;
+  const claims = signed.claims;
+
+  if (typeof claims.aud !== "string" || !sameString(claims.aud, expect.audience)) {
+    return { ok: false, reason: "wrong-audience" };
+  }
+
+  const timeRefusal = timeProblem(claims, expect.now);
+  if (timeRefusal) return { ok: false, reason: timeRefusal };
+
+  const who = tenantAndObject(claims);
+  if (!who.ok) return who;
+
+  const scopes = typeof claims.scp === "string" ? claims.scp.split(" ") : [];
+  if (!scopes.includes(TEAMS_SSO_SCOPE)) return { ok: false, reason: "wrong-scope" };
+
+  // `azp` is the calling client in a v2.0 token (the issuer check above already insists on v2.0).
+  const caller = typeof claims.azp === "string" ? claims.azp.toLowerCase() : "";
+  if (!TEAMS_CLIENT_IDS.includes(caller)) return { ok: false, reason: "unknown-client" };
+
+  return { ok: true, identity: { tid: who.tid, oid: who.oid } };
+}
+
+/* ------------------------------------------------------------------ */
 /* The published key set, cached in the process                        */
 /* ------------------------------------------------------------------ */
 
 /** How long a fetched key set is trusted before it is fetched again. */
-export const JWKS_TTL_MS = 6 * 60 * 60_000;
+export const JWKS_TTL_MS = 60 * 60_000;
 
 /**
  * How soon after one fetch an unknown `kid` may force another. Microsoft rolls keys rarely; a flood

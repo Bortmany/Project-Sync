@@ -8,6 +8,7 @@
 import { NextResponse } from "next/server";
 import { MICROSOFT_NOT_CONFIGURED } from "@/lib/ms-graph";
 import { byIp, limit } from "@/lib/rate-limit";
+import { teamsAppConfig } from "@/lib/teams-app";
 import { fail } from "@/server/http";
 import { microsoftSignInAvailable, startMicrosoftSignIn } from "@/server/services/microsoft-signin";
 import { setAttemptCookie } from "./attempt-cookie";
@@ -28,9 +29,14 @@ export async function GET(request: Request) {
     );
   }
 
+  // `?via=teams` is the Teams tab's sign-in window. It only changes how the callback ENDS (a one-time
+  // hand-off code instead of a session); while the Teams app is dormant it is simply "not set up".
+  const viaTeams = new URL(request.url).searchParams.get("via") === "teams";
+  if (viaTeams && !teamsAppConfig()) return fail(MICROSOFT_NOT_CONFIGURED, 404);
+
   let started;
   try {
-    started = startMicrosoftSignIn();
+    started = startMicrosoftSignIn(viaTeams ? { via: "teams" } : {});
   } catch {
     // The registration is there but APP_BASE_URL is not, so there is no address for Microsoft to
     // send anybody back to. That is "not set up" too.

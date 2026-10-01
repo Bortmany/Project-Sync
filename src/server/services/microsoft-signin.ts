@@ -112,6 +112,11 @@ export type SignInAttempt = {
   /** Enable only: the administrator who pressed Switch on, and their company. */
   userId?: string;
   orgId?: string;
+  /**
+   * "teams" when the attempt was started from the Teams tab's sign-in window. A fixed flag that
+   * only changes the ENDING (a one-time hand-off code instead of a session); it cannot loosen a check.
+   */
+  via?: "teams";
 };
 
 function randomToken(bytes = 32): string {
@@ -161,6 +166,8 @@ export function openAttempt(value: string | undefined, now = Date.now()): SignIn
     ts: parsed.ts,
     userId: parsed.userId,
     orgId: parsed.orgId,
+    // Only the one known value survives; anything else in a (sealed) cookie is ignored.
+    via: parsed.via === "teams" && parsed.purpose === "signin" ? "teams" : undefined,
   };
 }
 
@@ -184,7 +191,11 @@ function requireSignInConfig(): { config: MicrosoftConfig; redirectUri: string }
   return { config, redirectUri };
 }
 
-function begin(purpose: SignInAttempt["purpose"], who?: { userId: string; orgId: string }): StartedAttempt {
+function begin(
+  purpose: SignInAttempt["purpose"],
+  who?: { userId: string; orgId: string },
+  via?: "teams",
+): StartedAttempt {
   const { config, redirectUri } = requireSignInConfig();
   const attempt: SignInAttempt = {
     purpose,
@@ -193,6 +204,7 @@ function begin(purpose: SignInAttempt["purpose"], who?: { userId: string; orgId:
     verifier: randomToken(48),
     ts: Date.now(),
     ...(who ?? {}),
+    ...(via ? { via } : {}),
   };
   return {
     authorizeUrl: signInAuthorizeUrl(config, redirectUri, {
@@ -205,8 +217,8 @@ function begin(purpose: SignInAttempt["purpose"], who?: { userId: string; orgId:
 }
 
 /** The login page's "Sign in with Microsoft": anonymous, bound only to this browser's cookie. */
-export function startMicrosoftSignIn(): StartedAttempt {
-  return begin("signin");
+export function startMicrosoftSignIn(options: { via?: "teams" } = {}): StartedAttempt {
+  return begin("signin", undefined, options.via);
 }
 
 /**
@@ -271,6 +283,12 @@ export type SignInOutcome =
       sessionExpiresAt: Date;
     }
   | { kind: "two-factor"; userId: string; pendingToken: string }
+  /**
+   * Started from Teams: no session and no two-factor ticket here. The identity rule passed (and a
+   * first link was written); the code is single-use, two minutes, and exchanged at
+   * `/api/teams/session`, where two-factor is asked if it is on.
+   */
+  | { kind: "teams-handoff"; userId: string; handoffCode: string }
   | { kind: "refused"; reason: string; userId?: string };
 
 /** Thrown inside the transaction to roll a lost race back. */
@@ -280,7 +298,8 @@ function isUniqueViolation(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "P2002";
 }
 
-const SIGNIN_USER_SELECT = {
+/** What a sign-in needs to know about a person; the Teams tab's sign-in reuses it. */
+export const SIGNIN_USER_SELECT = {
   ...TWO_FACTOR_USER_SELECT,
   email: true,
   role: true,
@@ -347,10 +366,13 @@ export async function completeMicrosoftSignIn(
 
   // Two-factor is never skipped. A secret that can no longer be read (a rotated SESSION_SECRET) has
   // just been switched off and recorded, and the sign-in carries on — exactly as after a password.
-  const needsSecondFactor = user.totpEnabledAt ? (await readableTotpSecret(user)) !== null : false;
+  // (Started from Teams: the exchange at /api/teams/session asks for it instead.)
+  const teamsMode = attempt.via === "teams";
+  const needsSecondFactor =
+    !teamsMode && user.totpEnabledAt ? (await readableTotpSecret(user)) !== null : false;
 
   const person = user;
-  const minted = needsSecondFactor ? null : mintSession();
+  const minted = needsSecondFactor || teamsMode ? null : mintSession();
 
   try {
     const pendingToken = await prisma.$transaction(async (tx) => {
@@ -382,6 +404,16 @@ export async function completeMicrosoftSignIn(
           // hold an oid, a tid or an address that deleting the account is meant to clear.
           metadata: {},
         });
+      }
+
+      if (teamsMode) {
+        const issued = await issueEmailToken(
+          person.id,
+          "TEAMS_HANDOFF",
+          EMAIL_TOKEN_TTL_MS.TEAMS_HANDOFF,
+          tx,
+        );
+        return issued.rawToken;
       }
 
       if (needsSecondFactor) {
@@ -418,6 +450,11 @@ export async function completeMicrosoftSignIn(
       });
       return null;
     });
+
+    if (pendingToken && teamsMode) {
+      logger.info("Microsoft sign-in from Teams is waiting to be exchanged", { userId: person.id });
+      return { kind: "teams-handoff", userId: person.id, handoffCode: pendingToken };
+    }
 
     if (pendingToken) {
       logger.info("Microsoft sign-in is waiting for a second factor", { userId: person.id });
