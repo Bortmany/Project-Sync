@@ -678,6 +678,14 @@ describe("rate limits on signing in", () => {
   });
 });
 
+describe("body size", () => {
+  it("refuses an oversized body with the same one sentence, before anything is parsed", async () => {
+    const answer = await signInWith(JSON.stringify({ ssoToken: "x".repeat(200_000) }), "198.51.100.91");
+    expect(answer.status).toBe(401);
+    expect(answer.body).toEqual({ ok: false, error: TEAMS_SIGN_IN_FAILED_MESSAGE });
+  });
+});
+
 describe("which refusals count toward the lockout", () => {
   it("ten ordinary refusals (not linked yet, company not switched on) from one address never lock it", async () => {
     const org = await company("Meridian");

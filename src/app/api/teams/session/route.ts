@@ -16,6 +16,7 @@
 
 import { NextResponse } from "next/server";
 import { checkOnly, byIp, clientIp, limit, recordFailure } from "@/lib/rate-limit";
+import { readJsonLimited } from "@/lib/read-json";
 import {
   TEAMS_COOKIE,
   TEAMS_NOT_SET_UP,
@@ -60,7 +61,7 @@ export async function POST(request: Request) {
 
   let body: unknown;
   try {
-    body = await request.json();
+    body = await readJsonLimited(request);
   } catch {
     recordFailure(failureKey, FAILURE_WINDOW_MS);
     return refusedResponse();

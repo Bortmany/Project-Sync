@@ -11,6 +11,7 @@ import { mintSession, pruneExpiredSessions, setSessionCookie } from "@/lib/auth"
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { checkOnly, clearFailures, clientIp, recordFailure } from "@/lib/rate-limit";
+import { readJsonLimited } from "@/lib/read-json";
 import { TEAMS_COOKIE, teamsCookieOptions, type TeamsVia } from "@/lib/teams-app";
 import { TwoFactorChallengeInput } from "@/lib/zod-schemas";
 import {
@@ -67,7 +68,7 @@ export async function runTwoFactorStep(request: Request, door: TwoFactorDoor): P
   // transaction — is this one shared implementation.
   let body: unknown;
   try {
-    body = await request.json();
+    body = await readJsonLimited(request);
   } catch {
     return NextResponse.json({ ok: false, error: "That request was not readable." }, { status: 400 });
   }

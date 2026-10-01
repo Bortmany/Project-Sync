@@ -69,7 +69,13 @@ async function microsoftFetch(url: string, init: RequestInit, timeoutMs = REQUES
       // surprise is exactly what should not be followed.
       redirect: "manual",
     });
-  } catch {
+  } catch (error) {
+    // A timeout, DNS failure or refused connection. Host only: never the address's query, a code
+    // or a token, so the sign-in and the file picker are not failing in silence.
+    logger.warn("Microsoft could not be reached", {
+      host: new URL(url).host,
+      reason: error instanceof Error ? error.name : "unknown",
+    });
     throw new ServiceError(GRAPH_UNAVAILABLE);
   }
 }
