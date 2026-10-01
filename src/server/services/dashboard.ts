@@ -12,6 +12,7 @@ import type { DashboardDTO } from "@/lib/zod-schemas";
 import { DashboardDTO as DashboardSchema } from "@/lib/zod-schemas";
 import { externalTaskScope, isExternal, type ActorContext } from "@/server/actor";
 import { checkDto } from "@/server/serialize";
+import { disciplineBlockedWhere, mainBlockedWhere } from "@/server/services/blocked";
 import { recentActivityForProjects } from "@/server/services/activity";
 import { projectsVisibleTo } from "@/server/services/projects";
 import { listAwaitingMySignoff } from "@/server/services/tasks";
@@ -114,7 +115,7 @@ function mainTileWhere(tile: TileKey, now: Date): Prisma.MainTaskWhereInput {
     case "completed":
       return mainIs("COMPLETED");
     case "blocked":
-      return mainIs("BLOCKED");
+      return mainBlockedWhere; // the one shared "blocked" rule (./blocked.ts)
     case "late":
       return { deadline: { lte: overdueCutoff }, AND: [mainNotCompleted] };
     case "upcoming":
@@ -135,7 +136,7 @@ function disciplineTileWhere(tile: TileKey, now: Date): Prisma.DisciplineTaskWhe
     case "completed":
       return { status: "COMPLETED" };
     case "blocked":
-      return { status: "BLOCKED" };
+      return disciplineBlockedWhere; // the one shared "blocked" rule (./blocked.ts)
     case "late":
       return { deadline: { lte: overdueCutoff }, status: { not: "COMPLETED" } };
     case "upcoming":

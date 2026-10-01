@@ -1226,12 +1226,16 @@ export const ProjectBriefProgressDTO = z.object({
 });
 export type ProjectBriefProgressDTO = z.infer<typeof ProjectBriefProgressDTO>;
 
-/** A blocked discipline task, with the work it is still waiting on named. */
+/**
+ * A blocked task, with the work it is still waiting on named. Main tasks and discipline tasks both
+ * count as blocked (one shared rule); a main task has no discipline code and is its own "main task".
+ */
 export const BriefBlockedTaskDTO = z.object({
   id: id,
+  kind: z.enum(["MAIN", "DISCIPLINE"]),
   title: z.string(),
   linkUrl: z.string(),
-  disciplineCode: z.string(),
+  disciplineCode: z.string().nullable(),
   mainTaskTitle: z.string(),
   unmetDependencies: z.array(z.string()),
   /** Who holds the blocked task; null when nobody does. */

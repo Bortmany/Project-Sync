@@ -1121,7 +1121,8 @@ the noticeboard.
     function the project Brief reads, so the two agree; a quiet project is still listed, "64%,
     unchanged"), late work naming BOTH kinds ("2 main tasks and 5 discipline tasks late",
     `lateCountsByProject()`) with "(N new this week)" for still-open work whose deadline day ended in
-    the last seven days, blocked discipline tasks, and mandatory documents missing on open tasks
+    the last seven days, blocked work (main and discipline tasks together, one shared rule in
+    `src/server/services/blocked.ts`, the same number the dashboard tile shows), and mandatory documents missing on open tasks
     (`requiredDocCountsFor()`); then one "Gates opened this week" line (`gateOpenMoments()`). Nothing
     is stored. The body cap for a brief card is `BRIEF_BODY_LIMIT` (2,900 characters, under Slack's
     3,000 per section) rather than the 1,200 of a notification; the 28 KB payload cap still applies.
@@ -2598,3 +2599,21 @@ About the two seed steps:
   documents only, so the "1/2 documents" hint on a discipline row always says the same thing as the
   completion gate. They are filled by two grouped queries per read (`requiredDocCountsFor()` in
   `src/server/services/tasks.ts`) — never one query per row.
+
+### Round-one fixes after browser testing (October 2026)
+
+- **Background work is bundled for Node only.** `src/instrumentation.ts` checks
+  `NEXT_RUNTIME === "nodejs"` in the positive form and imports `src/instrumentation-node.ts`
+  behind it; the sweep (and so `db.ts`, which needs Node's `fs`) is never followed by the edge build.
+- **A contractor has no Admin area.** `src/app/(app)/admin/layout.tsx` turns every Admin page into
+  the ordinary not-found page for them, and the Admin routes call
+  `guardRead(scope, { hiddenFromContractors: true })`, which answers 404 (never 403).
+- **Pages that name a record by id** (`/projects/[id]`, `/tasks/[id]`, `/discipline-tasks/[id]`)
+  ask `src/server/page-guards.ts` first: not found, another company's, or not yours is the same
+  not-found page; any other failure still reaches the error screen.
+- **One "blocked" rule** (`src/server/services/blocked.ts`): effective status BLOCKED, main and
+  discipline tasks both, live rows only. Dashboard tile, Brief, report, daily and weekly briefs use it.
+- **A report is dated the viewer's own day.** The download carries the browser's time zone (`tz`);
+  the cover date, footer and file name read in it; deadlines stay UTC days.
+- **A second "Submit for sign-off" is refused** in plain words, and the screen shows only the
+  reviewer's actions (Confirm and complete / Send back) while a task is AWAITING_REVIEW.

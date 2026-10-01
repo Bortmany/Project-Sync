@@ -126,7 +126,7 @@ export function ProjectBriefTab({ project }: { project: ProjectDTO }) {
             {data.blockedTasks.length > 0 ? (
               <div>
                 <p className="text-xs font-semibold text-[var(--brand-text)]">
-                  Blocked discipline tasks ({data.blockedTotal})
+                  Blocked tasks ({data.blockedTotal})
                 </p>
                 <ul className="text-sm">
                   {data.blockedTasks.map((task) => (
@@ -140,8 +140,14 @@ export function ProjectBriefTab({ project }: { project: ProjectDTO }) {
                       >
                         {task.title}
                       </Link>
-                      <span className="text-xs text-[var(--brand-gray)]">{task.disciplineCode}</span>
-                      <span className="text-xs text-[var(--brand-gray)]">{task.mainTaskTitle}</span>
+                      {task.kind === "MAIN" ? (
+                        <span className="text-xs text-[var(--brand-gray)]">Main task</span>
+                      ) : (
+                        <>
+                          <span className="text-xs text-[var(--brand-gray)]">{task.disciplineCode}</span>
+                          <span className="text-xs text-[var(--brand-gray)]">{task.mainTaskTitle}</span>
+                        </>
+                      )}
                       <span className="text-xs text-[var(--brand-text)]">
                         {task.blockedBy.length === 0
                           ? "Marked blocked, with nothing named"

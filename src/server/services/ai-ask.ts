@@ -109,13 +109,13 @@ export function projectFacts(brief: ProjectBriefDTO): AiFactRecord[] {
       ["main tasks total", brief.progress.total],
       ["percent complete a week ago", brief.progress.totalThen > 0 ? brief.progress.pctThen : null],
       ["overdue discipline tasks", brief.overdueTotal],
-      ["blocked discipline tasks", brief.blockedTotal],
+      ["blocked tasks", brief.blockedTotal],
     ],
   ];
 
   for (const task of brief.blockedTasks) {
     records.push([
-      ["record", "blocked discipline task"],
+      ["record", task.kind === "MAIN" ? "blocked main task" : "blocked discipline task"],
       ["title", task.title],
       ["discipline", task.disciplineCode],
       ["main task", task.mainTaskTitle],
@@ -174,7 +174,7 @@ export function dashboardFacts(digest: OrgDigest): AiFactRecord[] {
     ["percent complete", line.pct],
     ["overdue main tasks", line.lateMain],
     ["overdue discipline tasks", line.lateDiscipline],
-    ["blocked discipline tasks", line.blocked],
+    ["blocked tasks", line.blocked],
     ["next gate", line.nextGate],
   ]);
   if (digest.moreProjects > 0) {

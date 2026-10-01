@@ -39,7 +39,7 @@ export function Button({
     <button
       {...rest}
       disabled={disabled || loading}
-      className={`inline-flex items-center justify-center gap-2 rounded-[var(--radius)] px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed ${BUTTON_STYLES[variant]} ${className}`}
+      className={`inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[var(--radius)] px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed ${BUTTON_STYLES[variant]} ${className}`}
     >
       {loading ? <Spinner size={16} /> : null}
       {children}
@@ -48,7 +48,7 @@ export function Button({
 }
 
 const FIELD_CLASS =
-  "w-full rounded-[var(--radius)] border border-[var(--border)] bg-white px-3 py-2 text-sm text-[var(--brand-text)] placeholder:text-[var(--brand-gray)] focus:border-[var(--brand-primary)] focus:outline-none disabled:bg-[var(--page-bg)]";
+  "min-h-11 w-full rounded-[var(--radius)] border border-[var(--border)] bg-white px-3 py-2 text-sm text-[var(--brand-text)] placeholder:text-[var(--brand-gray)] focus:border-[var(--brand-primary)] focus:outline-none disabled:bg-[var(--page-bg)]";
 
 type FieldWrapProps = { label?: string; hint?: string; error?: string; children: ReactNode };
 
@@ -132,7 +132,7 @@ export function Badge({
 }) {
   return (
     <span
-      className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold"
+      className="inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold"
       style={{ backgroundColor: color, color: textColor }}
     >
       {children}

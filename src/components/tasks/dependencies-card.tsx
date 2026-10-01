@@ -69,7 +69,7 @@ export function DependenciesCard({
             >
               <Link
                 href={`/discipline-tasks/${dependency.id}`}
-                className="min-w-0 flex-1 basis-40 break-words text-[var(--brand-primary)] hover:underline"
+                className="inline-flex min-h-11 items-center min-w-0 flex-1 basis-40 break-words text-[var(--brand-primary)] hover:underline"
               >
                 {dependency.title}
               </Link>

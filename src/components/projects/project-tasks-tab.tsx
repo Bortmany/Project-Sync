@@ -131,6 +131,10 @@ export function ProjectTasksTab({
     },
   ];
 
+  // The empty state carries its own "+ New main task"; the toolbar one would be a second copy.
+  const showEmptyState =
+    !tasks.isError && !tasks.isPending && rows.length === 0 && !hasActiveFilters(active) && phase === null;
+
   return (
     <div className="space-y-4">
       <PhaseRail
@@ -158,7 +162,11 @@ export function ProjectTasksTab({
             <option value="status">Status</option>
             <option value="title">Title</option>
           </Select>
-          {canManage ? <Button onClick={() => setDialogOpen(true)}>+ New main task</Button> : null}
+          {canManage && !showEmptyState ? (
+            <Button onClick={() => setDialogOpen(true)} className="whitespace-nowrap">
+              + New main task
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -178,7 +186,7 @@ export function ProjectTasksTab({
               setActive({});
               setPhase(null);
             }}
-            className="mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+            className="inline-flex min-h-11 items-center mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
           >
             Clear filters
           </button>
@@ -277,7 +285,7 @@ export function ProjectTasksTab({
                     <td className="px-3">
                       <Link
                         href={`/tasks/${task.id}`}
-                        className="font-semibold text-[var(--brand-primary)] hover:underline"
+                        className="inline-flex min-h-11 items-center font-semibold text-[var(--brand-primary)] hover:underline"
                       >
                         <CellText>{task.title}</CellText>
                       </Link>

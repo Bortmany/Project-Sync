@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  awaitingSignoff,
   completeButtonFor,
   statusChoicesFor,
   submitsForSignoff,
@@ -99,5 +100,26 @@ describe("a contractor on a project with the sign-off switched off", () => {
       label: "Mark complete",
       disabled: true,
     });
+  });
+});
+
+describe("while work waits for a sign-off, the dominant button steps aside", () => {
+  const asContractor = (overrides: Partial<TaskActionContext> = {}) =>
+    context({ isExternal: true, ...overrides });
+
+  it("hides Submit for a contractor who has already submitted", () => {
+    expect(awaitingSignoff(asContractor({ status: "AWAITING_REVIEW" }), false)).toBe(true);
+    // Before submitting it is still offered.
+    expect(awaitingSignoff(asContractor({ status: "IN_PROGRESS" }), false)).toBe(false);
+  });
+
+  it("hides Mark complete for a reviewer, who has Confirm and Send back instead", () => {
+    expect(awaitingSignoff(context({ status: "AWAITING_REVIEW" }), true)).toBe(true);
+  });
+
+  it("leaves a colleague who cannot review, and a contractor with no sign-off step, exactly as before", () => {
+    expect(awaitingSignoff(context({ status: "AWAITING_REVIEW" }), false)).toBe(false);
+    expect(awaitingSignoff(asContractor({ status: "AWAITING_REVIEW", signoffRequired: false }), false)).toBe(false);
+    expect(awaitingSignoff(context({ status: "IN_PROGRESS" }), true)).toBe(false);
   });
 });

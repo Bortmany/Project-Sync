@@ -353,7 +353,7 @@ function ResendInviteButton({ user }: { user: UserDTO }) {
           failure: "Couldn't send that invite. Try again.",
         })
       }
-      className="text-xs font-semibold text-[var(--brand-primary)] hover:underline disabled:text-[var(--brand-gray)]"
+      className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] hover:underline disabled:text-[var(--brand-gray)]"
     >
       {pending ? "Sending…" : "Resend invite email"}
     </button>
@@ -678,7 +678,7 @@ function ReactivateButton({ user, full = false }: { user: UserDTO; full?: boolea
       type="button"
       disabled={pending}
       onClick={reactivate}
-      className="text-xs font-semibold text-[var(--brand-primary)] hover:underline disabled:text-[var(--brand-gray)]"
+      className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] hover:underline disabled:text-[var(--brand-gray)]"
     >
       Reactivate
     </button>
@@ -775,7 +775,7 @@ export function AdminUsersView({
           <button
             type="button"
             onClick={clearFilters}
-            className="mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+            className="inline-flex min-h-11 items-center mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
           >
             Clear filters
           </button>
@@ -945,7 +945,7 @@ export function AdminUsersView({
                           <button
                             type="button"
                             onClick={() => setEditing(user)}
-                            className="text-xs font-semibold text-[var(--brand-primary)] hover:underline"
+                            className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] hover:underline"
                           >
                             Extend
                           </button>
@@ -977,7 +977,7 @@ export function AdminUsersView({
                         <button
                           type="button"
                           onClick={() => setEditing(user)}
-                          className="text-xs font-semibold text-[var(--brand-primary)] hover:underline"
+                          className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] hover:underline"
                         >
                           Edit
                         </button>
@@ -985,7 +985,7 @@ export function AdminUsersView({
                           <button
                             type="button"
                             onClick={() => setDeactivating(user)}
-                            className="text-xs font-semibold text-[var(--status-blocked)] hover:underline"
+                            className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--status-blocked)] hover:underline"
                           >
                             Deactivate
                           </button>
@@ -996,7 +996,7 @@ export function AdminUsersView({
                           <button
                             type="button"
                             onClick={() => setResettingTwoFactor(user)}
-                            className="text-xs font-semibold text-[var(--status-blocked)] hover:underline"
+                            className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--status-blocked)] hover:underline"
                           >
                             Turn off their two-factor
                           </button>
@@ -1016,7 +1016,7 @@ export function AdminUsersView({
         <button
           type="button"
           onClick={clearFilters}
-          className="text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+          className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
         >
           Clear filters
         </button>

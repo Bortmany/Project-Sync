@@ -3,7 +3,7 @@
 
 import Link from "next/link";
 
-const LINK_CLASS = "text-sm text-[var(--brand-text)] underline-offset-2 hover:underline";
+const LINK_CLASS = "inline-flex min-h-11 items-center text-sm text-[var(--brand-text)] underline-offset-2 hover:underline";
 
 export function PublicFooter() {
   return (

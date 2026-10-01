@@ -239,7 +239,7 @@ export function DashboardView({ askProjects = null }: { askProjects?: AskProject
                 <li key={row.disciplineId}>
                   <Link
                     href={`/my-tasks?discipline=${encodeURIComponent(row.code)}`}
-                    className="flex min-h-9 items-center gap-3 rounded-[var(--radius)] px-1 hover:bg-[var(--page-bg)]"
+                    className="flex min-h-11 items-center gap-3 rounded-[var(--radius)] px-1 hover:bg-[var(--page-bg)]"
                   >
                     <DisciplineDot colorHex={row.colorHex} code={row.code} />
                     <span className="w-24 shrink-0 truncate text-sm text-[var(--brand-ink)] sm:w-32">

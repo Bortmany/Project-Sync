@@ -120,7 +120,7 @@ function DocumentRow({
           <button
             type="button"
             onClick={onOpenHistory}
-            className="min-w-0 max-w-md break-words text-left font-semibold text-[var(--brand-primary)] hover:underline"
+            className="inline-flex min-h-11 items-center min-w-0 max-w-md break-words text-left font-semibold text-[var(--brand-primary)] hover:underline"
           >
             {document.title}
           </button>
@@ -166,7 +166,7 @@ function DocumentRow({
           {revision ? (
             <a
               href={revision.downloadUrl}
-              className="font-semibold text-[var(--brand-primary)] hover:underline"
+              className="inline-flex min-h-11 items-center font-semibold text-[var(--brand-primary)] hover:underline"
             >
               Download
             </a>
@@ -174,7 +174,7 @@ function DocumentRow({
           <button
             type="button"
             onClick={onOpenHistory}
-            className="font-semibold text-[var(--brand-primary)] hover:underline"
+            className="inline-flex min-h-11 items-center font-semibold text-[var(--brand-primary)] hover:underline"
           >
             History
           </button>
@@ -196,7 +196,7 @@ function DocumentRow({
             <button
               type="button"
               onClick={() => setConfirmOpen(true)}
-              className="font-semibold text-[var(--status-blocked)] hover:underline"
+              className="inline-flex min-h-11 items-center font-semibold text-[var(--status-blocked)] hover:underline"
             >
               Delete
             </button>

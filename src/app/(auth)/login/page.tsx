@@ -57,7 +57,7 @@ export default async function LoginPage({
         Setting up a new company?{" "}
         <Link
           href="/signup"
-          className="font-semibold text-[var(--brand-primary)] underline-offset-2 hover:underline"
+          className="inline-flex min-h-11 items-center font-semibold text-[var(--brand-primary)] underline-offset-2 hover:underline"
         >
           Create a workspace.
         </Link>

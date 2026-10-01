@@ -37,6 +37,7 @@ import { checkDto } from "@/server/serialize";
 import { ACTIVITY } from "@/server/services/activity";
 import { phaseStatesFor } from "@/server/services/phases";
 import { listAnnouncementsForUser, listNoticesForExternal } from "@/server/services/posts";
+import { blockedCountsByProject, blockedTotal as sumBlocked, disciplineBlockedWhere, mainBlockedWhere } from "@/server/services/blocked";
 import { lateCountsByProject } from "@/server/services/late";
 import { assertCanViewProject, visibleProjects } from "@/server/services/projects";
 import type { ChatMessage } from "@/server/services/webhooks";
@@ -748,7 +749,7 @@ export async function projectBrief(
   const since = new Date(now.getTime() - PROGRESS_LOOKBACK_MS);
   const { overdueCutoff } = dayWindow(now);
 
-  const [tasks, phases, blockedRows, blockedTotal, overdueRows, progressByProject] = await Promise.all([
+  const [tasks, phases, blockedRows, blockedMainRows, blockedCounts, overdueRows, progressByProject] = await Promise.all([
     prisma.mainTask.findMany({
       where: { projectId: project.id, ...notDeleted },
       orderBy: [{ deadline: "asc" }, { title: "asc" }],
@@ -771,7 +772,7 @@ export async function projectBrief(
     }),
     prisma.disciplineTask.findMany({
       where: {
-        status: "BLOCKED",
+        ...disciplineBlockedWhere,
         ...notDeleted,
         mainTask: { projectId: project.id, ...notDeleted },
       },
@@ -795,13 +796,23 @@ export async function projectBrief(
         },
       },
     }),
-    prisma.disciplineTask.count({
-      where: {
-        status: "BLOCKED",
-        ...notDeleted,
-        mainTask: { projectId: project.id, ...notDeleted },
+    // Blocked MAIN tasks too: the one shared rule (./blocked.ts) counts both kinds, so the list
+    // names both kinds and the total here is the very number the dashboard tile shows.
+    prisma.mainTask.findMany({
+      where: { projectId: project.id, ...notDeleted, AND: [mainBlockedWhere] },
+      orderBy: [{ deadline: "asc" }, { title: "asc" }],
+      take: SECTION_LIMIT,
+      select: {
+        id: true,
+        title: true,
+        deadline: true,
+        disciplineTasks: {
+          where: { ...disciplineBlockedWhere, ...notDeleted },
+          select: { title: true, assignee: { select: { name: true } } },
+        },
       },
     }),
+    blockedCountsByProject(actor.orgId, [project.id]),
     // Grouped in the database: overdue work per discipline, never one query per discipline.
     prisma.disciplineTask.groupBy({
       by: ["disciplineId"],
@@ -842,23 +853,50 @@ export async function projectBrief(
       count: overdueRows.find((row) => row.disciplineId === discipline.id)?._count._all ?? 0,
     }));
 
-  const blockedTasks: BriefBlockedTaskDTO[] = blockedRows.map((task) => ({
-    id: task.id,
-    title: task.title,
-    linkUrl: `/discipline-tasks/${task.id}`,
-    disciplineCode: task.discipline.code,
-    mainTaskTitle: task.mainTask.title,
-    unmetDependencies: task.predecessorEdges
-      .filter((edge) => !edge.predecessor.deletedAt && edge.predecessor.status !== "COMPLETED")
-      .map((edge) => edge.predecessor.title),
-    assigneeName: task.assignee?.name ?? null,
-    blockedBy: task.predecessorEdges
-      .filter((edge) => !edge.predecessor.deletedAt && edge.predecessor.status !== "COMPLETED")
-      .map((edge) => ({
-        title: edge.predecessor.title,
-        assigneeName: edge.predecessor.assignee?.name ?? null,
-      })),
+  const blockedDisciplineTasks = blockedRows.map((task) => ({
+    deadline: task.deadline,
+    item: {
+      id: task.id,
+      kind: "DISCIPLINE" as const,
+      title: task.title,
+      linkUrl: `/discipline-tasks/${task.id}`,
+      disciplineCode: task.discipline.code,
+      mainTaskTitle: task.mainTask.title,
+      unmetDependencies: task.predecessorEdges
+        .filter((edge) => !edge.predecessor.deletedAt && edge.predecessor.status !== "COMPLETED")
+        .map((edge) => edge.predecessor.title),
+      assigneeName: task.assignee?.name ?? null,
+      blockedBy: task.predecessorEdges
+        .filter((edge) => !edge.predecessor.deletedAt && edge.predecessor.status !== "COMPLETED")
+        .map((edge) => ({
+          title: edge.predecessor.title,
+          assigneeName: edge.predecessor.assignee?.name ?? null,
+        })),
+    },
   }));
+  // A blocked main task is "waiting on" the blocked discipline tasks under it, if there are any.
+  const blockedMainTasks = blockedMainRows.map((task) => ({
+    deadline: task.deadline,
+    item: {
+      id: task.id,
+      kind: "MAIN" as const,
+      title: task.title,
+      linkUrl: `/tasks/${task.id}`,
+      disciplineCode: null,
+      mainTaskTitle: task.title,
+      unmetDependencies: task.disciplineTasks.map((child) => child.title),
+      assigneeName: null,
+      blockedBy: task.disciplineTasks.map((child) => ({
+        title: child.title,
+        assigneeName: child.assignee?.name ?? null,
+      })),
+    },
+  }));
+  const blockedTasks: BriefBlockedTaskDTO[] = [...blockedMainTasks, ...blockedDisciplineTasks]
+    .sort((a, b) => a.deadline.getTime() - b.deadline.getTime())
+    .slice(0, SECTION_LIMIT)
+    .map((entry) => entry.item);
+  const blockedTotal = sumBlocked(blockedCounts.get(project.id) ?? { blockedMain: 0, blockedDiscipline: 0 });
 
   const states = await phaseStatesFor(project.id);
   const sortedStates = sortPhases([...states.values()]);
@@ -1031,7 +1069,7 @@ export async function orgDigest(
   const projectIds = shown.map((project) => project.id);
   const inProjects = { projectId: { in: projectIds }, ...notDeleted };
 
-  const [totals, completed, openPhases, phases, blockedRows, lateCounts] = await Promise.all([
+  const [totals, completed, openPhases, phases, blockedCounts, lateCounts] = await Promise.all([
     prisma.mainTask.groupBy({ by: ["projectId"], where: inProjects, _count: { _all: true } }),
     prisma.mainTask.groupBy({
       by: ["projectId"],
@@ -1048,33 +1086,13 @@ export async function orgDigest(
       where: { projectId: { in: projectIds } },
       select: { id: true, projectId: true, name: true, sortOrder: true },
     }),
-    // One row per main task that has blocked work under it — bounded by the work itself, not by a
-    // cap that could drop a project's blockers on the floor.
-    prisma.disciplineTask.groupBy({
-      by: ["mainTaskId"],
-      where: {
-        status: "BLOCKED",
-        ...notDeleted,
-        mainTask: { projectId: { in: projectIds }, ...notDeleted },
-      },
-      _count: { _all: true },
-    }),
+    // Blocked is the one shared definition (./blocked.ts): main tasks and discipline tasks together,
+    // exactly as the dashboard tile counts them.
+    blockedCountsByProject(orgId, projectIds),
     // Late is the one shared definition (src/lib/late.ts): main tasks and discipline tasks, counted
     // separately, exactly as the dashboard and the project header count them.
     lateCountsByProject(orgId, projectIds, now),
   ]);
-
-  const owners = await prisma.mainTask.findMany({
-    where: { id: { in: blockedRows.map((row) => row.mainTaskId) } },
-    select: { id: true, projectId: true },
-  });
-  const projectOfTask = new Map(owners.map((task) => [task.id, task.projectId]));
-  const blockedByProject = new Map<string, number>();
-  for (const row of blockedRows) {
-    const projectId = projectOfTask.get(row.mainTaskId);
-    if (!projectId) continue;
-    blockedByProject.set(projectId, (blockedByProject.get(projectId) ?? 0) + row._count._all);
-  }
 
   const countIn = (rows: { projectId: string; _count: { _all: number } }[], projectId: string) =>
     rows.find((row) => row.projectId === projectId)?._count._all ?? 0;
@@ -1095,7 +1113,7 @@ export async function orgDigest(
       pct: percent(countIn(completed, project.id), countIn(totals, project.id)),
       lateMain: lateCounts.get(project.id)?.lateMain ?? 0,
       lateDiscipline: lateCounts.get(project.id)?.lateDiscipline ?? 0,
-      blocked: blockedByProject.get(project.id) ?? 0,
+      blocked: sumBlocked(blockedCounts.get(project.id) ?? { blockedMain: 0, blockedDiscipline: 0 }),
       nextGate: gate?.name ?? null,
     };
   });

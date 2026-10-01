@@ -2044,3 +2044,120 @@ describe("a contractor and the plan's people ceilings", () => {
     expect(stillActive.isActive).toBe(true);
   });
 });
+
+describe("a contractor has no Admin area: it is not found, exactly like a path that was never there", () => {
+  async function signInAs(userId: string): Promise<void> {
+    const minted = mintSession();
+    await prisma.session.create({ data: { tokenHash: minted.tokenHash, userId, expiresAt: minted.expiresAt } });
+    jar.set(SESSION_COOKIE, { value: minted.rawToken });
+  }
+
+  const NOT_FOUND = { digest: expect.stringContaining("404") };
+
+  it("renders the ordinary not-found page for every Admin page, and keeps the polite screen for non-admin staff", async () => {
+    const { default: AdminLayout } = await import("@/app/(app)/admin/layout");
+    await signInAs(contractor.userId);
+    // The layout wraps every page under /admin (users, billing, integrations, disciplines,
+    // data-privacy, and the /admin redirect itself), so one gate covers them all.
+    await expect(AdminLayout({ children: null })).rejects.toMatchObject(NOT_FOUND);
+
+    // Non-admin internal staff are untouched: the layout lets them through to the page's own screen.
+    await signInAs(fixture.engineerActor.userId);
+    await expect(AdminLayout({ children: "page" })).resolves.toBe("page");
+    await signInAs(fixture.adminActor.userId);
+    await expect(AdminLayout({ children: "page" })).resolves.toBe("page");
+  });
+
+  it("answers every Admin API with a 404, never a 403, and an administrator still gets through", async () => {
+    const { GET: statusRoute } = await import("@/app/api/admin/export/status/route");
+    const { GET: downloadRoute } = await import("@/app/api/admin/export/download/route");
+
+    await signInAs(contractor.userId);
+    for (const response of [
+      await statusRoute(),
+      await downloadRoute(new Request("http://localhost/api/admin/export/download?token=abc")),
+    ]) {
+      expect(response.status).toBe(404);
+      expect((await response.json()).ok).toBe(false);
+    }
+
+    await signInAs(fixture.adminActor.userId);
+    expect((await statusRoute()).status).toBe(200);
+  });
+
+  it("shows the same not-found page for a project, task or discipline task that is another company's or never existed", async () => {
+    const { default: ProjectRoute } = await import("@/app/(app)/projects/[id]/page");
+    const { default: MainTaskRoute } = await import("@/app/(app)/tasks/[id]/page");
+    const { default: DisciplineTaskRoute } = await import("@/app/(app)/discipline-tasks/[id]/page");
+    const { makeOrg } = await import("@/server/__tests__/harness");
+
+    const otherOrg = await makeOrg("Another Company");
+    const foreign = await makeProjectFixture(otherOrg.id);
+    const foreignMain = await createMainTask(foreign.adminActor, {
+      projectId: foreign.projectId,
+      title: "Their main task",
+      description: "Not ours.",
+      priority: "LOW",
+      deadline: inThirtyDays(),
+      disciplineTasks: [
+        {
+          disciplineId: foreign.disciplineId,
+          title: "Their piece",
+          assigneeId: foreign.engineerActor.userId,
+          deadline: inThirtyDays(),
+          isMandatory: true,
+          requiredDocuments: [],
+        },
+      ],
+    });
+    const foreignDisciplineId = (await subtaskIdsByTitle(foreignMain.id)).get("Their piece") as string;
+    const never = "cmnonexistent0000000000000";
+
+    for (const who of [fixture.adminActor.userId, fixture.engineerActor.userId]) {
+      await signInAs(who);
+      const render = (route: typeof ProjectRoute, id: string) => route({ params: Promise.resolve({ id }) });
+      const attempts: Promise<unknown>[] = [
+        render(ProjectRoute, foreign.projectId),
+        render(ProjectRoute, never),
+        render(MainTaskRoute, foreignMain.id),
+        render(MainTaskRoute, never),
+        render(DisciplineTaskRoute, foreignDisciplineId),
+        render(DisciplineTaskRoute, never),
+      ];
+      const results = await Promise.all(
+        attempts.map((attempt) => attempt.then(() => null, (error: { digest?: string }) => error.digest ?? null)),
+      );
+      // All six are the app's not-found, and indistinguishable from one another.
+      expect(new Set(results).size).toBe(1);
+      expect(results[0]).toContain("404");
+    }
+
+    // A real project still renders for the people on it.
+    await signInAs(fixture.engineerActor.userId);
+    await expect(ProjectRoute({ params: Promise.resolve({ id: fixture.projectId }) })).resolves.toBeTruthy();
+  });
+
+  it("lets a genuine failure through instead of dressing it up as a missing page", async () => {
+    const { requireProjectVisible } = await import("@/server/page-guards");
+    await signInAs(fixture.adminActor.userId);
+    const spy = vi.spyOn(prisma.project, "findFirst").mockRejectedValueOnce(new Error("database down"));
+    await expect(requireProjectVisible(fixture.projectId)).rejects.toThrow("database down");
+    spy.mockRestore();
+  });
+});
+
+describe("submitting for sign-off twice", () => {
+  it("refuses the second submission in plain words and writes and notifies nothing more", async () => {
+    await completeDisciplineTask(contractor, { id: myTaskId });
+    const rowsBefore = await prisma.activityLog.count({ where: { action: "SUBMITTED_FOR_REVIEW", entityId: myTaskId } });
+    const toldBefore = await prisma.notification.count({ where: { linkUrl: `/discipline-tasks/${myTaskId}` } });
+
+    const again = completeDisciplineTask(contractor, { id: myTaskId });
+    await expect(again).rejects.toBeInstanceOf(ServiceError);
+    await expect(again).rejects.toThrow(/already been sent for sign-off/i);
+
+    expect(await prisma.activityLog.count({ where: { action: "SUBMITTED_FOR_REVIEW", entityId: myTaskId } })).toBe(rowsBefore);
+    expect(await prisma.notification.count({ where: { linkUrl: `/discipline-tasks/${myTaskId}` } })).toBe(toldBefore);
+    expect((await getDisciplineTaskForActor(contractor, myTaskId)).status).toBe("AWAITING_REVIEW");
+  });
+});

@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const guard = await guardRead("admin-export-status");
+  const guard = await guardRead("admin-export-status", { hiddenFromContractors: true });
   if (guard.response) return guard.response;
 
   try {

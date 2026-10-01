@@ -118,7 +118,7 @@ function drawCover(doc: Doc, data: ReportData): void {
   const pillW = doc.widthOfString(code) + 24;
   rect(doc, margin, y, pillW, 26, COLOR.accent, 13);
   write(doc, code, margin + 12, y + 6, { size: 14, color: COLOR.ink, bold: true });
-  write(doc, `Status report · ${reportDate(data.generatedAt)}`, margin, y + 40, {
+  write(doc, `Status report · ${reportDate(data.generatedAt, data.timeZone)}`, margin, y + 40, {
     size: 14,
     color: COLOR.white,
   });

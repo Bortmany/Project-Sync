@@ -551,10 +551,16 @@ describe("Where we stand — the project brief", () => {
 
     const brief = await projectBrief(fixture.adminActor, fixture.projectId);
 
-    expect(brief.blockedTotal).toBe(1);
-    expect(brief.blockedTasks[0].title).toBe("Blocked work");
-    expect(brief.blockedTasks[0].unmetDependencies).toEqual(["Earlier work"]);
-    expect(brief.blockedTasks[0].mainTaskTitle).toBe("Piling");
+    // One shared rule: the blocked discipline task AND the main task it blocks both count.
+    expect(brief.blockedTotal).toBe(2);
+    expect(brief.blockedTasks.map((task) => task.kind).sort()).toEqual(["DISCIPLINE", "MAIN"]);
+    const blockedWork = brief.blockedTasks.find((task) => task.title === "Blocked work");
+    expect(blockedWork?.unmetDependencies).toEqual(["Earlier work"]);
+    expect(blockedWork?.mainTaskTitle).toBe("Piling");
+    const blockedMain = brief.blockedTasks.find((task) => task.kind === "MAIN");
+    expect(blockedMain?.title).toBe("Piling");
+    expect(blockedMain?.disciplineCode).toBeNull();
+    expect(blockedMain?.blockedBy.map((entry) => entry.title)).toEqual(["Blocked work"]);
 
     expect(brief.lockedPhases.map((phase) => phase.name)).toEqual(["Structure"]);
     expect(brief.lockedPhases[0].lockedByPhaseName).toBe("Foundations");
@@ -617,7 +623,8 @@ describe("Where we stand — the project brief", () => {
 
     const brief = await projectBrief(fixture.adminActor, fixture.projectId);
     expect(brief.blockedTasks).toHaveLength(SECTION_LIMIT);
-    expect(brief.blockedTotal).toBe(SECTION_LIMIT + 2);
+    // The discipline tasks plus the main task they make blocked.
+    expect(brief.blockedTotal).toBe(SECTION_LIMIT + 3);
   });
 });
 
@@ -826,7 +833,8 @@ describe("the chat digest", () => {
     const digest = await orgDigest(fixture.orgId);
 
     expect(digest?.lines[0].lateMain).toBe(15);
-    expect(digest?.lines[0].blocked).toBe(15);
+    // Fifteen blocked discipline tasks and the fifteen main tasks they block: one shared rule.
+    expect(digest?.lines[0].blocked).toBe(30);
   });
 
   it("says one line per project: progress, overdue, blocked and the next gate", async () => {
@@ -851,7 +859,7 @@ describe("the chat digest", () => {
 
     expect(digest?.lines).toHaveLength(1);
     expect(digest?.lines[0].lateMain).toBe(1);
-    expect(digest?.lines[0].blocked).toBe(1);
+    expect(digest?.lines[0].blocked).toBe(2);
     expect(digest?.lines[0].pct).toBe(0);
     expect(digest?.lines[0].nextGate).toBe("Foundations");
 
@@ -862,7 +870,7 @@ describe("the chat digest", () => {
 
     const body = String((fetchSpy.mock.calls[0][1] as RequestInit).body);
     expect(body).toContain("1 main task and 0 discipline tasks overdue");
-    expect(body).toContain("1 blocked");
+    expect(body).toContain("2 blocked");
     expect(body).toContain("Foundations");
     expect(body).not.toContain(SLACK_URL);
   });

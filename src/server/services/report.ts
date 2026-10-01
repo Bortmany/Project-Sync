@@ -48,16 +48,50 @@ export function reportExportThrottle(userId: string): RateLimitResult {
   return limit(byUser(userId, "report-export"), REPORT_EXPORTS_PER_MINUTE, REPORT_EXPORT_WINDOW_MS);
 }
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** "30 Sep 2026", in UTC — the clock deadlines are written on. */
-export function reportDate(date: Date): string {
-  return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+/**
+ * "30 Sep 2026" through `Intl`, the house form (the same one the app and the emails use). Default
+ * zone is UTC — the clock deadlines are written on, so a DEADLINE is always read there. The day a
+ * report was MADE is read in the viewer's own zone (`timeZone`), because that is the "today" the
+ * app showed them when they pressed Export; reading it in UTC printed yesterday for anyone ahead of
+ * Greenwich in the early hours.
+ */
+export function reportDate(date: Date, timeZone: string = "UTC"): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone,
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("day")} ${part("month")} ${part("year")}`;
 }
 
-/** The file-name date, "2026-09-30". */
-export function reportFileDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
+/** The file-name date, "2026-09-30", on the same calendar `reportDate` names. */
+export function reportFileDate(date: Date, timeZone: string = "UTC"): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone,
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+/**
+ * The viewer's time zone as the browser reports it (an IANA name like "Asia/Muscat"), or "UTC" when
+ * it is missing or not a real zone. Never throws: a bad value must not break the download.
+ */
+export function reportTimeZone(raw: string | null | undefined): string {
+  if (!raw || raw.length > 64) return "UTC";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: raw });
+    return raw;
+  } catch {
+    return "UTC";
+  }
 }
 
 export type ReportTimelineDiscipline = {
@@ -114,6 +148,8 @@ export type ReportMissingDoc = {
 
 export type ReportData = {
   generatedAt: Date;
+  /** The viewer's time zone: the calendar the "generated on" date and the file name are read in. */
+  timeZone: string;
   project: { id: string; name: string; code: string };
   progress: { pct: number; completed: number; total: number };
   /** Late, both kinds — the header badge's figure. */
@@ -151,6 +187,7 @@ export async function buildReportData(
   actor: ActorContext,
   projectId: string,
   now: Date = new Date(),
+  timeZone: string = "UTC",
 ): Promise<ReportData> {
   // THE EXTERNAL RULE, first: before a single row is read.
   if (isExternal(actor)) throw new NotFoundError("We could not find that project.");
@@ -350,6 +387,7 @@ export async function buildReportData(
 
   return {
     generatedAt: now,
+    timeZone,
     project: { id: brief.projectId, name: brief.projectName, code: brief.projectCode },
     progress: { pct, completed: brief.progress.completed, total: brief.progress.total },
     late: { main: lateCounts.lateMain, discipline: lateCounts.lateDiscipline },
@@ -383,9 +421,9 @@ export async function buildReportData(
 }
 
 /** "Mech/Elec-2" -> a safe file-name piece: letters, digits, dot, dash, underscore only. */
-export function reportFilename(code: string, date: Date, format: ReportFormat): string {
+export function reportFilename(code: string, date: Date, format: ReportFormat, timeZone: string = "UTC"): string {
   const safe = code.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "project";
-  return `${safe}-status-${reportFileDate(date)}.${format}`;
+  return `${safe}-status-${reportFileDate(date, timeZone)}.${format}`;
 }
 
 export const REPORT_CONTENT_TYPE: Record<ReportFormat, string> = {
@@ -406,8 +444,9 @@ export async function buildStatusReport(
   projectId: string,
   format: ReportFormat,
   now: Date = new Date(),
+  timeZone: string = "UTC",
 ): Promise<BuiltReport> {
-  const data = await buildReportData(actor, projectId, now);
+  const data = await buildReportData(actor, projectId, now, timeZone);
   // Imported here so the drawing libraries load only when somebody actually exports.
   const body =
     format === "pdf"
@@ -415,7 +454,7 @@ export async function buildStatusReport(
       : await (await import("@/server/report/pptx")).renderPptx(data);
   return {
     body,
-    filename: reportFilename(data.project.code, now, format),
+    filename: reportFilename(data.project.code, now, format, timeZone),
     contentType: REPORT_CONTENT_TYPE[format],
     data,
   };
@@ -449,8 +488,9 @@ export async function exportStatusReport(
   projectId: string,
   format: ReportFormat,
   now: Date = new Date(),
+  timeZone: string = "UTC",
 ): Promise<BuiltReport> {
-  const built = await buildStatusReport(actor, projectId, format, now);
+  const built = await buildStatusReport(actor, projectId, format, now, timeZone);
   await recordReportExport(actor, built.data.project, format);
   return built;
 }

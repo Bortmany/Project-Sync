@@ -995,10 +995,22 @@ async function submitForReview(
   projectId: string,
   note?: string,
 ): Promise<DisciplineTaskDTO> {
-  if (existing.status === "AWAITING_REVIEW") return buildDisciplineTaskDTO(existing.id, actor);
+  // A second submission is refused in plain words, never replayed: nothing is written and nobody
+  // is notified twice. The screen no longer offers the button here, but a stale tab still can.
+  if (existing.status === "AWAITING_REVIEW") {
+    throw new ServiceError("This task has already been sent for sign-off. You will hear back once it is reviewed.");
+  }
 
   await prisma.$transaction(async (tx) => {
     await lockMainTask(tx, existing.mainTaskId);
+    // Judged again under the lock, so two clicks racing each other cannot both get through.
+    const fresh = await tx.disciplineTask.findUniqueOrThrow({
+      where: { id: existing.id },
+      select: { status: true },
+    });
+    if (fresh.status === "AWAITING_REVIEW") {
+      throw new ServiceError("This task has already been sent for sign-off. You will hear back once it is reviewed.");
+    }
     await tx.disciplineTask.update({
       where: { id: existing.id },
       data: { status: "AWAITING_REVIEW" },

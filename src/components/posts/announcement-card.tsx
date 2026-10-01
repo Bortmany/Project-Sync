@@ -152,7 +152,7 @@ export function AnnouncementCard({
             aria-label={`Dismiss the announcement ${post.title ?? "from " + post.authorName}`}
             disabled={dismissing}
             onClick={() => onDismiss(post)}
-            className="-mr-1 -mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--brand-gray)] transition-colors hover:bg-[var(--page-bg)] hover:text-[var(--brand-ink)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="-mr-2 -mt-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[var(--brand-gray)] transition-colors hover:bg-[var(--page-bg)] hover:text-[var(--brand-ink)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-primary)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             ✕
           </button>

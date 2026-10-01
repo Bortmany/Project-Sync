@@ -65,3 +65,16 @@ export function completeButtonFor(context: TaskActionContext): {
   }
   return { label: "Mark complete", disabled: !context.canComplete };
 }
+
+/**
+ * Is the work waiting for somebody's sign-off, so the dominant button must step aside?
+ *
+ * While a task is AWAITING_REVIEW the only actions are the reviewer's (Confirm and complete / Send
+ * back). A contractor who has just submitted must not be offered "Submit for sign-off" a second
+ * time, and a reviewer must not be offered "Mark complete" beside "Confirm and complete" - that
+ * would be a second, competing way to do the same thing. A contractor whose project asks for no
+ * sign-off, and anyone who is not a reviewer, keeps the button exactly as before.
+ */
+export function awaitingSignoff(context: TaskActionContext, canSignOff: boolean): boolean {
+  return context.status === "AWAITING_REVIEW" && (submitsForSignoff(context) || canSignOff);
+}

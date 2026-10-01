@@ -152,11 +152,13 @@ describe("every number equals the screens", () => {
     expect(data.progress.total).toBe(brief.progress.total);
     expect(data.progress.pct).toBe(header.progressPct);
     expect(data.blocked).toBe(brief.blockedTotal);
-    expect(data.blocked).toBe(1);
+    // The blocked discipline task and the main task it blocks, counted once each (one shared rule).
+    expect(data.blocked).toBe(2);
     expect(data.blockedTasks.map((task) => task.title)).toEqual(brief.blockedTasks.map((task) => task.title));
-    expect(data.blockedTasks[0].blockedBy).toEqual([{ title: "Layout drawing", assigneeName: "John Carter" }]);
-    expect(brief.blockedTasks[0].blockedBy).toEqual(data.blockedTasks[0].blockedBy);
-    expect(data.blockedTasks[0].assigneeName).toBe("John Carter");
+    const piping = data.blockedTasks.find((task) => task.title === "Blocked piping");
+    expect(piping?.blockedBy).toEqual([{ title: "Layout drawing", assigneeName: "John Carter" }]);
+    expect(brief.blockedTasks.find((task) => task.title === "Blocked piping")?.blockedBy).toEqual(piping?.blockedBy);
+    expect(piping?.assigneeName).toBe("John Carter");
 
     // Late: the header's two counts, and the list is exactly those rows.
     expect(data.late).toEqual({ main: late?.lateMain, discipline: late?.lateDiscipline });
@@ -467,5 +469,53 @@ describe("the project header's late figure", () => {
     const theirs = await getProjectForActor(contractor, fixture.projectId);
     expect(theirs.counts.lateDiscipline).toBe(1);
     expect(theirs.counts.lateMain).toBe(theirs.counts.overdue);
+  });
+});
+
+describe("the report is dated the day the app showed the person", () => {
+  // 01:58 on 2 Oct in Muscat (UTC+4) is still 1 Oct in UTC: the exact case the tester hit.
+  const LATE_EVENING_UTC = new Date("2026-10-01T21:58:00Z");
+
+  it("names the viewer's own day, in the house form, and the same day in the file name", async () => {
+    const { reportDate, reportFileDate, reportTimeZone } = await import("@/server/services/report");
+    expect(reportDate(LATE_EVENING_UTC, "Asia/Muscat")).toBe("2 Oct 2026");
+    expect(reportFileDate(LATE_EVENING_UTC, "Asia/Muscat")).toBe("2026-10-02");
+    // Deadlines are UTC days: with no zone the same instant still reads as 1 Oct.
+    expect(reportDate(LATE_EVENING_UTC)).toBe("1 Oct 2026");
+    expect(reportFileDate(LATE_EVENING_UTC)).toBe("2026-10-01");
+    // West of Greenwich the day can be earlier than UTC's, and September keeps its house spelling.
+    expect(reportDate(new Date("2026-10-01T03:00:00Z"), "America/Los_Angeles")).toBe("30 Sep 2026");
+
+    expect(reportTimeZone("Asia/Muscat")).toBe("Asia/Muscat");
+    expect(reportTimeZone("Not/AZone")).toBe("UTC");
+    expect(reportTimeZone("")).toBe("UTC");
+    expect(reportTimeZone(null)).toBe("UTC");
+  });
+
+  it("puts that day on the cover, the footer and the file name of both exports", async () => {
+    const { FOOTER_TEXT } = await import("@/server/report/layout");
+    const built = await buildStatusReport(fixture.adminActor, fixture.projectId, "pdf", LATE_EVENING_UTC, "Asia/Muscat");
+    expect(built.filename).toMatch(/-status-2026-10-02\.pdf$/);
+    expect(built.data.timeZone).toBe("Asia/Muscat");
+    expect(FOOTER_TEXT(built.data)).toContain("2 Oct 2026");
+
+    const pptx = await buildStatusReport(fixture.adminActor, fixture.projectId, "pptx", LATE_EVENING_UTC, "Asia/Muscat");
+    expect(pptx.filename).toMatch(/-status-2026-10-02\.pptx$/);
+
+    // No zone given: the old UTC reading, so nothing breaks for a caller that does not send one.
+    const plain = await buildStatusReport(fixture.adminActor, fixture.projectId, "pdf", LATE_EVENING_UTC);
+    expect(plain.filename).toMatch(/-status-2026-10-01\.pdf$/);
+    expect(FOOTER_TEXT(plain.data)).toContain("1 Oct 2026");
+  });
+
+  it("takes the zone from the download address, and a bad zone cannot break the download", async () => {
+    const good = await GET(new Request("http://localhost/api/projects/x/report?format=pdf&tz=Asia%2FMuscat"), {
+      params: Promise.resolve({ id: fixture.projectId }),
+    });
+    expect(good.status).toBe(200);
+    const bad = await GET(new Request("http://localhost/api/projects/x/report?format=pdf&tz=Nope%2FNowhere"), {
+      params: Promise.resolve({ id: fixture.projectId }),
+    });
+    expect(bad.status).toBe(200);
   });
 });

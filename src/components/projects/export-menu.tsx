@@ -95,7 +95,10 @@ export function ExportMenu({ projectId, projectCode }: { projectId: string; proj
       const slowTimer = setTimeout(() => setSlow(true), SLOW_AFTER_MS);
       try {
         const response = await fetch(
-          `/api/projects/${encodeURIComponent(projectId)}/report?format=${format}`,
+          `/api/projects/${encodeURIComponent(projectId)}/report?format=${format}&tz=${encodeURIComponent(
+            // The viewer's own calendar, so the report is dated the day the app showed them.
+            Intl.DateTimeFormat().resolvedOptions().timeZone ?? "",
+          )}`,
           { credentials: "same-origin" },
         );
         if (response.status === 429) {

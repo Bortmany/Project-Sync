@@ -137,7 +137,7 @@ export function ProjectsView() {
                       : [...current, option.value],
                   )
                 }
-                className={`min-h-9 rounded-full border px-3 text-xs font-semibold ${
+                className={`inline-flex min-h-11 items-center rounded-full border px-3 text-xs font-semibold ${
                   active
                     ? "border-[var(--brand-primary)] bg-[var(--brand-primary)] text-white"
                     : "border-[var(--border)] bg-white text-[var(--brand-text)]"
@@ -172,7 +172,7 @@ export function ProjectsView() {
           <button
             type="button"
             onClick={clearFilters}
-            className="mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+            className="inline-flex min-h-11 items-center mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
           >
             Clear filters
           </button>
@@ -259,7 +259,7 @@ export function ProjectsView() {
                     <td className="px-3">
                       <Link
                         href={`/projects/${project.id}`}
-                        className="font-semibold text-[var(--brand-primary)] hover:underline"
+                        className="inline-flex min-h-11 items-center font-semibold text-[var(--brand-primary)] hover:underline"
                       >
                         <CellText>{project.name}</CellText>
                       </Link>
@@ -307,7 +307,7 @@ export function ProjectsView() {
         <button
           type="button"
           onClick={clearFilters}
-          className="text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+          className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
         >
           Clear filters
         </button>

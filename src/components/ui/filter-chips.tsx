@@ -73,7 +73,7 @@ export function FilterChips({
               type="button"
               onClick={() => toggle(dimension.key, value)}
               aria-label={`Remove filter ${dimension.label}: ${labelFor(dimension, value)}`}
-              className="rounded-full px-1 text-[var(--brand-gray)] hover:text-[var(--brand-ink)]"
+              className="inline-flex min-h-11 min-w-8 items-center justify-center rounded-full px-1 text-[var(--brand-gray)] hover:text-[var(--brand-ink)]"
             >
               ×
             </button>
@@ -86,7 +86,7 @@ export function FilterChips({
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
         aria-haspopup="dialog"
-        className="rounded-full border border-dashed border-[var(--brand-gray)] px-3 py-1 text-xs font-semibold text-[var(--brand-primary)] hover:border-[var(--brand-primary)]"
+        className="inline-flex min-h-11 items-center rounded-full border border-dashed border-[var(--brand-gray)] px-3 py-1 text-xs font-semibold text-[var(--brand-primary)] hover:border-[var(--brand-primary)]"
       >
         + Filter
       </button>
@@ -108,7 +108,7 @@ export function FilterChips({
                 dimension.options.map((option) => (
                   <label
                     key={option.value}
-                    className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-sm text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
+                    className="flex min-h-11 cursor-pointer items-center gap-2 rounded px-1 py-1 text-sm text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
                   >
                     <input
                       type={dimension.single ? "radio" : "checkbox"}

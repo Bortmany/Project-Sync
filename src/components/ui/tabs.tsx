@@ -20,6 +20,8 @@ export function Tabs({
 
   return (
     <div className="min-w-0">
+      {/* A soft fade on the right edge hints that the strip scrolls sideways on a narrow screen. */}
+      <div className="relative">
       <div
         role="tablist"
         className="flex gap-1 overflow-x-auto border-b border-[var(--border)]"
@@ -36,7 +38,7 @@ export function Tabs({
                 setActive(item.id);
                 onChange?.(item.id);
               }}
-              className={`-mb-px shrink-0 whitespace-nowrap border-b-2 px-4 py-2 text-sm font-semibold transition-colors ${
+              className={`-mb-px shrink-0 whitespace-nowrap min-h-11 border-b-2 px-4 py-2 text-sm font-semibold transition-colors ${
                 selected
                   ? "border-[var(--brand-primary)] text-[var(--brand-primary)]"
                   : "border-transparent text-[var(--brand-text)] hover:text-[var(--brand-ink)]"
@@ -46,6 +48,11 @@ export function Tabs({
             </button>
           );
         })}
+      </div>
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-[var(--page-bg)] to-transparent md:hidden"
+      />
       </div>
       <div role="tabpanel" className="min-w-0 pt-4">
         {current?.content}

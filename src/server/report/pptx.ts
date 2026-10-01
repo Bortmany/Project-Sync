@@ -106,7 +106,7 @@ function drawCover(slide: Slide, pptx: PptxGenJS, data: ReportData): void {
   const pill = Math.min(300, data.project.code.length * 9 + 28);
   box(slide, pptx, margin, 296, pill, 28, COLOR.accent, { round: true });
   text(slide, data.project.code, margin, 296, pill, 28, { size: 14, color: COLOR.ink, bold: true, align: "center" });
-  text(slide, `Status report · ${reportDate(data.generatedAt)}`, margin, 338, 470, 24, {
+  text(slide, `Status report · ${reportDate(data.generatedAt, data.timeZone)}`, margin, 338, 470, 24, {
     size: 14,
     color: COLOR.white,
   });

@@ -289,7 +289,7 @@ export function UploadDropzone({
         <button
           type="button"
           onClick={startUpload}
-          className="font-semibold text-[var(--brand-primary)] hover:underline"
+          className="inline-flex min-h-11 items-center whitespace-nowrap font-semibold text-[var(--brand-primary)] hover:underline"
         >
           {buttonLabel}
         </button>

@@ -48,6 +48,7 @@ import {
   Textarea,
 } from "@/components/ui";
 import {
+  awaitingSignoff,
   completeButtonFor,
   statusChoicesFor,
   submitsForSignoff,
@@ -185,6 +186,10 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
   const statusChoices = statusChoicesFor(actionContext);
   const completeButton = completeButtonFor(actionContext);
   const handingIn = submitsForSignoff(actionContext);
+  // While work waits for a sign-off the only actions are the reviewer's (Confirm and complete /
+  // Send back, in the panel above): a contractor has already submitted, and a reviewer must not be
+  // offered a second, competing "Mark complete".
+  const waitingForSignoff = awaitingSignoff(actionContext, canSignOff);
 
   function setStatus(status: TaskStatusName, note?: string) {
     run(() => updateDisciplineTaskStatus({ id: data.id, status, note }), {
@@ -293,7 +298,7 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
               </>
             ) : null}
 
-            {canControl && data.status !== "COMPLETED" ? (
+            {canControl && data.status !== "COMPLETED" && !waitingForSignoff ? (
               <Button
                 className="min-h-11 w-full sm:ml-auto sm:w-auto"
                 loading={pending}
@@ -326,7 +331,13 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
             ) : null}
           </div>
 
-          {canControl && data.status !== "COMPLETED" && !data.canComplete ? (
+          {canControl && data.status === "AWAITING_REVIEW" && handingIn ? (
+            <p className="text-sm text-[var(--brand-text)]">
+              Sent for sign-off. The reviewer will confirm it or send it back with a note.
+            </p>
+          ) : null}
+
+          {canControl && data.status !== "COMPLETED" && !waitingForSignoff && !data.canComplete ? (
             <p className="text-sm text-[var(--brand-text)]">
               {/* Each blocker is already a full sentence with its own full stop — don't add another. */}
               {data.phaseLockedReason ? (

@@ -124,7 +124,7 @@ function StatusBadge({ integration }: { integration: OrgIntegrationDTO }) {
 function SetupSteps({ kind }: { kind: IntegrationKindName }) {
   return (
     <details className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--page-bg)] p-3">
-      <summary className="cursor-pointer text-xs font-semibold text-[var(--brand-primary)]">
+      <summary className="flex min-h-11 cursor-pointer items-center text-xs font-semibold text-[var(--brand-primary)]">
         How to get the {KIND_LABEL[kind]} address
       </summary>
       <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-[var(--brand-text)]">

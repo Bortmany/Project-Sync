@@ -112,7 +112,7 @@ function SegmentedLinks({
           key={option.label}
           href={option.href}
           aria-current={option.active ? "page" : undefined}
-          className={`px-3 py-1.5 text-xs font-semibold transition-colors ${
+          className={`inline-flex min-h-11 items-center px-3 py-1.5 text-xs font-semibold transition-colors ${
             option.active
               ? "bg-[var(--brand-primary)] text-white"
               : "text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
@@ -328,7 +328,7 @@ export function MyTasksView() {
                       onClick={() => setShowCompleted((value) => !value)}
                       aria-expanded={open}
                       aria-controls="my-tasks-completed"
-                      className="flex items-center gap-1 uppercase tracking-wide text-[var(--brand-gray)] hover:text-[var(--brand-primary)]"
+                      className="inline-flex min-h-11 items-center gap-1 uppercase tracking-wide text-[var(--brand-gray)] hover:text-[var(--brand-primary)]"
                     >
                       <span className={`transition-transform ${open ? "" : "-rotate-90"}`}>
                         <ChevronDownIcon size={14} />
@@ -356,7 +356,7 @@ export function MyTasksView() {
           <button
             type="button"
             onClick={clearFilters}
-            className="mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+            className="inline-flex min-h-11 items-center mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
           >
             Clear filters
           </button>
@@ -412,7 +412,7 @@ export function MyTasksView() {
                   <td className="px-3">
                     <Link
                       href={`/discipline-tasks/${task.id}`}
-                      className="font-semibold text-[var(--brand-primary)] hover:underline"
+                      className="inline-flex min-h-11 items-center font-semibold text-[var(--brand-primary)] hover:underline"
                     >
                       <CellText>{task.title}</CellText>
                     </Link>
@@ -456,7 +456,7 @@ export function MyTasksView() {
         <button
           type="button"
           onClick={clearFilters}
-          className="text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+          className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
         >
           Clear filters
         </button>

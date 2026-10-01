@@ -20,6 +20,7 @@ import { fail, failFrom, guardRead } from "@/server/http";
 import {
   exportStatusReport,
   reportExportThrottle,
+  reportTimeZone,
   type ReportFormat,
 } from "@/server/services/report";
 
@@ -51,7 +52,13 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   }
 
   try {
-    const built = await exportStatusReport(actor, id, format as ReportFormat);
+    const built = await exportStatusReport(
+      actor,
+      id,
+      format as ReportFormat,
+      new Date(),
+      reportTimeZone(new URL(request.url).searchParams.get("tz")),
+    );
     return new Response(new Uint8Array(built.body), {
       status: 200,
       headers: {

@@ -28,6 +28,7 @@ import {
   lateSentence,
   progressSince,
 } from "@/server/services/briefs";
+import { blockedCountsByProject, blockedTotal } from "@/server/services/blocked";
 import { lateCountsByProject } from "@/server/services/late";
 import { requiredDocCountsFor } from "@/server/services/tasks";
 import type { ChatMessage } from "@/server/services/webhooks";
@@ -121,7 +122,7 @@ async function fillCache(
   const windowStart = new Date(overdueCutoff.getTime() - WEEK_MS);
   const scope = { projectId: { in: ids }, project: { orgId, ...notDeleted }, ...notDeleted };
 
-  const [progress, late, newMain, newDiscipline, blockedRows, openDiscipline, phases, tasks] =
+  const [progress, late, newMain, newDiscipline, blockedCounts, openDiscipline, phases, tasks] =
     await Promise.all([
       progressSince(orgId, ids, since),
       lateCountsByProject(orgId, ids, now),
@@ -139,10 +140,8 @@ async function fillCache(
         },
         select: { mainTask: { select: { projectId: true } } },
       }),
-      prisma.disciplineTask.findMany({
-        where: { ...notDeleted, status: "BLOCKED", mainTask: scope },
-        select: { mainTask: { select: { projectId: true } } },
-      }),
+      // The one shared "blocked" rule: main and discipline tasks together, as the dashboard counts.
+      blockedCountsByProject(orgId, ids),
       // Open, live discipline tasks: the only ones whose missing documents are still to be chased.
       prisma.disciplineTask.findMany({
         where: { ...notDeleted, status: { not: "COMPLETED" }, mainTask: scope },
@@ -171,7 +170,6 @@ async function fillCache(
     return counts;
   };
   const newDisciplineBy = perProject(newDiscipline);
-  const blockedBy = perProject(blockedRows);
   const newMainBy = new Map(newMain.map((row) => [row.projectId, row._count._all]));
 
   const docCounts = await requiredDocCountsFor(openDiscipline.map((row) => row.id));
@@ -215,7 +213,7 @@ async function fillCache(
         lateMain: counts.lateMain,
         lateDiscipline: counts.lateDiscipline,
         newlyLate: (newMainBy.get(project.id) ?? 0) + (newDisciplineBy.get(project.id) ?? 0),
-        blocked: blockedBy.get(project.id) ?? 0,
+        blocked: blockedTotal(blockedCounts.get(project.id) ?? { blockedMain: 0, blockedDiscipline: 0 }),
         docsMissing: docsBy.get(project.id) ?? 0,
       },
     });

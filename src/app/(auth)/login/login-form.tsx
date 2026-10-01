@@ -386,7 +386,7 @@ export function LoginForm({ microsoft }: { microsoft?: MicrosoftProps } = {}) {
         <p className="text-right text-sm">
           <Link
             href="/forgot-password"
-            className="inline-block py-1 text-[var(--brand-primary)] underline-offset-2 hover:underline"
+            className="inline-flex min-h-11 items-center text-[var(--brand-primary)] underline-offset-2 hover:underline"
           >
             Forgot password?
           </Link>
