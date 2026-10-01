@@ -304,7 +304,11 @@ export function ProjectView({
             id: "documents",
             label: "Documents",
             content: (
-              <ProjectDocumentsTab project={data} canDelete={isManagerOn(me.data, data)} />
+              <ProjectDocumentsTab
+                project={data}
+                canDelete={isManagerOn(me.data, data)}
+                me={me.data}
+              />
             ),
           },
           ...(external

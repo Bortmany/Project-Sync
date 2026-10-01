@@ -121,7 +121,7 @@ export async function getDisciplineTaskForActor(
 ): Promise<DisciplineTaskDTO> {
   const task = await loadDisciplineTask(actor, disciplineTaskId);
   await assertCanViewProject(actor, task.mainTask.projectId);
-  return buildDisciplineTaskDTO(disciplineTaskId);
+  return buildDisciplineTaskDTO(disciplineTaskId, actor);
 }
 
 /**
@@ -692,7 +692,7 @@ export async function createDisciplineTask(
     });
   }
 
-  return buildDisciplineTaskDTO(taskId);
+  return buildDisciplineTaskDTO(taskId, actor);
 }
 
 /** Edits a discipline task, including handing it to someone else. */
@@ -788,7 +788,7 @@ export async function updateDisciplineTask(
     });
   }
 
-  return buildDisciplineTaskDTO(existing.id);
+  return buildDisciplineTaskDTO(existing.id, actor);
 }
 
 /** Moves a discipline task along. Dependencies must be closed first, and COMPLETED still goes through the gate. */
@@ -807,7 +807,7 @@ export async function updateDisciplineTaskStatus(
     assigneeId: existing.assigneeId,
   });
 
-  if (input.status === existing.status) return buildDisciplineTaskDTO(existing.id);
+  if (input.status === existing.status) return buildDisciplineTaskDTO(existing.id, actor);
 
   // THE STAGE GATE, as a precondition — checked before any transition is attempted, exactly like
   // the completion gate below it. Nothing about the derivation changes: this only decides whether
@@ -841,8 +841,10 @@ export async function updateDisciplineTaskStatus(
   if (startingWork && input.status !== "NOT_STARTED" && input.status !== "BLOCKED") {
     const waiting = await unmetDependencyTitles(existing.id);
     if (waiting.length > 0) {
+      // A contractor is told how many, never which: another person's task title stays unseen.
+      const named = isExternal(actor) ? "" : `: ${waiting.join(", ")}`;
       throw new ServiceError(
-        `This task is waiting on earlier work: ${waiting.join(", ")}. It can start once ${waiting.length === 1 ? "that task is" : "those tasks are"} complete.`,
+        `This task is waiting on earlier work${named}. It can start once ${waiting.length === 1 ? "that task is" : "those tasks are"} complete.`,
       );
     }
   }
@@ -872,7 +874,7 @@ export async function updateDisciplineTaskStatus(
     linkUrl: `/discipline-tasks/${existing.id}`,
   });
 
-  return buildDisciplineTaskDTO(existing.id);
+  return buildDisciplineTaskDTO(existing.id, actor);
 }
 
 /**
@@ -895,7 +897,7 @@ export async function completeDisciplineTask(
     assigneeId: existing.assigneeId,
   });
 
-  if (existing.status === "COMPLETED") return buildDisciplineTaskDTO(existing.id);
+  if (existing.status === "COMPLETED") return buildDisciplineTaskDTO(existing.id, actor);
 
   // The stage gate comes before the completion gate: a locked phase refuses the attempt outright.
   await assertPhaseUnlocked(projectId, existing.mainTask.phaseId);
@@ -932,6 +934,7 @@ export async function completeDisciplineTask(
         name: doc.name,
       })),
       unmetDependencies: unmet.map((edge) => edge.predecessor.title),
+      hideDependencyNames: isExternal(actor),
     });
     if (!check.ok) {
       throw new ServiceError(`This task cannot be completed yet. ${check.blockers.join(" ")}`);
@@ -966,7 +969,7 @@ export async function completeDisciplineTask(
     });
   }
 
-  return buildDisciplineTaskDTO(existing.id);
+  return buildDisciplineTaskDTO(existing.id, actor);
 }
 
 /* ------------------------------------------------------------------ */
@@ -992,7 +995,7 @@ async function submitForReview(
   projectId: string,
   note?: string,
 ): Promise<DisciplineTaskDTO> {
-  if (existing.status === "AWAITING_REVIEW") return buildDisciplineTaskDTO(existing.id);
+  if (existing.status === "AWAITING_REVIEW") return buildDisciplineTaskDTO(existing.id, actor);
 
   await prisma.$transaction(async (tx) => {
     await lockMainTask(tx, existing.mainTaskId);
@@ -1021,7 +1024,7 @@ async function submitForReview(
     linkUrl: `/discipline-tasks/${existing.id}`,
   });
 
-  return buildDisciplineTaskDTO(existing.id);
+  return buildDisciplineTaskDTO(existing.id, actor);
 }
 
 /**
@@ -1097,7 +1100,7 @@ export async function rejectDisciplineTaskReview(
     });
   }
 
-  return buildDisciplineTaskDTO(existing.id);
+  return buildDisciplineTaskDTO(existing.id, actor);
 }
 
 /**
@@ -1182,7 +1185,7 @@ export async function reopenDisciplineTask(
     linkUrl: `/discipline-tasks/${existing.id}`,
   });
 
-  return buildDisciplineTaskDTO(existing.id);
+  return buildDisciplineTaskDTO(existing.id, actor);
 }
 
 /** Says "this task waits on that one". Both must sit under the same main task, and loops are refused. */
@@ -1199,22 +1202,24 @@ export async function addDependency(actor: ActorContext, input: AddDependencyInp
     throw new ServiceError("Both tasks have to belong to the same main task.");
   }
 
-  const existingEdges = await prisma.taskDependency.findMany({
-    where: { successor: { mainTaskId: successor.mainTaskId } },
-    select: { predecessorId: true, successorId: true },
-  });
-  const edges = existingEdges.map((edge): [string, string] => [edge.predecessorId, edge.successorId]);
-  if (wouldCreateCycle(edges, [predecessor.id, successor.id])) {
-    throw new ServiceError("That would make two tasks wait on each other. Pick a different order.");
-  }
-
-  const alreadyThere = edges.some(
-    ([from, to]) => from === predecessor.id && to === successor.id,
-  );
-  if (alreadyThere) return buildDisciplineTaskDTO(successor.id);
-
   await prisma.$transaction(async (tx) => {
+    // The lock comes FIRST; then the edges are read, the duplicate and loop checks run and the row
+    // goes in, all in this one transaction. Two people adding A->B and B->A at the same moment
+    // take turns: the second one reads the first one's edge and is refused.
     await lockMainTask(tx, successor.mainTaskId);
+
+    const existingEdges = await tx.taskDependency.findMany({
+      where: { successor: { mainTaskId: successor.mainTaskId } },
+      select: { predecessorId: true, successorId: true },
+    });
+    const edges = existingEdges.map((edge): [string, string] => [edge.predecessorId, edge.successorId]);
+    if (edges.some(([from, to]) => from === predecessor.id && to === successor.id)) {
+      throw new ServiceError("This task already waits on that one.");
+    }
+    if (wouldCreateCycle(edges, [predecessor.id, successor.id])) {
+      throw new ServiceError("That would make two tasks wait on each other. Pick a different order.");
+    }
+
     await tx.taskDependency.create({
       data: { predecessorId: predecessor.id, successorId: successor.id },
     });
@@ -1230,7 +1235,7 @@ export async function addDependency(actor: ActorContext, input: AddDependencyInp
     });
   });
 
-  return buildDisciplineTaskDTO(successor.id);
+  return buildDisciplineTaskDTO(successor.id, actor);
 }
 
 /** Removes a "waits on" link. */
@@ -1264,7 +1269,7 @@ export async function removeDependency(
     });
   });
 
-  return buildDisciplineTaskDTO(successor.id);
+  return buildDisciplineTaskDTO(successor.id, actor);
 }
 
 /** Moves a bar on the Gantt chart: new start and deadline, nothing else. */
@@ -1331,7 +1336,7 @@ export async function updateTaskDates(
     });
   });
 
-  return buildDisciplineTaskDTO(existing.id);
+  return buildDisciplineTaskDTO(existing.id, actor);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1494,6 +1499,7 @@ type SubtaskRow = {
   status: TaskStatusName;
   deadline: Date;
   isMandatory: boolean;
+  assigneeId?: string | null;
   assignee: { name: string; companyName?: string | null } | null;
   discipline: { code: string; colorHex: string; sortOrder: number };
 };
@@ -1556,6 +1562,7 @@ function disciplineSummary(
       return {
         disciplineTaskId: subtask.id,
         title: subtask.title,
+        assigneeId: subtask.assigneeId ?? null,
         assigneeName: subtask.assignee?.name ?? null,
         assigneeCompanyName: subtask.assignee?.companyName ?? null,
         deadline: subtask.deadline,
@@ -1696,8 +1703,16 @@ export async function buildMainTaskDTO(
   return checkDto(MainTaskSchema, dto, "MainTaskDTO");
 }
 
-/** Builds the full discipline-task DTO, including its blockers and whether it may be completed now. */
-export async function buildDisciplineTaskDTO(disciplineTaskId: string): Promise<DisciplineTaskDTO> {
+/**
+ * Builds the full discipline-task DTO, including its blockers and whether it may be completed now.
+ * For a contractor (THE EXTERNAL RULE) the earlier tasks are never named: `dependencies` is empty,
+ * `waitingOnCount` says how many are still open, and the blocker sentence carries no title. The
+ * completion gate itself is evaluated on the real data either way.
+ */
+export async function buildDisciplineTaskDTO(
+  disciplineTaskId: string,
+  viewer: ActorContext,
+): Promise<DisciplineTaskDTO> {
   const task = await prisma.disciplineTask.findFirst({
     where: { id: disciplineTaskId, ...notDeleted },
     include: {
@@ -1724,6 +1739,7 @@ export async function buildDisciplineTaskDTO(disciplineTaskId: string): Promise<
       disciplineCode: edge.predecessor.discipline.code,
     }));
 
+  const hideNames = isExternal(viewer);
   const check = canCompleteDisciplineTask({
     requiredDocs: task.requiredDocuments.map((doc) => ({
       isMandatory: doc.isMandatory,
@@ -1733,6 +1749,7 @@ export async function buildDisciplineTaskDTO(disciplineTaskId: string): Promise<
     unmetDependencies: dependencies
       .filter((dependency) => dependency.status !== "COMPLETED")
       .map((dependency) => dependency.title),
+    hideDependencyNames: hideNames,
   });
 
   // THE STAGE GATE, asked at read time so the screen is honest BEFORE the click. Locked is derived
@@ -1782,7 +1799,10 @@ export async function buildDisciplineTaskDTO(disciplineTaskId: string): Promise<
       satisfiedAt: doc.satisfiedAt,
       isSatisfied: Boolean(doc.documentId),
     })),
-    dependencies,
+    dependencies: hideNames ? [] : dependencies,
+    ...(hideNames
+      ? { waitingOnCount: dependencies.filter((dependency) => dependency.status !== "COMPLETED").length }
+      : {}),
     blockers,
     canComplete: check.ok && !phaseLockedReason && task.status !== "COMPLETED",
     phaseLockedReason,

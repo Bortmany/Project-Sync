@@ -2,8 +2,10 @@
 // (CreateCommentInput); this only tells the person how close they are, so a refusal is never a
 // surprise. Quiet until the text passes 80% of the limit.
 
-/** The server's cap on one comment. Kept in step with CreateCommentInput in zod-schemas.ts. */
-export const COMMENT_MAX_LENGTH = 5000;
+import { COMMENT_BODY_MAX } from "@/lib/zod-schemas";
+
+/** The server's cap on one comment: the very same constant CreateCommentInput validates with. */
+export const COMMENT_MAX_LENGTH = COMMENT_BODY_MAX;
 
 /** The counter appears once the text passes this share of the limit. */
 const SHOW_FROM = 0.8;

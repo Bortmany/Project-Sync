@@ -70,6 +70,8 @@ export function isOverdue(
 export type CompletionCheckInput = {
   requiredDocs: { isMandatory: boolean; documentId?: string | null; name?: string }[];
   unmetDependencies: string[];
+  /** Say how many earlier tasks are open without naming them — for a reader who may not see them. */
+  hideDependencyNames?: boolean;
 };
 
 export type CompletionCheck = { ok: boolean; blockers: string[] };
@@ -85,8 +87,20 @@ export function canCompleteDisciplineTask(input: CompletionCheckInput): Completi
   if (missing.length > 1) blockers.push(`${missing.length} required documents are still missing${names}.`);
 
   const open = input.unmetDependencies.length;
-  if (open === 1) blockers.push(`Waiting on 1 earlier task: ${input.unmetDependencies[0]}.`);
-  if (open > 1) blockers.push(`Waiting on ${open} earlier tasks: ${input.unmetDependencies.join(", ")}.`);
+  if (open === 1) {
+    blockers.push(
+      input.hideDependencyNames
+        ? "Waiting on 1 earlier task."
+        : `Waiting on 1 earlier task: ${input.unmetDependencies[0]}.`,
+    );
+  }
+  if (open > 1) {
+    blockers.push(
+      input.hideDependencyNames
+        ? `Waiting on ${open} earlier tasks.`
+        : `Waiting on ${open} earlier tasks: ${input.unmetDependencies.join(", ")}.`,
+    );
+  }
 
   return { ok: blockers.length === 0, blockers };
 }

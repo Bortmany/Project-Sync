@@ -283,6 +283,54 @@ function table(documents: DocumentDTO[]) {
   );
 }
 
+describe("New revision is only offered to people who may upload", () => {
+  function tableFor(canUpload: boolean | undefined) {
+    return (
+      <DocumentTable
+        groups={[{ key: "g", label: "Shared", documents: [doc({})] }]}
+        isPending={false}
+        isError={false}
+        onRetry={() => undefined}
+        canDelete
+        canUpload={canUpload}
+        empty={<p>None</p>}
+      />
+    );
+  }
+
+  it("hides it on the table row and the phone card when canUpload is false", () => {
+    const html = draw(tableFor(false));
+    expect(phoneStack(html)).not.toContain("New revision");
+    expect(desktopTable(html)).not.toContain("New revision");
+    // Everything else is still there.
+    expect(phoneStack(html)).toContain("History");
+    expect(desktopTable(html)).toContain("Download");
+  });
+
+  it("shows it on both when canUpload is true or left out", () => {
+    for (const flag of [true, undefined]) {
+      const html = draw(tableFor(flag));
+      expect(phoneStack(html)).toContain("New revision");
+      expect(desktopTable(html)).toContain("New revision");
+    }
+  });
+
+  it("lets a per-document answer override the table-wide one", () => {
+    const html = draw(
+      <DocumentTable
+        groups={[{ key: "g", documents: [doc({})] }]}
+        isPending={false}
+        isError={false}
+        onRetry={() => undefined}
+        canDelete
+        canUploadFor={() => false}
+        empty={<p>None</p>}
+      />,
+    );
+    expect(html).not.toContain("New revision");
+  });
+});
+
 describe("the documents list on a phone", () => {
   it("shows each document with its revision, size, who filed it and when, and the three buttons full width", () => {
     const html = draw(table([doc({})]));

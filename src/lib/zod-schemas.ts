@@ -480,6 +480,8 @@ export type SetMainTaskPhaseInput = z.infer<typeof SetMainTaskPhaseInput>;
 const DisciplineSummaryItem = z.object({
   disciplineTaskId: id,
   title: z.string(),
+  /** Lets the Documents tab hide "New revision" from people the server would refuse. */
+  assigneeId: id.nullable().optional(),
   assigneeName: z.string().nullable(),
   /** Set when the assignee is a contractor, for the company badge on the row. */
   assigneeCompanyName: z.string().nullable().optional(),
@@ -646,6 +648,11 @@ export const DisciplineTaskDTO = z.object({
   dependencies: z.array(
     z.object({ id: id, title: z.string(), status: TaskStatusSchema, disciplineCode: z.string() }),
   ),
+  /**
+   * Set ONLY for a contractor, whose `dependencies` is always empty (THE EXTERNAL RULE: another
+   * person's task title is never shown to them): how many earlier tasks are still open.
+   */
+  waitingOnCount: z.number().int().optional(),
   blockers: z.array(z.string()),
   canComplete: z.boolean(),
   /**
@@ -823,9 +830,12 @@ export const CommentDTO = z.object({
 });
 export type CommentDTO = z.infer<typeof CommentDTO>;
 
+/** The cap on one comment. The comment box's counter imports this, so the two can never differ. */
+export const COMMENT_BODY_MAX = 5000;
+
 export const CreateCommentInput = z
   .object({
-    body: z.string().trim().min(1, "Write something first.").max(5000),
+    body: z.string().trim().min(1, "Write something first.").max(COMMENT_BODY_MAX),
     mainTaskId: id.nullable().optional(),
     disciplineTaskId: id.nullable().optional(),
     mentions: z.array(mentionId).max(50).default([]),

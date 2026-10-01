@@ -123,6 +123,16 @@ In practice:
   and still forbids UPDATE everywhere, including there — nothing in this app ever rewrites a
   revision or an audit row.
 - `OVERDUE` is never stored on a task. It is derived at read time with `isOverdue()`.
+- **Dependencies link two discipline tasks under the SAME main task only** (the existing, tested
+  server rule in `addDependency`). The September spec's "same project" is deliberately NOT adopted
+  this round. `addDependency` takes the main-task lock first, then reads the edges, runs the
+  duplicate and loop checks and inserts, all in one transaction — two people adding A→B and B→A at
+  once cannot make a loop, and a repeat add is refused in plain words.
+- **A contractor is never told the title of another person's task through a dependency.**
+  `DisciplineTaskDTO.dependencies` is empty for them, `waitingOnCount` says how many earlier tasks
+  are open, the blocker sentence is names-free ("Waiting on 1 earlier task."), the refusal messages
+  are names-free too, and `DEPENDENCY_ADDED` / `DEPENDENCY_REMOVED` audit rows (which do name both
+  tasks) are written as always but left out of every feed a contractor can read.
 
 **Any change touching this area adds or extends a test in `src/lib/__tests__/progress.test.ts`
 (or the service-level equivalent) in the same change.** A guarantee without a test is a hope.

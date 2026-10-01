@@ -214,6 +214,40 @@ describe("the dependency rule", () => {
     ).rejects.toThrow(/wait on itself/i);
     expect(await prisma.taskDependency.count()).toBe(0);
   });
+
+  it("answers a repeated add in plain words, and writes nothing twice", async () => {
+    const mainTask = await makeMainTask(2, ["First", "Second"]);
+    const subtasks = await subtaskIdsByTitle(mainTask.id);
+    const pair = {
+      predecessorId: subtasks.get("First") as string,
+      successorId: subtasks.get("Second") as string,
+    };
+
+    await addDependency(fixture.adminActor, pair);
+    const again = addDependency(fixture.adminActor, pair);
+    await expect(again).rejects.toBeInstanceOf(ServiceError);
+    await expect(again).rejects.toThrow(/already waits on that one/i);
+    expect(await prisma.taskDependency.count()).toBe(1);
+    expect(await prisma.activityLog.count({ where: { action: "DEPENDENCY_ADDED" } })).toBe(1);
+  });
+
+  it("never leaves a loop when A->B and B->A are added at the same moment", async () => {
+    const mainTask = await makeMainTask(2, ["A", "B"]);
+    const subtasks = await subtaskIdsByTitle(mainTask.id);
+    const a = subtasks.get("A") as string;
+    const b = subtasks.get("B") as string;
+
+    const results = await Promise.allSettled([
+      addDependency(fixture.adminActor, { predecessorId: a, successorId: b }),
+      addDependency(fixture.pmActor, { predecessorId: b, successorId: a }),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const refused = results.find((result) => result.status === "rejected") as PromiseRejectedResult;
+    expect(refused.reason).toBeInstanceOf(ServiceError);
+    expect(String(refused.reason.message)).toMatch(/wait on each other/i);
+    expect(await prisma.taskDependency.count()).toBe(1);
+  });
 });
 
 describe("the dependency control: the scenario the testers could not run", () => {

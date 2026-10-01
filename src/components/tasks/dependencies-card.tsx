@@ -51,7 +51,12 @@ export function DependenciesCard({
         ) : undefined
       }
     >
-      {task.dependencies.length === 0 ? (
+      {task.dependencies.length === 0 && (task.waitingOnCount ?? 0) > 0 ? (
+        // A contractor is told how many earlier tasks are open, never which ones (THE EXTERNAL RULE).
+        <p className="text-sm text-[var(--brand-text)]">
+          Waiting on {task.waitingOnCount} earlier {task.waitingOnCount === 1 ? "task" : "tasks"}.
+        </p>
+      ) : task.dependencies.length === 0 ? (
         <p className="text-sm text-[var(--brand-gray)]">
           Nothing else has to finish before this task.
         </p>

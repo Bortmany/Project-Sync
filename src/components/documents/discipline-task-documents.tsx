@@ -35,6 +35,7 @@ export function DisciplineTaskDocuments({
         isError={documents.isError}
         onRetry={() => void documents.refetch()}
         canDelete={canDelete}
+        canUpload={canUpload}
         empty={
           <EmptyState
             message={

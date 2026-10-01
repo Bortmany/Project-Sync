@@ -7,6 +7,8 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useProjectDocuments, useProjectMainTasks } from "@/components/hooks/use-api";
 import { DocumentTable, type DocumentGroup } from "@/components/documents/document-table";
+import { canUploadRevisionTo } from "@/components/documents/can-upload";
+import type { MeDTO } from "@/components/hooks/use-api";
 import { EmptyState, Input, Select } from "@/components/ui";
 import type { DocumentDTO, ProjectDTO } from "@/lib/zod-schemas";
 
@@ -18,9 +20,12 @@ const UNPLACED = "unplaced";
 export function ProjectDocumentsTab({
   project,
   canDelete,
+  me,
 }: {
   project: ProjectDTO;
   canDelete: boolean;
+  /** Who is looking: decides who is offered "New revision". */
+  me?: MeDTO;
 }) {
   const documents = useProjectDocuments(project.id);
   const mainTasks = useProjectMainTasks(project.id, {});
@@ -110,6 +115,11 @@ export function ProjectDocumentsTab({
         isError={documents.isError}
         onRetry={() => void documents.refetch()}
         canDelete={canDelete}
+        canUploadFor={(document) => {
+          const mainTaskId = placementOf(document)?.mainTaskId;
+          const siblings = (mainTasks.data ?? []).find((task) => task.id === mainTaskId)?.disciplineSummary ?? [];
+          return canUploadRevisionTo(me, project, document, siblings);
+        }}
         showLocation
         locationFor={(document) => {
           const placement = placementOf(document);

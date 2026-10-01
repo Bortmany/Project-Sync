@@ -272,7 +272,8 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
                   <Select
                     id="discipline-status"
                     value={data.status}
-                    disabled={pending}
+                    disabled={pending || Boolean(data.phaseLockedReason)}
+                    title={data.phaseLockedReason ?? undefined}
                     onChange={(event) => {
                       const next = event.target.value as TaskStatusName;
                       if (next === "BLOCKED") {

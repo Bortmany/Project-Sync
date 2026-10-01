@@ -461,6 +461,48 @@ describe("a contractor cannot sequence work", () => {
   });
 });
 
+describe("a contractor never learns another person's task title through a dependency", () => {
+  beforeEach(async () => {
+    await addDependency(fixture.pmActor, { predecessorId: theirTaskId, successorId: myTaskId });
+  });
+
+  it("gets a task with no earlier-task titles, and a names-free blocker", async () => {
+    const colleague = await getDisciplineTaskForActor(fixture.pmActor, myTaskId);
+    expect(colleague.dependencies.map((dependency) => dependency.title)).toEqual([THEIRS]);
+    expect(colleague.blockers.join(" ")).toContain(THEIRS);
+
+    const dto = await getDisciplineTaskForActor(contractor, myTaskId);
+    expect(dto.dependencies).toEqual([]);
+    expect(dto.waitingOnCount).toBe(1);
+    expect(dto.blockers).toContain("Waiting on 1 earlier task.");
+    expect(dto.canComplete).toBe(false);
+    expect(JSON.stringify(dto)).not.toContain(THEIRS);
+    expect(JSON.stringify(dto)).not.toContain(theirTaskId);
+  });
+
+  it("is refused in plain words, without the title, when they try to start early", async () => {
+    const attempt = updateDisciplineTaskStatus(contractor, { id: myTaskId, status: "IN_PROGRESS" });
+    await expect(attempt).rejects.toThrow(/waiting on earlier work/i);
+    await expect(attempt).rejects.not.toThrow(THEIRS);
+  });
+
+  it("leaves the audit rows alone but never shows a dependency row to them", async () => {
+    // The row exists, and a colleague reading the same feed sees it...
+    expect(await prisma.activityLog.count({ where: { action: "DEPENDENCY_ADDED" } })).toBe(1);
+    const colleagueFeed = await listActivity(fixture.pmActor, { disciplineTaskId: myTaskId });
+    expect(colleagueFeed.some((row) => row.action === "DEPENDENCY_ADDED")).toBe(true);
+
+    await removeDependency(fixture.pmActor, { predecessorId: theirTaskId, successorId: myTaskId });
+    await addDependency(fixture.pmActor, { predecessorId: theirTaskId, successorId: myTaskId });
+
+    // ...but the contractor's never carries one, added or removed.
+    const feed = await listActivity(contractor, { disciplineTaskId: myTaskId });
+    expect(feed.some((row) => row.action.startsWith("DEPENDENCY_"))).toBe(false);
+    expect(JSON.stringify(feed)).not.toContain(THEIRS);
+    expect(await prisma.activityLog.count({ where: { action: "DEPENDENCY_REMOVED" } })).toBe(1);
+  });
+});
+
 describe("a contractor's documents, search, directory and briefs are all narrowed", () => {
   it("sees only the files on their own tasks", async () => {
     const mine = await uploadTo(

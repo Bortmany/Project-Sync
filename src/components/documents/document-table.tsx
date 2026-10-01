@@ -97,12 +97,14 @@ function DeleteDialog({
 function DocumentRow({
   document,
   canDelete,
+  canUpload,
   location,
   onOpenHistory,
   onDeleted,
 }: {
   document: DocumentDTO;
   canDelete: boolean;
+  canUpload: boolean;
   location?: ReactNode;
   onOpenHistory: () => void;
   onDeleted: () => void;
@@ -177,17 +179,19 @@ function DocumentRow({
             History
           </button>
           {/* Sending the document id is what makes this the next revision instead of a new file. */}
-          <UploadDropzone
-            mode="link"
-            buttonLabel="New revision"
-            target={{ projectId: document.projectId, documentId: document.id }}
-            extraKeys={[
-              ...(document.mainTaskId ? [["task", document.mainTaskId] as const] : []),
-              ...(document.disciplineTaskId
-                ? [["discipline-task", document.disciplineTaskId] as const]
-                : []),
-            ]}
-          />
+          {canUpload ? (
+            <UploadDropzone
+              mode="link"
+              buttonLabel="New revision"
+              target={{ projectId: document.projectId, documentId: document.id }}
+              extraKeys={[
+                ...(document.mainTaskId ? [["task", document.mainTaskId] as const] : []),
+                ...(document.disciplineTaskId
+                  ? [["discipline-task", document.disciplineTaskId] as const]
+                  : []),
+              ]}
+            />
+          ) : null}
           {canDelete ? (
             <button
               type="button"
@@ -216,12 +220,14 @@ function DocumentRow({
 function DocumentCard({
   document,
   canDelete,
+  canUpload,
   location,
   onOpenHistory,
   onDeleted,
 }: {
   document: DocumentDTO;
   canDelete: boolean;
+  canUpload: boolean;
   location?: ReactNode;
   onOpenHistory: () => void;
   onDeleted: () => void;
@@ -273,19 +279,21 @@ function DocumentCard({
               History
             </Button>
             {/* Sending the document id is what makes this the next revision instead of a new file. */}
-            <div className="[&>button]:min-h-11 [&>button]:w-full">
-              <UploadDropzone
-                mode="button"
-                buttonLabel="New revision"
-                target={{ projectId: document.projectId, documentId: document.id }}
-                extraKeys={[
-                  ...(document.mainTaskId ? [["task", document.mainTaskId] as const] : []),
-                  ...(document.disciplineTaskId
-                    ? [["discipline-task", document.disciplineTaskId] as const]
-                    : []),
-                ]}
-              />
-            </div>
+            {canUpload ? (
+              <div className="[&>button]:min-h-11 [&>button]:w-full">
+                <UploadDropzone
+                  mode="button"
+                  buttonLabel="New revision"
+                  target={{ projectId: document.projectId, documentId: document.id }}
+                  extraKeys={[
+                    ...(document.mainTaskId ? [["task", document.mainTaskId] as const] : []),
+                    ...(document.disciplineTaskId
+                      ? [["discipline-task", document.disciplineTaskId] as const]
+                      : []),
+                  ]}
+                />
+              </div>
+            ) : null}
             {canDelete ? (
               <Button
                 variant="ghost"
@@ -315,6 +323,8 @@ export function DocumentTable({
   isError,
   onRetry,
   canDelete,
+  canUpload = true,
+  canUploadFor,
   empty,
   showLocation = false,
   locationFor,
@@ -325,6 +335,10 @@ export function DocumentTable({
   isError: boolean;
   onRetry: () => void;
   canDelete: boolean;
+  /** False hides "New revision" on every row. A courtesy: the server refuses the upload regardless. */
+  canUpload?: boolean;
+  /** Per-document answer, for tabs where it depends on the document's task. Wins over canUpload. */
+  canUploadFor?: (document: DocumentDTO) => boolean;
   /** What to show when there is not a single document anywhere in these groups. */
   empty: ReactNode;
   showLocation?: boolean;
@@ -379,6 +393,7 @@ export function DocumentTable({
                     key={document.id}
                     document={document}
                     canDelete={canDelete}
+                    canUpload={canUploadFor ? canUploadFor(document) : canUpload}
                     location={showLocation ? (locationFor?.(document) ?? "—") : undefined}
                     onOpenHistory={() => setHistory({ id: document.id, title: document.title })}
                     onDeleted={() => refresh(document)}
@@ -404,6 +419,7 @@ export function DocumentTable({
                       key={document.id}
                       document={document}
                       canDelete={canDelete}
+                      canUpload={canUploadFor ? canUploadFor(document) : canUpload}
                       location={showLocation ? (locationFor?.(document) ?? "—") : undefined}
                       onOpenHistory={() =>
                         setHistory({ id: document.id, title: document.title })
