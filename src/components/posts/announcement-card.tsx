@@ -160,10 +160,10 @@ export function AnnouncementCard({
       </div>
 
       {post.title ? (
-        <h3 className="mt-2 text-base font-semibold text-[var(--brand-ink)]">{post.title}</h3>
+        <h3 className="mt-2 min-w-0 break-words text-base font-semibold text-[var(--brand-ink)]">{post.title}</h3>
       ) : null}
 
-      <p className="mt-1 whitespace-pre-wrap text-sm text-[var(--brand-text)]">{post.body}</p>
+      <p className="mt-1 min-w-0 whitespace-pre-wrap break-words text-sm text-[var(--brand-text)]">{post.body}</p>
 
       <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--brand-gray)]">
         <span className="flex items-center gap-2">

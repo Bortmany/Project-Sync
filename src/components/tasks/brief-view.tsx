@@ -56,7 +56,7 @@ function BriefRow({ item, showDeadline }: { item: BriefItemDTO; showDeadline: bo
         <span className="text-xs text-[var(--brand-gray)]">{formatRelative(item.at)}</span>
       ) : null}
       {item.body ? (
-        <span className="w-full whitespace-pre-wrap text-sm text-[var(--brand-text)]">
+        <span className="w-full min-w-0 whitespace-pre-wrap break-words text-sm text-[var(--brand-text)]">
           {item.body}
         </span>
       ) : null}

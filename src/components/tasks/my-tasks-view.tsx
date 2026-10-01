@@ -15,10 +15,14 @@ import { ChevronDownIcon } from "@/components/shell/icons";
 import { dueBucket, formatDate } from "@/components/format";
 import {
   Button,
+  CellText,
+  DesktopTable,
   DisciplineDot,
   EmptyState,
   ErrorBanner,
   FilterChips,
+  PhoneCard,
+  PhoneCardList,
   PriorityFlag,
   Select,
   SkeletonRows,
@@ -360,7 +364,37 @@ export function MyTasksView() {
       ) : grouped ? (
         <MyTaskGroups tasks={visible} rich />
       ) : (
-        <div className="overflow-x-auto rounded-[var(--radius)] border border-[var(--border)] bg-white">
+        <>
+        <PhoneCardList label="My tasks">
+          {visible.map((task) => (
+            <PhoneCard
+              key={task.id}
+              href={`/discipline-tasks/${task.id}`}
+              title={task.title}
+              fields={[
+                {
+                  label: "Deadline",
+                  value: (
+                    <span style={{ color: task.isOverdue ? "var(--status-blocked)" : "var(--brand-text)" }}>
+                      {formatDate(task.deadline)}
+                      {task.isOverdue ? " · overdue" : ""}
+                    </span>
+                  ),
+                },
+                { label: "Status", value: <StatusBadge status={task.status} /> },
+                { label: "Priority", value: <PriorityFlag priority={task.priority} /> },
+                { label: "Project", value: task.projectCode },
+                {
+                  label: "Discipline",
+                  value: (
+                    <DisciplineDot colorHex={task.disciplineColorHex} code={task.disciplineCode} showCode />
+                  ),
+                },
+              ]}
+            />
+          ))}
+        </PhoneCardList>
+        <DesktopTable>
           <table className="w-full text-sm">
             <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--brand-gray)]">
               <tr>
@@ -380,7 +414,7 @@ export function MyTasksView() {
                       href={`/discipline-tasks/${task.id}`}
                       className="font-semibold text-[var(--brand-primary)] hover:underline"
                     >
-                      {task.title}
+                      <CellText>{task.title}</CellText>
                     </Link>
                   </td>
                   <td className="px-3 text-[var(--brand-text)]">{task.projectCode}</td>
@@ -407,7 +441,8 @@ export function MyTasksView() {
               ))}
             </tbody>
           </table>
-        </div>
+        </DesktopTable>
+        </>
       )}
 
       {myTasks.data?.truncated ? (

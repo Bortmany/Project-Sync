@@ -17,8 +17,11 @@ import {
   Badge,
   Button,
   CompanyBadge,
+  DesktopTable,
   ErrorBanner,
   Modal,
+  PhoneCard,
+  PhoneCardList,
   SkeletonRows,
 } from "@/components/ui";
 import type { DocumentDTO } from "@/lib/zod-schemas";
@@ -115,7 +118,7 @@ function DocumentRow({
           <button
             type="button"
             onClick={onOpenHistory}
-            className="truncate text-left font-semibold text-[var(--brand-primary)] hover:underline"
+            className="min-w-0 max-w-md break-words text-left font-semibold text-[var(--brand-primary)] hover:underline"
           >
             {document.title}
           </button>
@@ -209,6 +212,103 @@ function DocumentRow({
   );
 }
 
+/** The same document on a phone: one card, the three buttons that matter full width at the bottom. */
+function DocumentCard({
+  document,
+  canDelete,
+  location,
+  onOpenHistory,
+  onDeleted,
+}: {
+  document: DocumentDTO;
+  canDelete: boolean;
+  location?: ReactNode;
+  onOpenHistory: () => void;
+  onDeleted: () => void;
+}) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const revision = document.currentRevision;
+
+  return (
+      <PhoneCard
+        leading={<FileTypeIcon filename={revision?.originalFilename ?? document.title} />}
+        title={document.title}
+        meta={
+          revision ? (
+            <>
+              <Badge>Rev {revision.revisionNumber}</Badge>
+              <Badge color="var(--brand-accent)" textColor="var(--brand-ink)">
+                Latest
+              </Badge>
+            </>
+          ) : null
+        }
+        fields={[
+          { label: "Category", hidden: !document.category, value: document.category },
+          { label: "Location", hidden: location === undefined, value: location },
+          {
+            label: "Filed by",
+            value: (
+              <span className="inline-flex flex-wrap items-center gap-2">
+                <Avatar name={document.uploadedByName} size={24} />
+                {document.uploadedByName}
+                <CompanyBadge companyName={document.uploadedByCompanyName} />
+              </span>
+            ),
+          },
+          { label: "Date", value: formatDate(revision?.createdAt ?? document.createdAt) },
+          { label: "Size", value: revision ? formatFileSize(revision.sizeBytes) : "—" },
+        ]}
+        actions={
+          <>
+            {revision ? (
+              <a
+                href={revision.downloadUrl}
+                className="inline-flex min-h-11 w-full items-center justify-center rounded-[var(--radius)] border border-[var(--brand-primary)] bg-white px-4 py-2 text-sm font-semibold text-[var(--brand-primary)] hover:bg-[var(--page-bg)]"
+              >
+                Download
+              </a>
+            ) : null}
+            <Button variant="secondary" className="min-h-11 w-full" onClick={onOpenHistory}>
+              History
+            </Button>
+            {/* Sending the document id is what makes this the next revision instead of a new file. */}
+            <div className="[&>button]:min-h-11 [&>button]:w-full">
+              <UploadDropzone
+                mode="button"
+                buttonLabel="New revision"
+                target={{ projectId: document.projectId, documentId: document.id }}
+                extraKeys={[
+                  ...(document.mainTaskId ? [["task", document.mainTaskId] as const] : []),
+                  ...(document.disciplineTaskId
+                    ? [["discipline-task", document.disciplineTaskId] as const]
+                    : []),
+                ]}
+              />
+            </div>
+            {canDelete ? (
+              <Button
+                variant="ghost"
+                className="min-h-11 w-full text-[var(--status-blocked)]"
+                onClick={() => setConfirmOpen(true)}
+              >
+                Delete
+              </Button>
+            ) : null}
+            {canDelete ? (
+              <DeleteDialog
+                document={document}
+                open={confirmOpen}
+                onClose={() => setConfirmOpen(false)}
+                onDeleted={onDeleted}
+              />
+            ) : null}
+          </>
+        }
+      />
+  );
+}
+
 export function DocumentTable({
   groups,
   isPending,
@@ -272,7 +372,20 @@ export function DocumentTable({
               {group.emptyNote ?? "No documents yet."}
             </p>
           ) : (
-            <div className="relative overflow-x-auto rounded-[var(--radius)] border border-[var(--border)] bg-white">
+            <>
+              <PhoneCardList label={group.label ?? "Documents"}>
+                {group.documents.map((document) => (
+                  <DocumentCard
+                    key={document.id}
+                    document={document}
+                    canDelete={canDelete}
+                    location={showLocation ? (locationFor?.(document) ?? "—") : undefined}
+                    onOpenHistory={() => setHistory({ id: document.id, title: document.title })}
+                    onDeleted={() => refresh(document)}
+                  />
+                ))}
+              </PhoneCardList>
+              <DesktopTable>
               <table className="w-full text-sm">
                 <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--brand-gray)]">
                   <tr>
@@ -300,7 +413,8 @@ export function DocumentTable({
                   ))}
                 </tbody>
               </table>
-            </div>
+              </DesktopTable>
+            </>
           )}
         </section>
       ))}

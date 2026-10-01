@@ -21,6 +21,8 @@ import {
   type Mentionable,
   type MentionableDepartment,
 } from "@/components/comments/comment-composer";
+import { CounterLine } from "@/components/comments/comment-composer";
+import { COMMENT_MAX_LENGTH } from "@/components/comments/comment-limit";
 import { DisciplinesIcon } from "@/components/shell/icons";
 import {
   Avatar,
@@ -117,7 +119,7 @@ function CommentRow({
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex items-start gap-2">
           <p className="min-w-0 flex-1 text-sm text-[var(--brand-gray)]">
-            <span className="font-semibold text-[var(--brand-ink)]">{comment.authorName}</span>{" "}
+            <span className="break-words font-semibold text-[var(--brand-ink)]">{comment.authorName}</span>{" "}
             <CompanyBadge companyName={comment.authorCompanyName} /> ·{" "}
             {formatRelative(comment.createdAt)}
             {comment.editedAt ? " · (edited)" : ""}
@@ -129,7 +131,7 @@ function CommentRow({
                 type="button"
                 aria-label={`Options for ${comment.authorName}'s comment`}
                 aria-expanded={menuOpen}
-                className="rounded px-2 py-1 text-sm text-[var(--brand-gray)] hover:bg-[var(--page-bg)]"
+                className="h-11 w-11 rounded text-sm text-[var(--brand-gray)] hover:bg-[var(--page-bg)]"
                 onClick={() => setMenuOpen((open) => !open)}
               >
                 ⋯
@@ -139,7 +141,7 @@ function CommentRow({
                   {canEdit ? (
                     <button
                       type="button"
-                      className="block w-full px-3 py-2 text-left text-sm hover:bg-[var(--page-bg)]"
+                      className="block min-h-11 w-full px-3 py-2 text-left text-sm hover:bg-[var(--page-bg)]"
                       onClick={() => {
                         setDraft(comment.body);
                         setEditing(true);
@@ -152,7 +154,7 @@ function CommentRow({
                   {canRemove ? (
                     <button
                       type="button"
-                      className="block w-full px-3 py-2 text-left text-sm text-[var(--status-blocked)] hover:bg-[var(--page-bg)]"
+                      className="block min-h-11 w-full px-3 py-2 text-left text-sm text-[var(--status-blocked)] hover:bg-[var(--page-bg)]"
                       onClick={() => {
                         setConfirmOpen(true);
                         setMenuOpen(false);
@@ -176,10 +178,11 @@ function CommentRow({
               aria-label="Edit your comment"
               onChange={(event) => setDraft(event.target.value)}
             />
+            <CounterLine length={draft.length} />
             <div className="flex gap-2">
               <Button
                 loading={pending}
-                disabled={draft.trim().length === 0}
+                disabled={draft.trim().length === 0 || draft.length > COMMENT_MAX_LENGTH}
                 onClick={() =>
                   run(() => editComment({ id: comment.id, body: draft.trim() }), {
                     success: "Comment updated.",
@@ -199,7 +202,7 @@ function CommentRow({
             </div>
           </div>
         ) : (
-          <p className="whitespace-pre-wrap text-sm text-[var(--brand-text)]">
+          <p className="min-w-0 whitespace-pre-wrap break-words text-sm text-[var(--brand-text)]">
             {renderBody(comment.body, memberNames, departmentNames)}
           </p>
         )}

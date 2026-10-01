@@ -40,7 +40,7 @@ export function FavoriteStar({
           },
         })
       }
-      className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] transition-colors hover:bg-[var(--page-bg)] disabled:cursor-not-allowed ${
+      className={`relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] transition-colors after:absolute after:-inset-1.5 after:content-[''] hover:bg-[var(--page-bg)] disabled:cursor-not-allowed ${
         on ? "text-[var(--brand-accent)]" : "text-[var(--brand-gray)] hover:text-[var(--brand-primary)]"
       } ${className}`}
     >

@@ -45,7 +45,7 @@ export function NotificationBell() {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={count > 0 ? `Notifications, ${count} unread` : "Notifications"}
-        className="relative rounded-[var(--radius)] p-2 text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
+        className="relative inline-flex min-h-11 min-w-11 items-center justify-center rounded-[var(--radius)] p-2 text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
       >
         <BellIcon />
         {count > 0 ? (
@@ -67,7 +67,7 @@ export function NotificationBell() {
                 type="button"
                 onClick={() => markAllRead.mutate()}
                 disabled={markAllRead.isPending}
-                className="text-xs font-semibold text-[var(--brand-primary)] hover:underline disabled:text-[var(--brand-gray)]"
+                className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] hover:underline disabled:text-[var(--brand-gray)]"
               >
                 Mark all read
               </button>
@@ -112,7 +112,7 @@ export function NotificationBell() {
             <Link
               href="/notifications"
               onClick={() => setOpen(false)}
-              className="text-xs font-semibold text-[var(--brand-primary)] hover:underline"
+              className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] hover:underline"
             >
               View all notifications →
             </Link>

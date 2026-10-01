@@ -31,13 +31,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           {unverified ? <VerificationBanner email={user.email} /> : null}
           <Topbar name={user.name} email={user.email} role={user.role} />
           <main className="min-w-0 flex-1 p-4 sm:p-6">{children}</main>
-          <footer className="border-t border-[var(--brand-stone)] px-4 py-3 text-xs text-[var(--brand-gray)] sm:px-6">
+          <footer className="flex flex-wrap items-center gap-x-2 border-t border-[var(--brand-stone)] px-4 text-xs text-[var(--brand-gray)] sm:px-6">
             Tielora &middot;{" "}
-            <Link href="/privacy" className="underline-offset-2 hover:underline">
+            <Link href="/privacy" className="inline-flex min-h-11 items-center underline-offset-2 hover:underline">
               Privacy notice
             </Link>{" "}
             &middot;{" "}
-            <Link href="/terms" className="underline-offset-2 hover:underline">
+            <Link href="/terms" className="inline-flex min-h-11 items-center underline-offset-2 hover:underline">
               Terms of use
             </Link>
           </footer>

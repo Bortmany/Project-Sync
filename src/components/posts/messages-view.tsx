@@ -488,7 +488,7 @@ function ReplyRow({ reply, onChanged }: { reply: PostDTO; onChanged: () => void 
       <div className="min-w-0 flex-1 space-y-1">
         <PostHeader post={reply} onChanged={onChanged} />
         <p
-          className={`whitespace-pre-wrap text-sm ${
+          className={`min-w-0 whitespace-pre-wrap break-words text-sm ${
             reply.isDeleted
               ? "italic text-[var(--brand-gray)]"
               : "text-[var(--brand-text)]"
@@ -511,10 +511,10 @@ function BoardPost({ post, onChanged }: { post: BoardPostDTO; onChanged: () => v
         <div className="min-w-0 flex-1 space-y-1">
           <PostHeader post={post} onChanged={onChanged} />
           {post.title ? (
-            <h3 className="text-sm font-semibold text-[var(--brand-ink)]">{post.title}</h3>
+            <h3 className="min-w-0 break-words text-sm font-semibold text-[var(--brand-ink)]">{post.title}</h3>
           ) : null}
           <p
-            className={`whitespace-pre-wrap text-sm ${
+            className={`min-w-0 whitespace-pre-wrap break-words text-sm ${
               post.isDeleted ? "italic text-[var(--brand-gray)]" : "text-[var(--brand-text)]"
             }`}
           >
