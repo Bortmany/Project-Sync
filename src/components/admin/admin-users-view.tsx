@@ -18,8 +18,10 @@ import {
   Avatar,
   Badge,
   Button,
+  CellText,
   CompanyBadge,
   DateInput,
+  DesktopTable,
   DisciplineDot,
   EmptyState,
   ErrorBanner,
@@ -27,6 +29,8 @@ import {
   FilterChips,
   Input,
   Modal,
+  PhoneCard,
+  PhoneCardList,
   Select,
   hasActiveFilters,
   type ActiveFilters,
@@ -349,7 +353,7 @@ function ResendInviteButton({ user }: { user: UserDTO }) {
           failure: "Couldn't send that invite. Try again.",
         })
       }
-      className="text-xs font-semibold text-[var(--brand-primary)] hover:underline disabled:text-[var(--brand-gray)]"
+      className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] hover:underline disabled:text-[var(--brand-gray)]"
     >
       {pending ? "Sending…" : "Resend invite email"}
     </button>
@@ -648,22 +652,33 @@ function TurnOffTwoFactorDialog({
   );
 }
 
-function ReactivateButton({ user }: { user: UserDTO }) {
+function ReactivateButton({ user, full = false }: { user: UserDTO; full?: boolean }) {
   const router = useRouter();
   const { run, pending } = useAction();
+
+  function reactivate() {
+    run(() => updateUser({ id: user.id, isActive: true }), {
+      success: `${user.name} can sign in again.`,
+      failure: "Couldn't reactivate this user. Try again.",
+      onSuccess: () => router.refresh(),
+    });
+  }
+
+  // On a phone card it is a full-width button; in the table it stays the small text link it was.
+  if (full) {
+    return (
+      <Button variant="secondary" className="min-h-11 w-full" loading={pending} onClick={reactivate}>
+        Reactivate
+      </Button>
+    );
+  }
 
   return (
     <button
       type="button"
       disabled={pending}
-      onClick={() =>
-        run(() => updateUser({ id: user.id, isActive: true }), {
-          success: `${user.name} can sign in again.`,
-          failure: "Couldn't reactivate this user. Try again.",
-          onSuccess: () => router.refresh(),
-        })
-      }
-      className="text-xs font-semibold text-[var(--brand-primary)] hover:underline disabled:text-[var(--brand-gray)]"
+      onClick={reactivate}
+      className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] hover:underline disabled:text-[var(--brand-gray)]"
     >
       Reactivate
     </button>
@@ -760,13 +775,106 @@ export function AdminUsersView({
           <button
             type="button"
             onClick={clearFilters}
-            className="mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+            className="inline-flex min-h-11 items-center mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
           >
             Clear filters
           </button>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-[var(--radius)] border border-[var(--border)] bg-white">
+        <>
+        <PhoneCardList label="People">
+          {visible.map((user) => {
+            const discipline = user.disciplineId ? disciplineName.get(user.disciplineId) : undefined;
+            const isContractor = user.role === "EXTERNAL";
+            const expired = isAccessExpired(user);
+            return (
+              <PhoneCard
+                key={user.id}
+                dimmed={!user.isActive}
+                leading={<Avatar name={user.name} size={32} />}
+                title={user.name}
+                meta={<CompanyBadge companyName={user.companyName} />}
+                fields={[
+                  { label: "Email", value: user.email },
+                  { label: "Role", value: ROLE_LABEL[user.role] },
+                  {
+                    label: "Discipline",
+                    hidden: !discipline,
+                    value: discipline ? (
+                      <DisciplineDot colorHex={discipline.colorHex} code={discipline.name} showCode />
+                    ) : null,
+                  },
+                  {
+                    label: "Company",
+                    hidden: !(isContractor && user.companyName),
+                    value: user.companyName,
+                  },
+                  {
+                    label: "Access",
+                    hidden: !isContractor,
+                    value: !user.accessExpiresAt ? (
+                      <span className="text-[var(--brand-gray)]">No expiry</span>
+                    ) : expired ? (
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="text-[var(--status-blocked)]">
+                          {formatDateUtc(user.accessExpiresAt)}
+                        </span>
+                        <Badge color="var(--status-blocked)">Expired</Badge>
+                      </span>
+                    ) : (
+                      formatDateUtc(user.accessExpiresAt)
+                    ),
+                  },
+                  { label: "Last signed in", value: user.lastLoginAt ? formatDate(user.lastLoginAt) : "Never" },
+                  {
+                    label: "Status",
+                    value: (
+                      <span className="flex flex-wrap items-center gap-2">
+                        {user.isActive ? (
+                          <Badge color="var(--status-completed)">Active</Badge>
+                        ) : (
+                          <Badge color="var(--brand-gray)">Deactivated</Badge>
+                        )}
+                        {user.twoFactorEnabled ? (
+                          <Badge color="var(--status-completed)">Two-factor on</Badge>
+                        ) : null}
+                      </span>
+                    ),
+                  },
+                ]}
+                actions={
+                  <>
+                    <Button variant="secondary" className="min-h-11 w-full" onClick={() => setEditing(user)}>
+                      Edit
+                    </Button>
+                    {isContractor && user.accessExpiresAt && expired ? (
+                      <Button variant="secondary" className="min-h-11 w-full" onClick={() => setEditing(user)}>
+                        Extend access
+                      </Button>
+                    ) : null}
+                    {user.isActive ? (
+                      <Button variant="danger" className="min-h-11 w-full" onClick={() => setDeactivating(user)}>
+                        Deactivate
+                      </Button>
+                    ) : (
+                      <ReactivateButton user={user} full />
+                    )}
+                    {user.twoFactorEnabled ? (
+                      <Button
+                        variant="danger"
+                        className="min-h-11 w-full"
+                        onClick={() => setResettingTwoFactor(user)}
+                      >
+                        Turn off their two-factor
+                      </Button>
+                    ) : null}
+                  </>
+                }
+              />
+            );
+          })}
+        </PhoneCardList>
+        <DesktopTable>
           <table className="w-full text-sm">
             <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--brand-gray)]">
               <tr>
@@ -797,11 +905,13 @@ export function AdminUsersView({
                     <td className="px-3">
                       <span className="flex flex-wrap items-center gap-2 font-semibold text-[var(--brand-ink)]">
                         <Avatar name={user.name} size={24} />
-                        {user.name}
+                        <CellText>{user.name}</CellText>
                         <CompanyBadge companyName={user.companyName} />
                       </span>
                     </td>
-                    <td className="px-3 text-[var(--brand-text)]">{user.email}</td>
+                    <td className="px-3 text-[var(--brand-text)]">
+                      <CellText>{user.email}</CellText>
+                    </td>
                     <td className="px-3 text-[var(--brand-text)]">{ROLE_LABEL[user.role]}</td>
                     <td className="px-3">
                       {discipline ? (
@@ -835,7 +945,7 @@ export function AdminUsersView({
                           <button
                             type="button"
                             onClick={() => setEditing(user)}
-                            className="text-xs font-semibold text-[var(--brand-primary)] hover:underline"
+                            className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] hover:underline"
                           >
                             Extend
                           </button>
@@ -867,7 +977,7 @@ export function AdminUsersView({
                         <button
                           type="button"
                           onClick={() => setEditing(user)}
-                          className="text-xs font-semibold text-[var(--brand-primary)] hover:underline"
+                          className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] hover:underline"
                         >
                           Edit
                         </button>
@@ -875,7 +985,7 @@ export function AdminUsersView({
                           <button
                             type="button"
                             onClick={() => setDeactivating(user)}
-                            className="text-xs font-semibold text-[var(--status-blocked)] hover:underline"
+                            className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--status-blocked)] hover:underline"
                           >
                             Deactivate
                           </button>
@@ -886,7 +996,7 @@ export function AdminUsersView({
                           <button
                             type="button"
                             onClick={() => setResettingTwoFactor(user)}
-                            className="text-xs font-semibold text-[var(--status-blocked)] hover:underline"
+                            className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--status-blocked)] hover:underline"
                           >
                             Turn off their two-factor
                           </button>
@@ -898,14 +1008,15 @@ export function AdminUsersView({
               })}
             </tbody>
           </table>
-        </div>
+        </DesktopTable>
+        </>
       )}
 
       {hasActiveFilters(filters) && visible.length > 0 ? (
         <button
           type="button"
           onClick={clearFilters}
-          className="text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+          className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
         >
           Clear filters
         </button>

@@ -1,4 +1,6 @@
-// Transactional email: the invitation, password-reset and verification messages Tielora sends.
+// Email: the invitation, password-reset and verification messages Tielora sends, and — only for
+// people who asked for them — alert emails (a copy of one in-app notification) and the daily brief.
+// Only those last two carry the one-click unsubscribe headers and footer.
 //
 // SERVER ONLY. Nothing here is ever imported by a client component — it reads the API key.
 //
@@ -19,8 +21,18 @@
 //     undo or fail the change that caused the email.
 
 import type { Prisma } from "@/generated/prisma/client";
+import {
+  dailyBriefBody,
+  dailyBriefSubject,
+  emailBodyText,
+  emailLayout,
+  emailSubject,
+  type EmailFooterLinks,
+} from "@/lib/email-text";
 import { logger } from "@/lib/logger";
-import type { EmailedPurposeName } from "@/lib/zod-schemas";
+import { limit } from "@/lib/rate-limit";
+import { unsubscribeToken } from "@/lib/unsubscribe-token";
+import type { BriefDTO, EmailedPurposeName, UnsubscribeKindName } from "@/lib/zod-schemas";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
 import { EMAIL_TOKEN_TTL_WORDS } from "@/server/services/email-tokens";
 // The one place in the app that reads and validates APP_BASE_URL. Reused rather than repeated, so
@@ -130,10 +142,18 @@ export type EmailMessage = {
   subject: string;
   /** Plain text only. These emails carry one link and no markup; there is no template library. */
   text: string;
+  /**
+   * Extra mail headers. Only the alert and brief emails pass any — the two one-click unsubscribe
+   * headers (RFC 8058). Invitations, resets and verification never carry them.
+   */
+  headers?: Record<string, string>;
 };
 
+/** The two kinds of email a person chooses, as they appear in a log line. */
+export type BulkEmailPurpose = "ALERT" | "DAILY_BRIEF" | "WEEKLY_BRIEF";
+
 /** Only ever used to make a log line useful. Never the address, never the link. */
-type SendContext = { purpose?: EmailedPurposeName; userId?: string };
+type SendContext = { purpose?: EmailedPurposeName | BulkEmailPurpose; userId?: string };
 
 /** Seconds from a Retry-After header, clamped to something we are willing to wait. */
 export function emailRetryAfterMs(header: string | null): number {
@@ -156,6 +176,8 @@ function postOnce(config: EmailConfig, message: EmailMessage): Promise<Response>
       to: [message.to],
       subject: message.subject,
       text: message.text,
+      // Only present when asked for, so the three account emails go out exactly as they always have.
+      ...(message.headers ? { headers: message.headers } : {}),
     }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     redirect: "error",
@@ -362,4 +384,177 @@ export async function appendEmailActivity(
     summary: summaryFor(input),
     metadata: { kind: input.purpose, userId: input.recipientId },
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Alert and brief emails — only for people who asked for them         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The flood guard: at most this many alert emails per person per hour, counted in this process
+ * exactly as rate limiting is. A person mass-assigned fifty tasks gets twenty emails, not fifty;
+ * every in-app notification is still written, and those are the truth.
+ */
+export const ALERT_EMAILS_PER_HOUR = 20;
+const ALERT_WINDOW_MS = 60 * 60 * 1000;
+
+/** Where the daily brief's "Open your day in Tielora" link goes. */
+const BRIEF_PAGE_PATH = "/my-tasks/brief";
+
+/** Who an alert or brief is going to: the id for the token and the log line, the address to send. */
+export type BulkRecipient = { id: string; email: string };
+
+/** Everything an alert email is built from: the notification row, and nothing wider. */
+export type AlertEmailRow = { title: string; body: string; linkUrl: string };
+
+export type BulkEmailOutcome = EmailOutcome | { status: "held back" };
+
+type BulkLinks = { headers: Record<string, string>; footer: EmailFooterLinks };
+
+/**
+ * The two unsubscribe headers and the two footer links for one person and one kind, or null when
+ * there is no base address or no secret to sign the token with. No alert or brief ever goes out
+ * without its way out.
+ */
+function bulkLinks(personId: string, kind: UnsubscribeKindName): BulkLinks | null {
+  const base = appBaseUrl();
+  if (!base) return null;
+  const token = unsubscribeToken(personId, kind);
+  if (!token) return null;
+  const t = encodeURIComponent(token);
+  return {
+    headers: {
+      "List-Unsubscribe": `<${base}/api/email/unsubscribe?t=${t}>`,
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    },
+    footer: { unsubscribePage: `${base}/unsubscribe?t=${t}`, account: `${base}/account` },
+  };
+}
+
+function appLink(path: string): string {
+  const base = appBaseUrl() ?? "";
+  return `${base}${path.startsWith("/") ? "" : "/"}${path}`;
+}
+
+/** Said once per process: a keyed mail provider with no SESSION_SECRET cannot sign the way out. */
+let warnedAboutSigning = false;
+
+function noWayOut(purpose: BulkEmailPurpose): BulkEmailOutcome {
+  if (!warnedAboutSigning) {
+    warnedAboutSigning = true;
+    logger.warn("Alert and brief emails need SESSION_SECRET for their unsubscribe link", {
+      purpose,
+    });
+  }
+  return { status: "failed", reason: "there is no unsubscribe link to put in it" };
+}
+
+/**
+ * One alert email: the copy of ONE notification row, for the person that row belongs to.
+ *
+ * Subject = the row's title; body = the row's sentence and a link back to the row's page. Nothing
+ * is fetched to enrich it, so whatever walls `notify()` already keeps — the company, the contractor
+ * — are the walls of the email too. Typed web addresses become "[link removed]" here, in the copy,
+ * never in the stored row. The caller decides WHETHER a person is emailed (their `emailAlerts`, a
+ * confirmed address, a type with a chat toggle); this only builds, guards and sends.
+ *
+ * Never throws, never awaited by anything a person is waiting on.
+ */
+export async function sendAlertEmail(
+  recipient: BulkRecipient,
+  row: AlertEmailRow,
+): Promise<BulkEmailOutcome> {
+  if (!emailAvailable()) return { status: "dormant" };
+  const links = bulkLinks(recipient.id, "ALERTS");
+  if (!links) return noWayOut("ALERT");
+
+  const flood = limit(`email-alerts:${recipient.id}`, ALERT_EMAILS_PER_HOUR, ALERT_WINDOW_MS);
+  if (!flood.ok) {
+    // The person's id and nothing else — never an address, never what the alert said.
+    logger.info("Alert email held back", {
+      userId: recipient.id,
+      reason: "the hourly limit for this person was reached",
+    });
+    return { status: "held back" };
+  }
+
+  return sendEmail(
+    {
+      to: recipient.email,
+      subject: emailSubject(row.title),
+      text: emailLayout({
+        kind: "Alert",
+        body: emailBodyText(row.body),
+        openLabel: "Open it in Tielora:",
+        openLink: appLink(row.linkUrl),
+        footer: links.footer,
+      }),
+      headers: links.headers,
+    },
+    { purpose: "ALERT", userId: recipient.id },
+  );
+}
+
+/**
+ * One person's daily brief: their own "Your day", exactly as their brief page shows it to them.
+ * The caller has already decided the day is not empty — nothing is sent on an empty day.
+ */
+export async function sendDailyBriefEmail(
+  recipient: BulkRecipient,
+  brief: BriefDTO,
+  now: Date,
+): Promise<BulkEmailOutcome> {
+  if (!emailAvailable()) return { status: "dormant" };
+  const links = bulkLinks(recipient.id, "DAILY");
+  if (!links) return noWayOut("DAILY_BRIEF");
+
+  return sendEmail(
+    {
+      to: recipient.email,
+      subject: dailyBriefSubject(brief, now),
+      text: emailLayout({
+        kind: "Your day",
+        body: dailyBriefBody(brief),
+        openLabel: "Open your day in Tielora:",
+        openLink: appLink(BRIEF_PAGE_PATH),
+        footer: links.footer,
+      }),
+      headers: links.headers,
+    },
+    { purpose: "DAILY_BRIEF", userId: recipient.id },
+  );
+}
+
+/** Where the weekly brief's "Open Tielora" link goes. */
+const WEEKLY_PAGE_PATH = "/dashboard";
+
+/**
+ * One person's weekly brief: the subject and plain-text body were built from the projects THAT
+ * person may see (`personWeeklyBrief`), and arrive here already neutralised. The caller has already
+ * decided there is something to say — nothing is sent for a person with no visible project.
+ * Carries the WEEKLY unsubscribe link and headers; with no way out, nothing is sent.
+ */
+export async function sendWeeklyBriefEmail(
+  recipient: BulkRecipient,
+  content: { subject: string; body: string },
+): Promise<BulkEmailOutcome> {
+  if (!emailAvailable()) return { status: "dormant" };
+  const links = bulkLinks(recipient.id, "WEEKLY");
+  if (!links) return noWayOut("WEEKLY_BRIEF");
+
+  return sendEmail(
+    {
+      to: recipient.email,
+      subject: emailSubject(content.subject),
+      text: emailLayout({
+        kind: "Your week",
+        body: content.body,
+        openLabel: "Open Tielora:",
+        openLink: appLink(WEEKLY_PAGE_PATH),
+        footer: links.footer,
+      }),
+      headers: links.headers,
+    },
+    { purpose: "WEEKLY_BRIEF", userId: recipient.id },
+  );
 }

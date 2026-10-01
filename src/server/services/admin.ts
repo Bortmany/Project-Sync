@@ -5,7 +5,6 @@
 // Every mutation: assertCan → transaction → audit row in the same transaction → typed DTO.
 // Passwords are hashed before they reach the database and never appear in an audit row or a log.
 
-import { isAccessExpired } from "@/lib/access-expiry";
 import { hashPassword } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { DISCIPLINE_PALETTE, isPaletteColor } from "@/lib/discipline-colors";
@@ -31,7 +30,7 @@ import {
   unusablePasswordHash,
 } from "@/server/services/account";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
-import { assertUserRoom } from "@/server/services/billing";
+import { assertUserRoom, peopleGroupOf } from "@/server/services/billing";
 import { emailAvailable } from "@/server/services/email";
 import { retireSignInTickets } from "@/server/services/email-tokens";
 import { notify } from "@/server/services/notify";
@@ -194,8 +193,9 @@ export async function createUser(actor: ActorContext, input: CreateUserInput): P
 
   // The plan's ceiling, before anything is written, and the same ceiling whichever way somebody is
   // being added: a first password or an emailed invitation both end in one more account that can
-  // sign in. Deactivated accounts are not counted — see countUsers().
-  await assertUserRoom(actor);
+  // sign in. The role chosen decides the ceiling: contractors ask the contractor ceiling, everybody
+  // else the office-staff one. Deactivated accounts are not counted — see countOfficeStaff().
+  await assertUserRoom(actor, input.role);
 
   const invited = input.mode === "INVITE";
   // Dormant is not a half-state: with no mail provider the invite path does not exist at all, and
@@ -239,6 +239,10 @@ export async function createUser(actor: ActorContext, input: CreateUserInput): P
         jobTitle: input.jobTitle ?? null,
         companyName,
         accessExpiresAt,
+        // A NEW account starts with alert emails on (both modes, contractors included) — set here,
+        // in code, never by the column default, which is false so the migration switched nobody on.
+        // Nothing is sent until the address is confirmed. Both briefs stay off: they are opt-in.
+        emailAlerts: true,
       },
       select: USER_SELECT,
     });
@@ -336,17 +340,22 @@ export async function updateUser(actor: ActorContext, input: UpdateUserInput): P
     }
   }
 
-  // GIVING A SEAT BACK IS TAKING A SEAT. Somebody who was not counted against the plan and will be
-  // afterwards needs room for exactly the same reason a brand-new account does — otherwise
-  // deactivating ten people, adding ten more and switching the first ten back on would leave a
-  // ten-seat company with twenty people who can sign in. Extending an expired contractor's access
-  // is the same move by another route, so both are asked the same question, using the same
-  // definition of "counts" that countUsers() uses.
-  const countedBefore =
-    existing.isActive && !isAccessExpired({ role: existing.role, accessExpiresAt: existing.accessExpiresAt });
-  const countsAfter =
-    nextIsActive && !isAccessExpired({ role: nextRole, accessExpiresAt: nextAccessExpiresAt });
-  if (!countedBefore && countsAfter) await assertUserRoom(actor);
+  // MOVING INTO A COUNTED GROUP IS TAKING A PLACE. Which group, if any, was this person in before,
+  // and which after? If they will be in one they were not in already, that group's ceiling is asked.
+  // One rule covers reactivating a deactivated account, extending an expired contractor, and
+  // changing somebody between office staff and contractor (a move from one count to the other) —
+  // otherwise deactivating ten people, adding ten more and switching the first ten back on would
+  // leave a ten-person company with twenty. Both answers come from peopleGroupOf(), which is written
+  // from the same isAccessExpired() the counts use, so the question and the count cannot drift.
+  // Never asked: deactivating, renaming, same-group moves, or shortening / extending the date of a
+  // contractor who is still counted.
+  const groupBefore = peopleGroupOf(existing);
+  const groupAfter = peopleGroupOf({
+    role: nextRole,
+    isActive: nextIsActive,
+    accessExpiresAt: nextAccessExpiresAt,
+  });
+  if (groupAfter !== null && groupAfter !== groupBefore) await assertUserRoom(actor, nextRole);
 
   const passwordHash = input.password ? await hashPassword(input.password) : undefined;
 

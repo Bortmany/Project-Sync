@@ -28,6 +28,7 @@ import {
   useProject,
 } from "@/components/hooks/use-api";
 import { FavoriteStar } from "@/components/shell/favorite-star";
+import { DependenciesCard } from "@/components/tasks/dependencies-card";
 import { formatDate } from "@/components/format";
 import {
   Avatar,
@@ -47,6 +48,7 @@ import {
   Textarea,
 } from "@/components/ui";
 import {
+  awaitingSignoff,
   completeButtonFor,
   statusChoicesFor,
   submitsForSignoff,
@@ -146,6 +148,15 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
     leadsThisWork && !isExternalUser(me.data) && data.status === "AWAITING_REVIEW";
   const canReassign = leadsThisWork;
   const canDeleteDocuments = isManagerOn(me.data, project.data);
+  // Only administrators and project managers sequence work. The server checks it again.
+  const canEditDependencies = isManagerOn(me.data, project.data) && !isExternalUser(me.data);
+  // The same people the server lets upload here: managers, a lead on the project, and the person
+  // the task is assigned to. Everyone else sees the documents read-only instead of a button that
+  // would be refused.
+  const canUpload =
+    isManagerOn(me.data, project.data) ||
+    (!isExternalUser(me.data) && isLeadOrAboveOn(me.data, project.data)) ||
+    (me.data?.id !== undefined && me.data.id === data.assigneeId);
   const teammates = (project.data?.members ?? []).filter(
     (member) => member.disciplineId === data.disciplineId,
   );
@@ -170,10 +181,15 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
     signoffRequired: project.data?.externalSignoffRequired ?? true,
     status: data.status,
     canComplete: data.canComplete,
+    phaseLocked: Boolean(data.phaseLockedReason),
   };
   const statusChoices = statusChoicesFor(actionContext);
   const completeButton = completeButtonFor(actionContext);
   const handingIn = submitsForSignoff(actionContext);
+  // While work waits for a sign-off the only actions are the reviewer's (Confirm and complete /
+  // Send back, in the panel above): a contractor has already submitted, and a reviewer must not be
+  // offered a second, competing "Mark complete".
+  const waitingForSignoff = awaitingSignoff(actionContext, canSignOff);
 
   function setStatus(status: TaskStatusName, note?: string) {
     run(() => updateDisciplineTaskStatus({ id: data.id, status, note }), {
@@ -261,7 +277,8 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
                   <Select
                     id="discipline-status"
                     value={data.status}
-                    disabled={pending}
+                    disabled={pending || Boolean(data.phaseLockedReason)}
+                    title={data.phaseLockedReason ?? undefined}
                     onChange={(event) => {
                       const next = event.target.value as TaskStatusName;
                       if (next === "BLOCKED") {
@@ -281,11 +298,12 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
               </>
             ) : null}
 
-            {canControl && data.status !== "COMPLETED" ? (
+            {canControl && data.status !== "COMPLETED" && !waitingForSignoff ? (
               <Button
                 className="min-h-11 w-full sm:ml-auto sm:w-auto"
                 loading={pending}
                 disabled={completeButton.disabled || pending}
+                title={completeButton.disabled ? data.blockers.join(" ") || undefined : undefined}
                 onClick={() =>
                   run(() => completeDisciplineTask({ id: data.id }), {
                     success: handingIn ? "Sent for sign-off." : "Marked complete.",
@@ -305,17 +323,26 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
                 variant="secondary"
                 className="w-full sm:ml-auto sm:w-auto"
                 onClick={() => setReopenOpen(true)}
-                disabled={pending}
+                disabled={pending || Boolean(data.phaseLockedReason)}
+                title={data.phaseLockedReason ?? undefined}
               >
                 Reopen
               </Button>
             ) : null}
           </div>
 
-          {canControl && data.status !== "COMPLETED" && !data.canComplete ? (
+          {canControl && data.status === "AWAITING_REVIEW" && handingIn ? (
+            <p className="text-sm text-[var(--brand-text)]">
+              Sent for sign-off. The reviewer will confirm it or send it back with a note.
+            </p>
+          ) : null}
+
+          {canControl && data.status !== "COMPLETED" && !waitingForSignoff && !data.canComplete ? (
             <p className="text-sm text-[var(--brand-text)]">
               {/* Each blocker is already a full sentence with its own full stop — don't add another. */}
-              {handingIn ? (
+              {data.phaseLockedReason ? (
+                <>You can&apos;t mark this complete yet: {data.blockers.join(" ")}</>
+              ) : handingIn ? (
                 <>
                   You can still send this for sign-off. The person reviewing it will need:{" "}
                   {data.blockers.join(" ")}
@@ -351,37 +378,11 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--brand-gray)]">
                 Required documents
               </h3>
-              <RequiredDocsChecklist task={data} />
+              <RequiredDocsChecklist task={data} canUpload={canUpload} />
             </div>
           </Card>
 
-          <Card title="Depends on">
-            {data.dependencies.length === 0 ? (
-              <p className="text-sm text-[var(--brand-gray)]">
-                Nothing else has to finish before this task.
-              </p>
-            ) : (
-              <ul className="divide-y divide-[var(--border)]">
-                {data.dependencies.map((dependency) => (
-                  <li
-                    key={dependency.id}
-                    className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm"
-                  >
-                    <Link
-                      href={`/discipline-tasks/${dependency.id}`}
-                      className="min-w-0 flex-1 basis-40 text-[var(--brand-primary)] hover:underline"
-                    >
-                      {dependency.title}
-                    </Link>
-                    <span className="text-xs text-[var(--brand-gray)]">
-                      {dependency.disciplineCode}
-                    </span>
-                    <StatusBadge status={dependency.status} />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
+          <DependenciesCard task={data} canEdit={canEditDependencies} onChanged={refresh} />
 
           <Tabs
             items={[
@@ -401,7 +402,13 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
               {
                 id: "documents",
                 label: "Documents",
-                content: <DisciplineTaskDocuments task={data} canDelete={canDeleteDocuments} />,
+                content: (
+                  <DisciplineTaskDocuments
+                    task={data}
+                    canDelete={canDeleteDocuments}
+                    canUpload={canUpload}
+                  />
+                ),
               },
               {
                 id: "activity",

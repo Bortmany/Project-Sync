@@ -188,6 +188,16 @@ export async function deleteMyAccount(
         disciplineId: null,
         accessExpiresAt: null,
         emailVerifiedAt: null,
+        // Email choices: all off, and the last daily-brief date forgotten. (The unsubscribe token
+        // needs no clearing — it is a signature, not a row, and an inactive account ignores it.)
+        emailAlerts: false,
+        emailDailyBrief: false,
+        emailWeeklyBrief: false,
+        dailyBriefEmailedAt: null,
+        // The Microsoft sign-in link: both identifiers go, so the permanent id Microsoft gave this
+        // person is no longer held anywhere (the audit rows never carried it).
+        microsoftOid: null,
+        microsoftTenantId: null,
         isActive: false,
       },
     });

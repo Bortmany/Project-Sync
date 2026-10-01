@@ -12,6 +12,7 @@
 import type { Metadata } from "next";
 import { LinkButton } from "@/components/public/link-button";
 import { PLANS, PRO_PRICE, limitAmount, type LimitKind } from "@/lib/plan-limits";
+import { aiConfigured } from "@/server/services/ai";
 import type { PlanName } from "@/lib/zod-schemas";
 
 // Rendered per request, for one reason: this page's Open Graph image is an ABSOLUTE address, built
@@ -36,15 +37,15 @@ function capitalised(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-/** One plan's three ceilings, in the order the Billing meters run. */
+/** One plan's four ceilings, in the order the Billing meters run. */
 function allowances(plan: PlanName): string[] {
-  const kinds: LimitKind[] = ["projects", "users", "documentBytes"];
+  const kinds: LimitKind[] = ["projects", "users", "contractors", "documentBytes"];
   return kinds.map((kind) => {
     const limit = PLANS[plan][kind];
     const amount = limitAmount(kind, limit);
-    // A headcount reads better as a ceiling than a fact: "Up to 10 people", but plainly
-    // "Unlimited people" when there is no ceiling to be up to.
-    if (kind === "users" && limit !== null) return `Up to ${amount}`;
+    // A headcount reads better as a ceiling than a fact: "Up to 10 office staff", but plainly
+    // "Unlimited ..." when there is no ceiling to be up to.
+    if ((kind === "users" || kind === "contractors") && limit !== null) return `Up to ${amount}`;
     return capitalised(amount);
   });
 }
@@ -70,6 +71,8 @@ function Allowance({ children }: { children: React.ReactNode }) {
 export default function PricingPage() {
   const free = allowances("FREE");
   const pro = allowances("PRO");
+  // Rendered per request (see `dynamic` above), so it can honestly ask whether AI is set up.
+  const aiOn = aiConfigured();
 
   return (
     <div className="pb-16">
@@ -118,6 +121,9 @@ export default function PricingPage() {
           <p className="mt-6 text-3xl font-semibold text-[var(--brand-ink)] md:text-4xl">
             {PRO_PRICE}
           </p>
+          <p className="mt-1 text-sm text-[var(--brand-text)]">
+            One flat price — it doesn&rsquo;t change when you add people.
+          </p>
           <div className="mt-6">
             <LinkButton href="/signup" full>
               Upgrade to Pro
@@ -139,9 +145,18 @@ export default function PricingPage() {
         <p className="rounded-[var(--radius)] border border-[var(--brand-accent)] bg-[var(--brand-accent)]/10 px-4 py-3 text-center text-sm text-[var(--brand-text)]">
           Both plans include every feature — stage-gated tasks, external contractors, permanent
           document history, the daily brief, chat and Microsoft 365 connections. Free and Pro only
-          differ in how much room you have: projects, people, and storage. Nothing is ever locked
-          behind a higher plan.
+          differ in how much room you have: projects, office staff, contractors, and storage.
+          Outside contractors never count as office staff and never cost extra. Nothing is ever
+          locked behind a higher plan.
         </p>
+        {/* Only when this deployment really has AI switched on: promising a feature that is off
+            would be untrue. The dollars are read from the plan file like every other number. */}
+        {aiOn ? (
+          <p className="mt-3 text-center text-sm text-[var(--brand-text)]">
+            Ask Tielora, our AI assistant, is included with a monthly allowance: ${PLANS.FREE.aiMonthlyUsd}{" "}
+            of use on Free, ${PLANS.PRO.aiMonthlyUsd} on Pro.
+          </p>
+        ) : null}
       </div>
 
       <p className="mx-auto mt-6 max-w-2xl px-6 text-center text-sm text-[var(--brand-text)]">

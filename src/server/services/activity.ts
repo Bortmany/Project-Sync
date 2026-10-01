@@ -63,6 +63,14 @@ export const ACTIVITY = {
   // Microsoft 365 files. These rows carry the tenant id and who connected — never a token.
   MICROSOFT_CONNECTED: "MICROSOFT_CONNECTED",
   MICROSOFT_DISCONNECTED: "MICROSOFT_DISCONNECTED",
+  // Sign in with Microsoft. The company rows carry the tenant id and domain (company facts); the
+  // per-person row carries NO identifier at all — never an oid, a tid, an email or a token.
+  /** An administrator switched Microsoft sign-in on for their company with their own sign-in. */
+  MICROSOFT_SIGNIN_ENABLED: "MICROSOFT_SIGNIN_ENABLED",
+  /** An administrator switched it off; every person's Microsoft link in that company was removed. */
+  MICROSOFT_SIGNIN_DISABLED: "MICROSOFT_SIGNIN_DISABLED",
+  /** Somebody's first Microsoft sign-in linked their Microsoft account to their Tielora account. */
+  MICROSOFT_IDENTITY_LINKED: "MICROSOFT_IDENTITY_LINKED",
   // The noticeboard. A dismissal is deliberately absent: hiding a notice from your own dashboard is
   // personal read state, not company work, so it writes no row here.
   ANNOUNCEMENT_POSTED: "ANNOUNCEMENT_POSTED",
@@ -88,6 +96,11 @@ export const ACTIVITY = {
   INVITE_ACCEPTED: "INVITE_ACCEPTED",
   /** Somebody proved an address is theirs. A nudge finished, never a permission granted. */
   EMAIL_VERIFIED: "EMAIL_VERIFIED",
+  /**
+   * Somebody changed their own email choices — from Your account or from an unsubscribe link.
+   * Written only when a value actually changed; `metadata: { changed, via }`. Never a token.
+   */
+  EMAIL_PREFERENCES_CHANGED: "EMAIL_PREFERENCES_CHANGED",
   // Two-factor sign-in. None of these rows ever carries the secret, a six-digit code or a recovery
   // code — only that the account's second factor moved, who moved it, and when.
   /** Somebody finished setting an authenticator app up and proved it with a working code. */
@@ -112,6 +125,11 @@ export const ACTIVITY = {
   /** Somebody took a copy of their OWN data. One row per download. */
   PERSONAL_EXPORT: "PERSONAL_EXPORT",
   /**
+   * Somebody downloaded a status report of one project (PDF or PowerPoint). One row per successful
+   * download, `metadata: { format }`; the contents of the file are never recorded.
+   */
+  REPORT_EXPORTED: "REPORT_EXPORTED",
+  /**
    * Somebody deleted their own account. The summary deliberately does NOT carry their old name —
    * it is written in the same transaction that replaces it with "Former member", and a fresh row
    * naming them would undo the whole point. The older rows keep the name they were written with,
@@ -134,6 +152,17 @@ export const ACTIVITY = {
    * provider's event id, which is exactly enough to trace it back without copying a payload.
    */
   BILLING_PLAN_CHANGED: "BILLING_PLAN_CHANGED",
+  // Ask Tielora. Neither row ever carries the key, a question, an answer, a project id or a project
+  // fact: only who, what kind of question, how many projects, the outcome and the token counts.
+  /**
+   * Somebody asked Ask Tielora a question and the provider was called. One row per call, written in
+   * the same transaction as the spend counter, with NO project id (so it never shows in a project's
+   * feed) and NO question or answer text. A refusal (not found, over the allowance, not set up)
+   * writes nothing: nothing happened.
+   */
+  AI_QUESTION_ASKED: "AI_QUESTION_ASKED",
+  /** An administrator changed the company's two AI switches. `metadata: { changed }`. */
+  AI_SETTINGS_CHANGED: "AI_SETTINGS_CHANGED",
 } as const;
 
 export type ActivityAction = (typeof ACTIVITY)[keyof typeof ACTIVITY];

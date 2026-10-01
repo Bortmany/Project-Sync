@@ -315,7 +315,7 @@ export function PhaseRail({
             <button
               type="button"
               onClick={() => onSelect(null)}
-              className="text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+              className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
             >
               Show every phase
             </button>
@@ -374,7 +374,7 @@ export function PhaseRail({
                       aria-label={`Move ${phase.name} earlier`}
                       disabled={index === 0 || pending}
                       onClick={() => move(phase, -1)}
-                      className="rounded px-1 text-xs text-[var(--brand-gray)] hover:text-[var(--brand-ink)] disabled:opacity-40"
+                      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1 text-xs text-[var(--brand-gray)] hover:text-[var(--brand-ink)] disabled:opacity-40"
                     >
                       ←
                     </button>
@@ -383,7 +383,7 @@ export function PhaseRail({
                       aria-label={`Move ${phase.name} later`}
                       disabled={index === rows.length - 1 || pending}
                       onClick={() => move(phase, 1)}
-                      className="rounded px-1 text-xs text-[var(--brand-gray)] hover:text-[var(--brand-ink)] disabled:opacity-40"
+                      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1 text-xs text-[var(--brand-gray)] hover:text-[var(--brand-ink)] disabled:opacity-40"
                     >
                       →
                     </button>
@@ -391,7 +391,7 @@ export function PhaseRail({
                       type="button"
                       aria-label={`Rename ${phase.name}`}
                       onClick={() => setRenaming(phase)}
-                      className="rounded px-1 text-xs font-semibold text-[var(--brand-primary)] hover:underline"
+                      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1 text-xs font-semibold text-[var(--brand-primary)] hover:underline"
                     >
                       Rename
                     </button>
@@ -400,7 +400,7 @@ export function PhaseRail({
                       aria-label={`Delete ${phase.name}`}
                       disabled={pending}
                       onClick={() => setConfirmDelete(phase)}
-                      className="rounded px-1 text-xs text-[var(--brand-gray)] hover:text-[var(--status-blocked)] disabled:opacity-40"
+                      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1 text-xs text-[var(--brand-gray)] hover:text-[var(--status-blocked)] disabled:opacity-40"
                     >
                       ×
                     </button>
@@ -426,7 +426,7 @@ export function PhaseRail({
                       <button
                         type="button"
                         onClick={() => setOverriding(phase)}
-                        className="font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+                        className="relative font-semibold text-[var(--brand-primary)] underline underline-offset-2 after:absolute after:-inset-y-3.5 after:inset-x-0 after:content-['']"
                       >
                         Override the gate
                       </button>

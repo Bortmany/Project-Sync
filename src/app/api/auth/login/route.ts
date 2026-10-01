@@ -16,11 +16,13 @@ import { isAccessExpired } from "@/lib/access-expiry";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { byIp, checkOnly, clearFailures, clientIp, limit, recordFailure } from "@/lib/rate-limit";
+import { SIGN_IN_REFUSED_MESSAGE } from "@/lib/sign-in-messages";
 import { LoginInput } from "@/lib/zod-schemas";
 import { EMAIL_TOKEN_TTL_MS, issueEmailToken } from "@/server/services/email-tokens";
 import { readableTotpSecret } from "@/server/services/two-factor";
 
-const GENERIC_FAILURE = "Incorrect email or password.";
+// The one refusal sentence, shared with "Sign in with Microsoft" so the two doors can never drift.
+const GENERIC_FAILURE = SIGN_IN_REFUSED_MESSAGE;
 
 export async function POST(request: Request) {
   const throttle = limit(byIp(request, "login"), 10, 60_000);
@@ -132,8 +134,9 @@ export async function POST(request: Request) {
         summary: `${user.name} signed in`,
         // reportedIp comes from the client's proxy chain and is not verified. `twoFactor: false`
         // says this sign-in was the password alone — the second-factor route writes the same row
-        // with true, so the trail always says which door somebody came through.
-        metadata: { reportedIp: ip ?? null, twoFactor: false },
+        // with true, so the trail always says which door somebody came through — and `method` says
+        // which first step it was ("password" here, "microsoft" from the Microsoft callback).
+        metadata: { reportedIp: ip ?? null, twoFactor: false, method: "password" },
       },
     }),
   ]);

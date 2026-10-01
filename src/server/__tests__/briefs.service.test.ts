@@ -13,6 +13,14 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 import { prisma } from "@/lib/db";
 import { SECTION_LIMIT, orgDigest, personBrief, projectBrief } from "@/server/services/briefs";
 import { createPhase } from "@/server/services/phases";
+import { lateCountsByProject } from "@/server/services/late";
+import {
+  orgWeeklyBrief,
+  weeklyBriefMessage,
+  weeklyLineText,
+  type WeeklyBrief,
+  type WeeklyLine,
+} from "@/server/services/weekly-brief";
 import {
   addDependency,
   completeDisciplineTask,
@@ -543,10 +551,16 @@ describe("Where we stand — the project brief", () => {
 
     const brief = await projectBrief(fixture.adminActor, fixture.projectId);
 
-    expect(brief.blockedTotal).toBe(1);
-    expect(brief.blockedTasks[0].title).toBe("Blocked work");
-    expect(brief.blockedTasks[0].unmetDependencies).toEqual(["Earlier work"]);
-    expect(brief.blockedTasks[0].mainTaskTitle).toBe("Piling");
+    // One shared rule: the blocked discipline task AND the main task it blocks both count.
+    expect(brief.blockedTotal).toBe(2);
+    expect(brief.blockedTasks.map((task) => task.kind).sort()).toEqual(["DISCIPLINE", "MAIN"]);
+    const blockedWork = brief.blockedTasks.find((task) => task.title === "Blocked work");
+    expect(blockedWork?.unmetDependencies).toEqual(["Earlier work"]);
+    expect(blockedWork?.mainTaskTitle).toBe("Piling");
+    const blockedMain = brief.blockedTasks.find((task) => task.kind === "MAIN");
+    expect(blockedMain?.title).toBe("Piling");
+    expect(blockedMain?.disciplineCode).toBeNull();
+    expect(blockedMain?.blockedBy.map((entry) => entry.title)).toEqual(["Blocked work"]);
 
     expect(brief.lockedPhases.map((phase) => phase.name)).toEqual(["Structure"]);
     expect(brief.lockedPhases[0].lockedByPhaseName).toBe("Foundations");
@@ -609,7 +623,8 @@ describe("Where we stand — the project brief", () => {
 
     const brief = await projectBrief(fixture.adminActor, fixture.projectId);
     expect(brief.blockedTasks).toHaveLength(SECTION_LIMIT);
-    expect(brief.blockedTotal).toBe(SECTION_LIMIT + 2);
+    // The discipline tasks plus the main task they make blocked.
+    expect(brief.blockedTotal).toBe(SECTION_LIMIT + 3);
   });
 });
 
@@ -635,6 +650,8 @@ describe("the chat digest", () => {
           announcements: false,
 
           dailyBrief: true,
+
+          weeklyBrief: false,
         },
       });
     }
@@ -769,6 +786,8 @@ describe("the chat digest", () => {
         announcements: false,
 
         dailyBrief: true,
+
+        weeklyBrief: false,
       },
     });
     await createMainTask(other.adminActor, {
@@ -813,8 +832,9 @@ describe("the chat digest", () => {
 
     const digest = await orgDigest(fixture.orgId);
 
-    expect(digest?.lines[0].overdue).toBe(15);
-    expect(digest?.lines[0].blocked).toBe(15);
+    expect(digest?.lines[0].lateMain).toBe(15);
+    // Fifteen blocked discipline tasks and the fifteen main tasks they block: one shared rule.
+    expect(digest?.lines[0].blocked).toBe(30);
   });
 
   it("says one line per project: progress, overdue, blocked and the next gate", async () => {
@@ -838,8 +858,8 @@ describe("the chat digest", () => {
     const digest = await orgDigest(fixture.orgId);
 
     expect(digest?.lines).toHaveLength(1);
-    expect(digest?.lines[0].overdue).toBe(1);
-    expect(digest?.lines[0].blocked).toBe(1);
+    expect(digest?.lines[0].lateMain).toBe(1);
+    expect(digest?.lines[0].blocked).toBe(2);
     expect(digest?.lines[0].pct).toBe(0);
     expect(digest?.lines[0].nextGate).toBe("Foundations");
 
@@ -849,9 +869,279 @@ describe("the chat digest", () => {
     await postDailyDigests(morning());
 
     const body = String((fetchSpy.mock.calls[0][1] as RequestInit).body);
-    expect(body).toContain("1 overdue");
-    expect(body).toContain("1 blocked");
+    expect(body).toContain("1 main task and 0 discipline tasks overdue");
+    expect(body).toContain("2 blocked");
     expect(body).toContain("Foundations");
     expect(body).not.toContain(SLACK_URL);
+  });
+});
+
+describe("the locked-phase sentence quotes the phase it names", () => {
+  it("shows the BLOCKING phase's open count, not the locked phase's own (the 0-vs-9 case)", async () => {
+    const feed = await createPhase(fixture.adminActor, { projectId: fixture.projectId, name: "FEED" });
+    await createPhase(fixture.adminActor, { projectId: fixture.projectId, name: "Construction" });
+    const commissioning = await createPhase(fixture.adminActor, {
+      projectId: fixture.projectId,
+      name: "Commissioning",
+    });
+    for (const title of ["F1", "F2", "F3", "F4", "F5"]) {
+      await makeMainTask(title, [`${title} work`], { phaseId: feed.id });
+    }
+    // Construction has NO open work of its own; Commissioning has two.
+    await makeMainTask("C1", ["C1 work"], { phaseId: commissioning.id });
+    await makeMainTask("C2", ["C2 work"], { phaseId: commissioning.id });
+
+    const brief = await projectBrief(fixture.adminActor, fixture.projectId);
+    const byName = new Map(brief.lockedPhases.map((phase) => [phase.name, phase]));
+    expect(byName.get("Construction")).toMatchObject({ lockedByPhaseName: "FEED", openTaskCount: 5 });
+    expect(byName.get("Commissioning")).toMatchObject({ lockedByPhaseName: "FEED", openTaskCount: 5 });
+    // Nothing in this brief quotes the locked phase's own count (0 and 2) against FEED's name.
+    expect(brief.lockedPhases.every((phase) => phase.openTaskCount === 5)).toBe(true);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The weekly brief's numbers                                          */
+/* ------------------------------------------------------------------ */
+
+describe("the weekly brief's numbers agree with the screens", () => {
+  it("has a progress line equal to the project Brief's, with a reopened task and a task created this week", async () => {
+    const { reopenDisciplineTask } = await import("@/server/services/tasks");
+
+    // Finished long ago.
+    const old = await makeMainTask("Finished long ago", ["Old work"]);
+    await ageMainTask(old.id);
+    const oldId = (await subtaskIdsByTitle(old.id)).get("Old work") as string;
+    await completeDisciplineTask(fixture.engineerActor, { id: oldId });
+    await prisma.disciplineTask.update({
+      where: { id: oldId },
+      data: { completedAt: new Date(Date.now() - 30 * DAY_MS) },
+    });
+
+    // Finished this week.
+    const fresh = await makeMainTask("Finished this week", ["New work"]);
+    await ageMainTask(fresh.id);
+    await completeDisciplineTask(fixture.engineerActor, {
+      id: (await subtaskIdsByTitle(fresh.id)).get("New work") as string,
+    });
+
+    // Finished long ago, reopened and finished again inside the window: not fresh progress.
+    const again = await makeMainTask("Reopened", ["Redone work"]);
+    await ageMainTask(again.id);
+    const againId = (await subtaskIdsByTitle(again.id)).get("Redone work") as string;
+    await completeDisciplineTask(fixture.engineerActor, { id: againId });
+    await prisma.disciplineTask.update({
+      where: { id: againId },
+      data: { completedAt: new Date(Date.now() - 30 * DAY_MS) },
+    });
+    await reopenDisciplineTask(fixture.pmActor, { id: againId, reason: "Second look" });
+    await completeDisciplineTask(fixture.engineerActor, { id: againId });
+
+    // Still going, and one created inside the window (left out of "a week ago").
+    const going = await makeMainTask("Still going", ["Open work"]);
+    await ageMainTask(going.id);
+    await makeMainTask("Created this week", ["Brand new work"]);
+
+    const now = new Date();
+    const brief = await projectBrief(fixture.adminActor, fixture.projectId, now);
+    const weekly = await orgWeeklyBrief(fixture.orgId, now);
+
+    expect(weekly?.lines).toHaveLength(1);
+    expect(weekly?.lines[0].pct).toBe(brief.progress.pct);
+    expect(weekly?.lines[0].pctThen).toBe(brief.progress.pctThen);
+    // A sanity check that the fixture exercised something: three of five are done, two of four were.
+    expect(brief.progress.total).toBe(5);
+    expect(brief.progress.completed).toBe(3);
+    expect(brief.progress.totalThen).toBe(4);
+    expect(brief.progress.completedThen).toBe(2);
+    expect(weeklyLineText(weekly?.lines[0] as WeeklyLine)).toContain(
+      `${brief.progress.pct}% (${brief.progress.pctThen}% a week ago)`,
+    );
+  });
+
+  it("says 'unchanged' for a quiet project rather than leaving it out", async () => {
+    const quiet = await makeMainTask("Nothing moved", ["Waiting work"]);
+    await ageMainTask(quiet.id);
+
+    const weekly = await orgWeeklyBrief(fixture.orgId, new Date());
+
+    expect(weekly?.lines).toHaveLength(1);
+    expect(weeklyLineText(weekly?.lines[0] as WeeklyLine)).toContain("0%, unchanged");
+  });
+
+  it("counts as 'new this week' only open work whose deadline day ended in the last seven days", async () => {
+    // Monday 5 Oct 2026, 06:00 UTC: the deadline day of 4 Oct is over from 4 Oct 06:00 onwards.
+    const now = new Date(Date.UTC(2026, 9, 5, 6));
+    const day = (month: number, date: number) => new Date(Date.UTC(2026, month, date));
+    const deadlines: [string, Date][] = [
+      ["Ended yesterday", day(9, 4)],
+      ["Ended three days ago", day(9, 2)],
+      ["Ended a week and a bit ago", day(8, 28)],
+      ["Ended long ago", day(8, 27)], // late, but already late a week ago
+      ["Due today", day(9, 5)], // not late yet
+    ];
+    for (const [title, deadline] of deadlines) {
+      const task = await makeMainTask(title, [`${title} work`], { deadline });
+      await prisma.mainTask.update({ where: { id: task.id }, data: { deadline } });
+      await prisma.disciplineTask.updateMany({ where: { mainTaskId: task.id }, data: { deadline } });
+    }
+    // Late and finished since: neither late nor new.
+    const done = await makeMainTask("Finished since", ["Finished since work"], { deadline: day(9, 3) });
+    await prisma.mainTask.update({ where: { id: done.id }, data: { deadline: day(9, 3) } });
+    await prisma.disciplineTask.updateMany({
+      where: { mainTaskId: done.id },
+      data: { deadline: day(9, 3) },
+    });
+    await completeDisciplineTask(fixture.engineerActor, {
+      id: (await subtaskIdsByTitle(done.id)).get("Finished since work") as string,
+    });
+
+    const weekly = await orgWeeklyBrief(fixture.orgId, now);
+    const line = weekly?.lines[0] as WeeklyLine;
+
+    // Late: yesterday, three days ago, a week and a bit ago, long ago — four of each kind.
+    expect(line.lateMain).toBe(4);
+    expect(line.lateDiscipline).toBe(4);
+    // New this week: the first three of those, for both kinds.
+    expect(line.newlyLate).toBe(6);
+    // The same late figure the shared helper gives everybody else.
+    const shared = (await lateCountsByProject(fixture.orgId, [fixture.projectId], now)).get(
+      fixture.projectId,
+    );
+    expect(shared).toEqual({ lateMain: line.lateMain, lateDiscipline: line.lateDiscipline });
+    expect(weeklyLineText(line)).toContain("4 main tasks and 4 discipline tasks late (6 new this week)");
+  });
+
+  it("lists a gate opened inside the window, and not one that opened earlier", async () => {
+    const first = await createPhase(fixture.adminActor, { projectId: fixture.projectId, name: "Foundations" });
+    await createPhase(fixture.adminActor, { projectId: fixture.projectId, name: "Structure" });
+    const early = await makeMainTask("Piling", ["Piling work"], { phaseId: first.id });
+    const earlyId = (await subtaskIdsByTitle(early.id)).get("Piling work") as string;
+    let now = new Date();
+
+    // The gate is still shut: nothing to report.
+    expect((await orgWeeklyBrief(fixture.orgId, now))?.gates).toEqual([]);
+
+    await completeDisciplineTask(fixture.engineerActor, { id: earlyId });
+    now = new Date();
+    const project = await prisma.project.findUniqueOrThrow({ where: { id: fixture.projectId } });
+    const opened = (await orgWeeklyBrief(fixture.orgId, now)) as WeeklyBrief;
+    expect(opened.gates).toEqual([{ code: project.code, phase: "Structure" }]);
+    expect(weeklyBriefMessage(opened).body).toContain(`Gates opened this week: ${project.code} — Structure`);
+
+    // Exactly a week ago still counts; a moment before that does not.
+    await prisma.disciplineTask.update({
+      where: { id: earlyId },
+      data: { completedAt: new Date(now.getTime() - 7 * DAY_MS) },
+    });
+    expect(((await orgWeeklyBrief(fixture.orgId, now)) as WeeklyBrief).gates).toHaveLength(1);
+    await prisma.disciplineTask.update({
+      where: { id: earlyId },
+      data: { completedAt: new Date(now.getTime() - 7 * DAY_MS - 1) },
+    });
+    const older = (await orgWeeklyBrief(fixture.orgId, now)) as WeeklyBrief;
+    expect(older.gates).toEqual([]);
+    expect(weeklyBriefMessage(older).body).not.toContain("Gates opened this week");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The reopen scan is per project                                      */
+/* ------------------------------------------------------------------ */
+
+describe("progress a week ago does not depend on a busier project", () => {
+  it("keeps one project's figure the same however many reopens another has, and the weekly line equals its Brief", async () => {
+    const { REOPEN_SCAN_LIMIT, progressSince } = await import("@/server/services/briefs");
+
+    // Project B, beside the fixture's project A, with the same people on it.
+    const projectB = await prisma.project.create({
+      data: {
+        orgId: fixture.orgId,
+        name: "Second project",
+        code: `SEC-${Math.floor(Math.random() * 1_000_000)}`,
+        description: "The quieter project.",
+        createdById: fixture.adminActor.userId,
+        disciplines: { create: [{ disciplineId: fixture.disciplineId }] },
+        members: {
+          create: [
+            { userId: fixture.adminActor.userId, projectRole: "ADMIN" },
+            { userId: fixture.pmActor.userId, projectRole: "PROJECT_MANAGER" },
+            {
+              userId: fixture.engineerActor.userId,
+              projectRole: "ENGINEER",
+              disciplineId: fixture.disciplineId,
+            },
+          ],
+        },
+      },
+    });
+    const deadline = inThirtyDays();
+    const main = await createMainTask(fixture.adminActor, {
+      projectId: projectB.id,
+      phaseId: null,
+      title: "Redone in B",
+      description: "Finished, reopened and finished again.",
+      priority: "MEDIUM",
+      deadline,
+      ownerId: fixture.pmActor.userId,
+      disciplineTasks: [
+        {
+          disciplineId: fixture.disciplineId,
+          title: "Redone work",
+          assigneeId: fixture.engineerActor.userId,
+          deadline,
+          isMandatory: true,
+          requiredDocuments: [],
+        },
+      ],
+    });
+    await ageMainTask(main.id);
+    const subId = (await subtaskIdsByTitle(main.id)).get("Redone work") as string;
+    await completeDisciplineTask(await actorForUser(fixture.engineerActor.userId), { id: subId });
+
+    // B's one reopen row, an hour old.
+    const now = new Date();
+    await prisma.activityLog.create({
+      data: {
+        projectId: projectB.id,
+        actorId: fixture.pmActor.userId,
+        entityType: "DisciplineTask",
+        entityId: subId,
+        action: "REOPENED",
+        summary: "Reopened",
+        createdAt: new Date(now.getTime() - 60 * 60 * 1000),
+      },
+    });
+
+    const since = new Date(now.getTime() - 7 * DAY_MS);
+    const alone = (await progressSince(fixture.orgId, [projectB.id], since)).get(projectB.id);
+    // It was complete before the reopen, so a week ago it counts as done.
+    expect(alone?.completedThen).toBe(1);
+    expect(alone?.totalThen).toBe(1);
+
+    // Project A now has far more reopen rows than the scan limit, all NEWER than B's. Under a
+    // shared limit these would use up the whole scan and B's row would never be read.
+    await prisma.activityLog.createMany({
+      data: Array.from({ length: REOPEN_SCAN_LIMIT * 2 + 100 }, (_, index) => ({
+        projectId: fixture.projectId,
+        actorId: fixture.pmActor.userId,
+        entityType: "DisciplineTask",
+        entityId: `busy-project-task-${index}`,
+        action: "REOPENED",
+        summary: "Reopened",
+        createdAt: new Date(now.getTime() - 1000),
+      })),
+    });
+
+    const together = await progressSince(fixture.orgId, [fixture.projectId, projectB.id], since);
+    expect(together.get(projectB.id)).toEqual(alone);
+
+    // And the weekly line for B says exactly what B's own Brief says.
+    const brief = await projectBrief(fixture.adminActor, projectB.id, now);
+    const weekly = await orgWeeklyBrief(fixture.orgId, now);
+    const line = weekly?.lines.find((entry) => entry.projectId === projectB.id) as WeeklyLine;
+    expect(line.pct).toBe(brief.progress.pct);
+    expect(line.pctThen).toBe(brief.progress.pctThen);
+    expect(brief.progress.pctThen).toBe(100);
   });
 });

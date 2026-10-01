@@ -226,7 +226,7 @@ export function ProjectTeamTab({
                   <>
                     <Select
                       aria-label={`Project role for ${member.userName}`}
-                      className="w-44"
+                      className="w-full min-w-44 sm:w-56"
                       value={member.projectRole}
                       // A contractor's seat cannot be changed into a colleague's, here or anywhere.
                       disabled={pending || member.projectRole === "EXTERNAL"}
@@ -255,7 +255,7 @@ export function ProjectTeamTab({
                     </Select>
                     <Select
                       aria-label={`Discipline for ${member.userName}`}
-                      className="w-44"
+                      className="w-full min-w-44 sm:w-56"
                       value={member.disciplineId ?? ""}
                       disabled={pending || member.projectRole === "PROJECT_MANAGER"}
                       onChange={(event) =>
@@ -345,7 +345,7 @@ export function ProjectTeamTab({
                       },
                     )
                   }
-                  className="flex min-h-9 w-full items-center gap-2 rounded px-2 text-left text-sm hover:bg-[var(--page-bg)]"
+                  className="flex min-h-11 w-full items-center gap-2 rounded px-2 text-left text-sm hover:bg-[var(--page-bg)]"
                 >
                   <DisciplineDot colorHex={discipline.colorHex} code={discipline.code} />
                   {discipline.name}

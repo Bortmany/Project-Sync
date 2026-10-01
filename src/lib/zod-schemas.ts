@@ -328,6 +328,9 @@ export const ProjectDTO = z.object({
     mainTasks: z.number().int(),
     completed: z.number().int(),
     overdue: z.number().int(),
+    /** The shared "late" figure, both kinds named (see src/lib/late.ts). */
+    lateMain: z.number().int(),
+    lateDiscipline: z.number().int(),
   }),
   progressPct: z.number().int(),
 });
@@ -477,6 +480,8 @@ export type SetMainTaskPhaseInput = z.infer<typeof SetMainTaskPhaseInput>;
 const DisciplineSummaryItem = z.object({
   disciplineTaskId: id,
   title: z.string(),
+  /** Lets the Documents tab hide "New revision" from people the server would refuse. */
+  assigneeId: id.nullable().optional(),
   assigneeName: z.string().nullable(),
   /** Set when the assignee is a contractor, for the company badge on the row. */
   assigneeCompanyName: z.string().nullable().optional(),
@@ -643,8 +648,20 @@ export const DisciplineTaskDTO = z.object({
   dependencies: z.array(
     z.object({ id: id, title: z.string(), status: TaskStatusSchema, disciplineCode: z.string() }),
   ),
+  /**
+   * Set ONLY for a contractor, whose `dependencies` is always empty (THE EXTERNAL RULE: another
+   * person's task title is never shown to them): how many earlier tasks are still open.
+   */
+  waitingOnCount: z.number().int().optional(),
   blockers: z.array(z.string()),
   canComplete: z.boolean(),
+  /**
+   * The stage gate's sentence (`phaseLockMessage()`) while this task sits in a locked phase, else
+   * null. Derived at read time exactly as the server's refusal derives it — never stored. It is
+   * ALSO the first entry in `blockers` and forces `canComplete` false, so the button is honest
+   * before the click; the server still refuses regardless.
+   */
+  phaseLockedReason: z.string().nullable().optional(),
 });
 export type DisciplineTaskDTO = z.infer<typeof DisciplineTaskDTO>;
 
@@ -813,9 +830,12 @@ export const CommentDTO = z.object({
 });
 export type CommentDTO = z.infer<typeof CommentDTO>;
 
+/** The cap on one comment. The comment box's counter imports this, so the two can never differ. */
+export const COMMENT_BODY_MAX = 5000;
+
 export const CreateCommentInput = z
   .object({
-    body: z.string().trim().min(1, "Write something first.").max(5000),
+    body: z.string().trim().min(1, "Write something first.").max(COMMENT_BODY_MAX),
     mainTaskId: id.nullable().optional(),
     disciplineTaskId: id.nullable().optional(),
     mentions: z.array(mentionId).max(50).default([]),
@@ -886,7 +906,25 @@ export const SearchResultsDTO = z.object({
 });
 export type SearchResultsDTO = z.infer<typeof SearchResultsDTO>;
 
+/** One main task or discipline task on the dashboard's Late / Upcoming cards and tile lists. */
+export const DashboardWorkItem = z.object({
+  id: id,
+  kind: z.enum(["MAIN", "DISCIPLINE"]),
+  title: z.string(),
+  projectCode: z.string(),
+  deadline: dateOut,
+  status: TaskStatusSchema,
+  isOverdue: z.boolean(),
+  /** Whole days past the deadline day (late rows only). */
+  daysLate: z.number().int().nullable().default(null),
+  /** Whole days until the deadline (upcoming rows only; 0 = today). */
+  daysUntil: z.number().int().nullable().default(null),
+});
+export type DashboardWorkItem = z.infer<typeof DashboardWorkItem>;
+
 export const DashboardDTO = z.object({
+  /** Whose work the counts are: the whole company (the projects you may see) or only your own. */
+  scope: z.enum(["COMPANY", "OWN"]).default("COMPANY"),
   counts: z.object({
     total: z.number().int(),
     inProgress: z.number().int(),
@@ -938,17 +976,10 @@ export const DashboardDTO = z.object({
       pct: z.number().int(),
     }),
   ),
-  upcomingDeadlines: z.array(
-    z.object({
-      id: id,
-      kind: z.enum(["MAIN", "DISCIPLINE"]),
-      title: z.string(),
-      projectCode: z.string(),
-      deadline: dateOut,
-      status: TaskStatusSchema,
-      isOverdue: z.boolean(),
-    }),
-  ),
+  /** Late work, most days late first (capped; `counts.overdue` is the whole number). */
+  lateTasks: z.array(DashboardWorkItem).default([]),
+  /** Unfinished work due in the next 14 days, soonest first. Nothing late is ever in it. */
+  upcomingDeadlines: z.array(DashboardWorkItem),
   recentActivity: z.array(ActivityItemDTO),
 });
 export type DashboardDTO = z.infer<typeof DashboardDTO>;
@@ -977,6 +1008,12 @@ export const GanttDTO = z.object({
           startDate: dateOut.nullable(),
           deadline: dateOut,
           status: TaskStatusSchema,
+          /**
+           * Titles of the earlier tasks this one is still waiting on (open ones only), so the
+           * timeline can say it is waiting and name them. Absent on schedules that do not carry it
+           * (My tasks), and always empty for a contractor.
+           */
+          waitingOn: z.array(z.string()).optional(),
         }),
       ),
     }),
@@ -1189,14 +1226,22 @@ export const ProjectBriefProgressDTO = z.object({
 });
 export type ProjectBriefProgressDTO = z.infer<typeof ProjectBriefProgressDTO>;
 
-/** A blocked discipline task, with the work it is still waiting on named. */
+/**
+ * A blocked task, with the work it is still waiting on named. Main tasks and discipline tasks both
+ * count as blocked (one shared rule); a main task has no discipline code and is its own "main task".
+ */
 export const BriefBlockedTaskDTO = z.object({
   id: id,
+  kind: z.enum(["MAIN", "DISCIPLINE"]),
   title: z.string(),
   linkUrl: z.string(),
-  disciplineCode: z.string(),
+  disciplineCode: z.string().nullable(),
   mainTaskTitle: z.string(),
   unmetDependencies: z.array(z.string()),
+  /** Who holds the blocked task; null when nobody does. */
+  assigneeName: z.string().nullable(),
+  /** The same blocking tasks as `unmetDependencies`, in the same order, with who holds each. */
+  blockedBy: z.array(z.object({ title: z.string(), assigneeName: z.string().nullable() })),
 });
 export type BriefBlockedTaskDTO = z.infer<typeof BriefBlockedTaskDTO>;
 
@@ -1258,9 +1303,10 @@ export type IntegrationKindName = z.infer<typeof IntegrationKindSchema>;
 /**
  * The events an organisation can switch on or off for a chat channel.
  *
- * The first five are notification copies — each one is what a `NotificationType` maps to. The sixth,
- * `dailyBrief`, is NOT a notification fan-out at all: it is the once-a-day digest of work the app
- * has already recorded, and nothing in the app ever writes a notification of that kind. See
+ * The first six are notification copies — each one is what a `NotificationType` maps to. The
+ * seventh and eighth, `dailyBrief` and `weeklyBrief`, are NOT notification fan-outs at all: they are
+ * the once-a-day and once-a-week digests of work the app has already recorded, and nothing in the
+ * app ever writes a notification of those kinds. See
  * `TOGGLE_FOR_TYPE` in src/server/services/webhooks.ts, which the compiler stops from mapping
  * anything to it.
  */
@@ -1272,6 +1318,7 @@ export const IntegrationEventSchema = z.enum([
   "gateOverride",
   "announcements",
   "dailyBrief",
+  "weeklyBrief",
 ]);
 export type IntegrationEventName = z.infer<typeof IntegrationEventSchema>;
 
@@ -1297,6 +1344,8 @@ export const IntegrationEventToggles = z.object({
    */
   announcements: z.boolean().default(false),
   dailyBrief: z.boolean().default(false),
+  /** The Monday digest. Same default, same reason: a block saved before it existed reads "off". */
+  weeklyBrief: z.boolean().default(false),
 });
 export type IntegrationEventToggles = z.infer<typeof IntegrationEventToggles>;
 
@@ -1313,6 +1362,7 @@ export const DEFAULT_EVENT_TOGGLES: IntegrationEventToggles = {
   gateOverride: true,
   announcements: false,
   dailyBrief: false,
+  weeklyBrief: false,
 };
 
 /**
@@ -1486,6 +1536,27 @@ export const MicrosoftStatusDTO = z.discriminatedUnion("configured", [
   MicrosoftConnectionDTO.extend({ configured: z.literal(true) }),
 ]);
 export type MicrosoftStatusDTO = z.infer<typeof MicrosoftStatusDTO>;
+
+/**
+ * The "Sign in with Microsoft" half of the Microsoft 365 card, as the company's own administrator
+ * sees it (`microsoftSignInStatus()` in src/server/services/microsoft-signin.ts). Company facts and a
+ * count only: never a tenant id, never a person's Microsoft id, never anybody's address.
+ */
+export const MicrosoftSignInStatusDTO = z.object({
+  /** True while this company has a Microsoft tenant linked (`Organization.entraTenantId` set). */
+  enabled: z.boolean(),
+  /** The work domain captured when it was switched on, e.g. "contoso.com"; null if unknown. */
+  domain: z.string().nullable(),
+  /** Who switched it on; null when that account has since left (the card says so in words). */
+  enabledByName: z.string().nullable(),
+  /** When it was switched on, as an ISO 8601 string; null when not on. */
+  enabledAt: z.string().nullable(),
+  /** How many people in this company have a Microsoft link. */
+  linkedPeople: z.number().int().nonnegative(),
+  /** Whether APP_BASE_URL is set, which the callback address is built from. */
+  callbackReady: z.boolean(),
+});
+export type MicrosoftSignInStatusDTO = z.infer<typeof MicrosoftSignInStatusDTO>;
 
 /** One place files live: the person's own OneDrive, or a SharePoint document library. */
 export const MicrosoftDriveDTO = z.object({
@@ -1766,18 +1837,35 @@ export type BroadcastSettingDTO = z.infer<typeof BroadcastSettingDTO>;
  * same choice `IntegrationKindSchema` and `PostKindSchema` made, so a fifth kind needs no
  * migration.
  *
- * **"EXPORT" and "TWOFA_PENDING" are the two that are never emailed.** EXPORT is the download
+ * **"EXPORT", "TWOFA_PENDING" and "TWOFA_PENDING_MICROSOFT" are the three that are never emailed.** EXPORT is the download
  * bearer for a finished workspace export; TWOFA_PENDING is the short-lived proof that somebody's
  * password was accepted a moment ago and they are now being asked for their six digits. Both are
  * the same hashed, expiring, single-use, per-person row an emailed link uses, handed straight to
  * the person on the screen they are already looking at. `EmailedPurposeName` below is what the
  * email side takes, so the compiler refuses to let either of them reach an inbox.
  */
-export const EmailPurposeSchema = z.enum(["INVITE", "RESET", "VERIFY", "EXPORT", "TWOFA_PENDING"]);
+// "TWOFA_PENDING_MICROSOFT" is the third never-emailed purpose: the same five-minute ticket, minted
+// when the FIRST step was a Microsoft sign-in rather than a password, so the second step can write
+// the truth (`method: "microsoft"`) in the LOGIN row.
+export const EmailPurposeSchema = z.enum([
+  "INVITE",
+  "RESET",
+  "VERIFY",
+  "EXPORT",
+  "TWOFA_PENDING",
+  "TWOFA_PENDING_MICROSOFT",
+  // The fourth never-emailed purpose: the single-use, two-minute hand-off code between the Teams
+  // sign-in popup and the Teams tab. Hash only; it says "this person's Microsoft identity was
+  // accepted a moment ago" and is never a session on its own.
+  "TEAMS_HANDOFF",
+]);
 export type EmailPurposeName = z.infer<typeof EmailPurposeSchema>;
 
 /** The purposes that really are sent by email. The other two are deliberately not among them. */
-export type EmailedPurposeName = Exclude<EmailPurposeName, "EXPORT" | "TWOFA_PENDING">;
+export type EmailedPurposeName = Exclude<
+  EmailPurposeName,
+  "EXPORT" | "TWOFA_PENDING" | "TWOFA_PENDING_MICROSOFT" | "TEAMS_HANDOFF"
+>;
 
 /**
  * The raw token out of a link, exactly as it was minted: 32 random bytes as lower-case hex. Parsing
@@ -1826,6 +1914,55 @@ export type PasswordChangedDTO = z.infer<typeof PasswordChangedDTO>;
 /** What the resend actions hand back: that we tried, and nothing about the link itself. */
 export const EmailSentDTO = z.object({ sent: z.literal(true) });
 export type EmailSentDTO = z.infer<typeof EmailSentDTO>;
+
+/* ------------------------------------------------------------------ */
+/* Email preferences (alerts and briefs by email) and unsubscribe      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The signed-in person's own email choices, from Your account. No id: the only account it can
+ * reach is the session's. Strict, so an unknown field is refused rather than quietly ignored, and at
+ * least one of the three has to be there. The two brief flags are accepted from anybody and ignored
+ * by the service for a contractor, who is never sent either brief.
+ */
+export const EmailPreferencesInput = z
+  .object({
+    emailAlerts: z.boolean().optional(),
+    emailDailyBrief: z.boolean().optional(),
+    emailWeeklyBrief: z.boolean().optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.emailAlerts !== undefined ||
+      value.emailDailyBrief !== undefined ||
+      value.emailWeeklyBrief !== undefined,
+    { message: "Choose at least one setting to change." },
+  );
+export type EmailPreferencesInput = z.infer<typeof EmailPreferencesInput>;
+
+/**
+ * What the Email card draws. `verified` is whether the address has been confirmed — alert and brief
+ * emails only ever go to a confirmed one. `available` is whether this Tielora sends email at all
+ * (`emailAvailable()`); the card is not drawn while it is false. `email` is the person's own
+ * address, so the card can say where the emails go.
+ */
+export const EmailPreferencesDTO = z.object({
+  emailAlerts: z.boolean(),
+  emailDailyBrief: z.boolean(),
+  emailWeeklyBrief: z.boolean(),
+  verified: z.boolean(),
+  available: z.boolean(),
+  email: z.string(),
+});
+export type EmailPreferencesDTO = z.infer<typeof EmailPreferencesDTO>;
+
+/**
+ * Which kind of email an unsubscribe link switches off. A plain string validated here, never a
+ * database enum — the same choice `EmailPurposeSchema` made.
+ */
+export const UnsubscribeKindSchema = z.enum(["ALERTS", "DAILY", "WEEKLY"]);
+export type UnsubscribeKindName = z.infer<typeof UnsubscribeKindSchema>;
 
 /* ------------------------------------------------------------------ */
 /* Two-factor sign-in                                                  */
@@ -1919,6 +2056,21 @@ export const TwoFactorChallengeInput = z
 export type TwoFactorChallengeInput = z.infer<typeof TwoFactorChallengeInput>;
 
 /**
+ * The Teams tab signing in: exactly ONE of the token Teams handed the tab (single sign-on) or the
+ * one-time code the Microsoft popup handed back. Never both, never neither. (`POST /api/teams/session`.)
+ */
+export const TeamsSessionInput = z
+  .object({
+    ssoToken: z.string().min(20).max(16_384).optional(),
+    handoffCode: EmailTokenSchema.optional(),
+  })
+  .strict()
+  .refine((value) => Boolean(value.ssoToken) !== Boolean(value.handoffCode), {
+    message: "Send one sign-in proof.",
+  });
+export type TeamsSessionInput = z.infer<typeof TeamsSessionInput>;
+
+/**
  * What the sign-in route answers when the password was right and the account has two-factor on.
  * **There is no session and no cookie in this answer** — only a five-minute ticket to the second
  * step.
@@ -1987,6 +2139,16 @@ export const PersonalExportDTO = z.object({
     emailConfirmedAt: dateOut.nullable(),
     lastSignedInAt: dateOut.nullable(),
     accountCreatedAt: dateOut,
+    /** Your three email choices, as stored (a contractor is never sent a brief whatever they say). */
+    emailAlerts: z.boolean(),
+    emailDailyBrief: z.boolean(),
+    emailWeeklyBrief: z.boolean(),
+    /** When your daily brief email was last attempted, or null for never. */
+    lastDailyBriefEmailAt: dateOut.nullable(),
+    /** When your weekly brief email was last attempted, or null for never. */
+    lastWeeklyBriefEmailAt: dateOut.nullable(),
+    /** Whether your account is linked to a Microsoft sign-in — yes or no, never the identifier. */
+    signedInWithMicrosoft: z.boolean(),
   }),
   projects: z.array(
     z.object({
@@ -2117,8 +2279,10 @@ export type WorkspaceDeletionDTO = z.infer<typeof WorkspaceDeletionDTO>;
 export const PlanUsageDTO = z.object({
   /** Live projects (a soft-deleted project frees its place). */
   projects: z.number().int().nonnegative(),
-  /** People who can still sign in. A deactivated account does not count. */
+  /** OFFICE STAFF: active people who are not contractors. A deactivated account does not count. */
   users: z.number().int().nonnegative(),
+  /** Contractors: active, access not run out. Never added to `users`. */
+  contractors: z.number().int().nonnegative(),
   /** Every stored revision's bytes, including the revisions of soft-deleted documents. */
   documentBytes: z.number().int().nonnegative(),
 });
@@ -2127,10 +2291,33 @@ export type PlanUsageDTO = z.infer<typeof PlanUsageDTO>;
 /** What this plan allows. `null` in any slot means unlimited. */
 export const PlanLimitsDTO = z.object({
   projects: z.number().int().positive().nullable(),
+  /** OFFICE STAFF ceiling (the name is kept to avoid churn). */
   users: z.number().int().positive().nullable(),
+  /** Contractor ceiling — a separate count, never added to `users`. */
+  contractors: z.number().int().positive().nullable(),
   documentBytes: z.number().int().positive().nullable(),
+  /**
+   * The monthly AI allowance in US dollars. The ONE limit that is never `null`: AI costs real money
+   * per use, so no plan may be uncapped by accident. 0 means "this plan has no AI allowance".
+   */
+  aiMonthlyUsd: z.number().nonnegative(),
 });
 export type PlanLimitsDTO = z.infer<typeof PlanLimitsDTO>;
+
+/**
+ * This month's AI use for one company, for the "AI this month" meter. Dollars are worked out at read
+ * time from the stored token counts at the pinned model's prices; no dollar figure is ever stored.
+ * `resetsOn` is the first of next month, UTC.
+ */
+export const BillingAiUsageDTO = z.object({
+  usedUsd: z.number().nonnegative(),
+  requests: z.number().int().nonnegative(),
+  capUsd: z.number().nonnegative(),
+  /** Server-computed with the same worst-case rule the ask route refuses by, so screen and refusal agree. */
+  atAllowance: z.boolean(),
+  resetsOn: dateOut,
+});
+export type BillingAiUsageDTO = z.infer<typeof BillingAiUsageDTO>;
 
 /**
  * What the Billing page is told about the payment provider — CONFIGURATION, never money. There is
@@ -2170,5 +2357,63 @@ export const BillingStatusDTO = z.object({
   usage: PlanUsageDTO,
   limits: PlanLimitsDTO,
   provider: BillingProviderDTO,
+  /** Present ONLY on a deployment that has the AI key; absent otherwise, so Billing is unchanged. */
+  ai: BillingAiUsageDTO.optional(),
 });
 export type BillingStatusDTO = z.infer<typeof BillingStatusDTO>;
+
+
+/* ------------------------------------------------------------------ */
+/* Ask Tielora (the AI assistant)                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A question for Ask Tielora. The question is at most 500 characters and is never stored.
+ * `projectId` is optional: absent means "all my projects" (the dashboard). It is deliberately a
+ * loose string, not an id-shaped one, so a made-up id gets the same "I can't find that project."
+ * as another company's real one.
+ */
+export const AskTieloraInput = z.object({
+  question: z
+    .string()
+    .trim()
+    .min(1, "Type a question first.")
+    .max(500, "Keep your question to 500 characters or fewer."),
+  projectId: z.string().min(1).max(100).optional(),
+});
+export type AskTieloraInput = z.infer<typeof AskTieloraInput>;
+
+/**
+ * What comes back: the answer (plain text, never saved) and the names the answer was built from.
+ * `basedOn` is written by the server from its own records, never by the model.
+ */
+export const AiAnswerDTO = z.object({
+  answer: z.string(),
+  basedOn: z.array(z.string()),
+});
+export type AiAnswerDTO = z.infer<typeof AiAnswerDTO>;
+
+/** An administrator's two AI switches. Anything not sent is left as it is. */
+export const SetAiSettingsInput = z
+  .object({
+    aiAssistant: z.boolean().optional(),
+    aiBriefs: z.boolean().optional(),
+  })
+  .strict()
+  .refine((value) => value.aiAssistant !== undefined || value.aiBriefs !== undefined, {
+    message: "Choose at least one setting to change.",
+  });
+export type SetAiSettingsInput = z.infer<typeof SetAiSettingsInput>;
+
+/**
+ * What the AI card on Admin → Integrations draws. `configured` is whether this deployment has the
+ * key (the card is not drawn while it is false). `monthlyUsd` is the plan's allowance; 0 means the
+ * plan has none, and the card says so instead of offering switches that could never do anything.
+ */
+export const AiSettingsDTO = z.object({
+  configured: z.boolean(),
+  aiAssistant: z.boolean(),
+  aiBriefs: z.boolean(),
+  monthlyUsd: z.number().nonnegative(),
+});
+export type AiSettingsDTO = z.infer<typeof AiSettingsDTO>;

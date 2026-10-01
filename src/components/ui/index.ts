@@ -22,6 +22,8 @@ export { ToastProvider, useToast } from "@/components/ui/toast";
 export { Skeleton, SkeletonRows } from "@/components/ui/skeleton";
 export { Breadcrumb } from "@/components/ui/breadcrumb";
 export type { Crumb } from "@/components/ui/breadcrumb";
+export { PhoneCard, PhoneCardList, DesktopTable, CellText } from "@/components/ui/phone-card";
+export type { PhoneCardField } from "@/components/ui/phone-card";
 export { ErrorBanner } from "@/components/ui/error-banner";
 export { FilterChips, hasActiveFilters } from "@/components/ui/filter-chips";
 export type { ActiveFilters, FilterDimension, FilterOption } from "@/components/ui/filter-chips";

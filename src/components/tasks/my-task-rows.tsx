@@ -19,13 +19,18 @@ import {
 
 export type MyTask = DashboardDTO["myTasks"][number];
 
-function group(tasks: MyTask[]): Record<DueBucket, MyTask[]> {
+function group(tasks: MyTask[]): { buckets: Record<DueBucket, MyTask[]>; completed: MyTask[] } {
   const buckets: Record<DueBucket, MyTask[]> = { overdue: [], today: [], week: [], later: [] };
-  for (const task of tasks) buckets[dueBucket(task.deadline, task.isOverdue)].push(task);
+  // Finished work has no date bucket: it is listed once, under its own "Completed" heading.
+  const completed: MyTask[] = [];
+  for (const task of tasks) {
+    const bucket = dueBucket(task.deadline, task.isOverdue, new Date(), task.status);
+    (bucket ? buckets[bucket] : completed).push(task);
+  }
   for (const bucket of DUE_BUCKET_ORDER) {
     buckets[bucket].sort((a, b) => a.deadline.getTime() - b.deadline.getTime());
   }
-  return buckets;
+  return { buckets, completed };
 }
 
 const QUICK_STATUSES: TaskStatusName[] = [
@@ -121,7 +126,7 @@ export function MyTaskList({ tasks, rich = false }: { tasks: MyTask[]; rich?: bo
 }
 
 export function MyTaskGroups({ tasks, rich = false }: { tasks: MyTask[]; rich?: boolean }) {
-  const buckets = group(tasks);
+  const { buckets, completed } = group(tasks);
 
   return (
     <div className="space-y-4">
@@ -135,6 +140,14 @@ export function MyTaskGroups({ tasks, rich = false }: { tasks: MyTask[]; rich?: 
           </section>
         ),
       )}
+      {completed.length > 0 ? (
+        <section>
+          <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--brand-gray)]">
+            Completed ({completed.length})
+          </h3>
+          <MyTaskList tasks={completed} rich={rich} />
+        </section>
+      ) : null}
     </div>
   );
 }

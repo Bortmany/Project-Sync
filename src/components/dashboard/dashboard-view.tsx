@@ -5,10 +5,12 @@
 
 import Link from "next/link";
 import { ActivityFeed, ActivitySkeleton } from "@/components/activity/activity-item";
+import { AskTieloraDashboardCard } from "@/components/ai/ask-tielora-entry";
 import { AnnouncementStrip } from "@/components/posts/announcement-strip";
 import { MyTaskGroups } from "@/components/tasks/my-task-rows";
 import { isManager, useDashboard, useMe } from "@/components/hooks/use-api";
-import { formatShortDate } from "@/components/format";
+import { formatDate } from "@/components/format";
+import { WorkRow } from "@/components/dashboard/work-row";
 import {
   Card,
   CompanyBadge,
@@ -19,18 +21,18 @@ import {
   Skeleton,
   SkeletonRows,
   StatTile,
-  StatusBadge,
 } from "@/components/ui";
 import type { MeDTO } from "@/components/hooks/use-api";
 import type { DashboardDTO } from "@/lib/zod-schemas";
+import type { AskProject } from "@/server/services/ai-panel";
 
 const TILES = [
-  { label: "Total", key: "total", href: "/my-tasks" },
-  { label: "In progress", key: "inProgress", href: "/my-tasks?status=IN_PROGRESS" },
-  { label: "Completed", key: "completed", href: "/my-tasks?status=COMPLETED" },
-  { label: "Blocked", key: "blocked", href: "/my-tasks?status=BLOCKED" },
-  { label: "Overdue", key: "overdue", href: "/my-tasks?due=overdue" },
-  { label: "Due soon", key: "dueSoon", href: "/my-tasks?due=week" },
+  { label: "All tasks", key: "total", href: "/dashboard/list?tile=all", hint: "Every main task and discipline task in the projects you can see." },
+  { label: "In progress", key: "inProgress", href: "/dashboard/list?tile=in-progress", hint: "Tasks someone is working on now." },
+  { label: "Completed", key: "completed", href: "/dashboard/list?tile=completed", hint: "Tasks that are finished." },
+  { label: "Blocked", key: "blocked", href: "/dashboard/list?tile=blocked", hint: "Tasks that cannot move until something else is done." },
+  { label: "Late", key: "overdue", href: "/dashboard/list?tile=late", hint: "Main tasks and discipline tasks past their deadline and not finished." },
+  { label: "Due in 14 days", key: "dueSoon", href: "/dashboard/list?tile=upcoming", hint: "Unfinished tasks with a deadline in the next 14 days. The same list as Upcoming below." },
 ] as const;
 
 /**
@@ -43,6 +45,7 @@ function nothingToShow(data: DashboardDTO): boolean {
     data.counts.total === 0 &&
     data.myTasks.length === 0 &&
     data.disciplineProgress.length === 0 &&
+    data.lateTasks.length === 0 &&
     data.upcomingDeadlines.length === 0 &&
     data.recentActivity.length === 0
   );
@@ -89,7 +92,7 @@ function FirstRun({ me }: { me: MeDTO | undefined }) {
   );
 }
 
-export function DashboardView() {
+export function DashboardView({ askProjects = null }: { askProjects?: AskProject[] | null }) {
   const dashboard = useDashboard();
   const me = useMe();
   const data = dashboard.data;
@@ -118,12 +121,25 @@ export function DashboardView() {
       */}
       <AnnouncementStrip />
 
+      {/* Ask Tielora: the server only hands over a list when the key is set, the company has it
+          switched on, the person is internal and on at least one project. Null draws nothing. It
+          arrives with the tiles (never a skeleton of its own) and not at all if the page failed. */}
+      {askProjects && !loading && !failed && data ? <AskTieloraDashboardCard projects={askProjects} /> : null}
+
+      <p className="-mb-3 text-xs text-[var(--brand-text)]">
+        {data?.scope === "OWN" ? "Your work" : "Across the whole company"}
+      </p>
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         {TILES.map((tile) =>
           loading || !data ? (
             <Skeleton key={tile.key} className="h-20 w-full" />
           ) : (
-            <Link key={tile.key} href={tile.href} className="rounded-[var(--radius)]">
+            <Link
+              key={tile.key}
+              href={tile.href}
+              title={tile.hint}
+              className="rounded-[var(--radius)]"
+            >
               <StatTile
                 label={tile.label}
                 value={data.counts[tile.key]}
@@ -162,7 +178,7 @@ export function DashboardView() {
                     className="shrink-0 text-sm"
                     style={{ color: item.isOverdue ? "var(--status-blocked)" : "var(--brand-text)" }}
                   >
-                    {formatShortDate(item.deadline)}
+                    {formatDate(item.deadline)}
                   </span>
                 </Link>
               </li>
@@ -175,7 +191,10 @@ export function DashboardView() {
         <Card
           title="My tasks"
           action={
-            <Link href="/my-tasks" className="text-sm font-semibold text-[var(--brand-primary)]">
+            <Link
+              href="/my-tasks"
+              className="relative text-sm font-semibold text-[var(--brand-primary)] after:absolute after:-inset-x-1 after:-inset-y-3.5 after:content-['']"
+            >
               View all →
             </Link>
           }
@@ -223,7 +242,7 @@ export function DashboardView() {
                 <li key={row.disciplineId}>
                   <Link
                     href={`/my-tasks?discipline=${encodeURIComponent(row.code)}`}
-                    className="flex min-h-9 items-center gap-3 rounded-[var(--radius)] px-1 hover:bg-[var(--page-bg)]"
+                    className="flex min-h-11 items-center gap-3 rounded-[var(--radius)] px-1 hover:bg-[var(--page-bg)]"
                   >
                     <DisciplineDot colorHex={row.colorHex} code={row.code} />
                     <span className="w-24 shrink-0 truncate text-sm text-[var(--brand-ink)] sm:w-32">
@@ -242,75 +261,82 @@ export function DashboardView() {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card
-          title="Upcoming deadlines"
+          title={`Late${data ? ` (${data.counts.overdue})` : ""}`}
           action={
-            <Link href="/my-tasks" className="text-sm font-semibold text-[var(--brand-primary)]">
+            <Link
+              href="/dashboard/list?tile=late"
+              className="relative text-sm font-semibold text-[var(--brand-primary)] after:absolute after:-inset-x-1 after:-inset-y-3.5 after:content-['']"
+            >
               View all →
             </Link>
           }
         >
           {failed ? (
+            <ErrorBanner message="Couldn't load late tasks. Try refreshing the page." onRetry={retry} />
+          ) : loading || !data ? (
+            <SkeletonRows rows={3} />
+          ) : data.lateTasks.length === 0 ? (
+            <p className="py-6 text-center text-sm text-[var(--brand-text)]">
+              Nothing is late. Nice work, team.
+            </p>
+          ) : (
+            <ul className="divide-y divide-[var(--border)]">
+              {data.lateTasks.slice(0, 5).map((item) => (
+                <WorkRow key={`${item.kind}-${item.id}`} item={item} />
+              ))}
+            </ul>
+          )}
+        </Card>
+
+        <Card
+          title={`Upcoming${data ? ` (${data.counts.dueSoon})` : ""}`}
+          action={
+            <Link
+              href="/dashboard/list?tile=upcoming"
+              className="relative text-sm font-semibold text-[var(--brand-primary)] after:absolute after:-inset-x-1 after:-inset-y-3.5 after:content-['']"
+            >
+              View all →
+            </Link>
+          }
+        >
+          <p className="-mt-1 mb-2 text-xs text-[var(--brand-text)]">Due in the next 14 days</p>
+          {failed ? (
             <ErrorBanner
-              message="Couldn't load upcoming deadlines. Try refreshing the page."
+              message="Couldn't load upcoming tasks. Try refreshing the page."
               onRetry={retry}
             />
           ) : loading || !data ? (
             <SkeletonRows rows={3} />
           ) : data.upcomingDeadlines.length === 0 ? (
             <p className="py-6 text-center text-sm text-[var(--brand-text)]">
-              Nothing due soon. You&apos;re all caught up.
+              Nothing due in the next 14 days. Enjoy the quiet.
             </p>
           ) : (
             <ul className="divide-y divide-[var(--border)]">
               {data.upcomingDeadlines.slice(0, 5).map((item) => (
-                <li key={`${item.kind}-${item.id}`}>
-                  <Link
-                    href={
-                      item.kind === "MAIN" ? `/tasks/${item.id}` : `/discipline-tasks/${item.id}`
-                    }
-                    className="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1 px-1 py-2 hover:bg-[var(--page-bg)]"
-                  >
-                    <span
-                      className="w-16 shrink-0 text-sm font-semibold"
-                      style={{
-                        color: item.isOverdue ? "var(--status-blocked)" : "var(--brand-ink)",
-                      }}
-                    >
-                      {formatShortDate(item.deadline)}
-                    </span>
-                    <span className="min-w-0 flex-1 basis-40 truncate text-sm text-[var(--brand-text)]">
-                      {item.title}
-                    </span>
-                    <span className="flex shrink-0 items-center gap-2">
-                      <span className="rounded-full bg-[var(--page-bg)] px-2 py-0.5 text-xs text-[var(--brand-text)]">
-                        {item.projectCode}
-                      </span>
-                      <StatusBadge status={item.status} />
-                    </span>
-                  </Link>
-                </li>
+                <WorkRow key={`${item.kind}-${item.id}`} item={item} />
               ))}
             </ul>
           )}
         </Card>
-
-        <Card title="Recent activity">
-          {failed ? (
-            <ErrorBanner
-              message="Couldn't load recent activity. Try refreshing the page."
-              onRetry={retry}
-            />
-          ) : loading || !data ? (
-            <ActivitySkeleton />
-          ) : data.recentActivity.length === 0 ? (
-            <p className="py-6 text-center text-sm text-[var(--brand-text)]">
-              No activity yet. Things will start showing up here as work gets underway.
-            </p>
-          ) : (
-            <ActivityFeed items={data.recentActivity.slice(0, 8)} />
-          )}
-        </Card>
       </div>
+
+      <Card title="Recent activity">
+        {failed ? (
+          <ErrorBanner
+            message="Couldn't load recent activity. Try refreshing the page."
+            onRetry={retry}
+          />
+        ) : loading || !data ? (
+          <ActivitySkeleton />
+        ) : data.recentActivity.length === 0 ? (
+          <p className="py-6 text-center text-sm text-[var(--brand-text)]">
+            No activity yet. Things will start showing up here as work gets underway.
+          </p>
+        ) : (
+          <ActivityFeed items={data.recentActivity.slice(0, 8)} />
+        )}
+      </Card>
     </div>
   );
 }

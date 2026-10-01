@@ -9,6 +9,7 @@ import { useMemo, useRef, useState } from "react";
 import { createComment } from "@/components/actions";
 import { useAction } from "@/components/hooks/use-action";
 import { DisciplinesIcon } from "@/components/shell/icons";
+import { COMMENT_MAX_LENGTH, commentCounter } from "@/components/comments/comment-limit";
 import { Avatar, Button, ErrorBanner, Textarea } from "@/components/ui";
 
 /** Someone who may be mentioned here: a member of this comment's project. */
@@ -31,6 +32,24 @@ function mentionQuery(text: string, cursor: number): { query: string; start: num
   const match = /(?:^|\s)@([^\s@]{0,40})$/.exec(before);
   if (!match) return null;
   return { query: match[1], start: before.length - match[1].length - 1 };
+}
+
+/**
+ * The quiet line under a comment box: nothing until the text passes 80% of the limit, then how many
+ * characters are left, and past the limit a plain sentence saying how far over it is.
+ */
+export function CounterLine({ length }: { length: number }) {
+  const counter = commentCounter(length);
+  if (!counter.show) return null;
+  return (
+    <p
+      role={counter.over ? "alert" : "status"}
+      aria-live="polite"
+      className={`text-xs ${counter.over ? "font-semibold text-[var(--status-blocked)]" : "text-[var(--brand-gray)]"}`}
+    >
+      {counter.message}
+    </p>
+  );
 }
 
 export function CommentComposer({
@@ -221,7 +240,7 @@ export function CommentComposer({
                   type="button"
                   role="option"
                   aria-selected={index === highlighted}
-                  className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
+                  className={`flex min-h-11 w-full items-center gap-2 px-3 py-2 text-left text-sm ${
                     index === highlighted ? "bg-[var(--page-bg)]" : "bg-white"
                   }`}
                   onMouseDown={(event) => event.preventDefault()}
@@ -232,7 +251,7 @@ export function CommentComposer({
                   ) : (
                     <DisciplinesIcon size={18} className="text-[var(--brand-gray)]" />
                   )}
-                  <span className="text-[var(--brand-ink)]">{row.name}</span>
+                  <span className="min-w-0 break-words text-[var(--brand-ink)]">{row.name}</span>
                 </button>
               </li>
             ))}
@@ -240,13 +259,19 @@ export function CommentComposer({
         ) : null}
       </div>
 
+      <CounterLine length={body.length} />
+
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs text-[var(--brand-gray)]">
           {departments.length > 0
             ? "Type @ to mention someone, or @ a department, on this project."
             : "Type @ to mention someone on this project."}
         </p>
-        <Button loading={pending} disabled={body.trim().length === 0} onClick={post}>
+        <Button
+          loading={pending}
+          disabled={body.trim().length === 0 || body.length > COMMENT_MAX_LENGTH}
+          onClick={post}
+        >
           Post
         </Button>
       </div>

@@ -14,7 +14,10 @@ import {
   buildMainTaskDTO,
   completeDisciplineTask,
   createMainTask,
+  ganttForProject,
+  getDisciplineTaskForActor,
   overrideMainTaskStatus,
+  removeDependency,
   reopenDisciplineTask,
   updateDisciplineTaskStatus,
 } from "@/server/services/tasks";
@@ -209,6 +212,130 @@ describe("the dependency rule", () => {
     await expect(
       addDependency(fixture.adminActor, { predecessorId: only, successorId: only }),
     ).rejects.toThrow(/wait on itself/i);
+    expect(await prisma.taskDependency.count()).toBe(0);
+  });
+
+  it("answers a repeated add in plain words, and writes nothing twice", async () => {
+    const mainTask = await makeMainTask(2, ["First", "Second"]);
+    const subtasks = await subtaskIdsByTitle(mainTask.id);
+    const pair = {
+      predecessorId: subtasks.get("First") as string,
+      successorId: subtasks.get("Second") as string,
+    };
+
+    await addDependency(fixture.adminActor, pair);
+    const again = addDependency(fixture.adminActor, pair);
+    await expect(again).rejects.toBeInstanceOf(ServiceError);
+    await expect(again).rejects.toThrow(/already waits on that one/i);
+    expect(await prisma.taskDependency.count()).toBe(1);
+    expect(await prisma.activityLog.count({ where: { action: "DEPENDENCY_ADDED" } })).toBe(1);
+  });
+
+  it("never leaves a loop when A->B and B->A are added at the same moment", async () => {
+    const mainTask = await makeMainTask(2, ["A", "B"]);
+    const subtasks = await subtaskIdsByTitle(mainTask.id);
+    const a = subtasks.get("A") as string;
+    const b = subtasks.get("B") as string;
+
+    const results = await Promise.allSettled([
+      addDependency(fixture.adminActor, { predecessorId: a, successorId: b }),
+      addDependency(fixture.pmActor, { predecessorId: b, successorId: a }),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const refused = results.find((result) => result.status === "rejected") as PromiseRejectedResult;
+    expect(refused.reason).toBeInstanceOf(ServiceError);
+    expect(String(refused.reason.message)).toMatch(/wait on each other/i);
+    expect(await prisma.taskDependency.count()).toBe(1);
+  });
+});
+
+describe("the dependency control: the scenario the testers could not run", () => {
+  it("add, wait, complete the earlier task, then complete the later one; remove clears the wait", async () => {
+    const mainTask = await makeMainTask(2, ["Earlier task", "Later task"]);
+    const subtasks = await subtaskIdsByTitle(mainTask.id);
+    const earlier = subtasks.get("Earlier task") as string;
+    const later = subtasks.get("Later task") as string;
+
+    const withDependency = await addDependency(fixture.pmActor, {
+      predecessorId: earlier,
+      successorId: later,
+    });
+    // What the screen reads: the wait is named, and the button is honestly unavailable.
+    expect(withDependency.dependencies.map((dependency) => dependency.title)).toEqual(["Earlier task"]);
+    expect(withDependency.canComplete).toBe(false);
+    expect(withDependency.blockers.join(" ")).toMatch(/Waiting on 1 earlier task: Earlier task/);
+
+    // The timeline names the earlier task too.
+    const gantt = await ganttForProject(fixture.pmActor, fixture.projectId);
+    const bars = gantt.mainTasks.flatMap((task) => task.disciplineTasks);
+    expect(bars.find((bar) => bar.id === later)?.waitingOn).toEqual(["Earlier task"]);
+    expect(bars.find((bar) => bar.id === earlier)?.waitingOn).toEqual([]);
+
+    await expect(completeDisciplineTask(fixture.engineerActor, { id: later })).rejects.toThrow(
+      /Earlier task/,
+    );
+
+    await completeDisciplineTask(fixture.engineerActor, { id: earlier });
+    const opened = await getDisciplineTaskForActor(fixture.engineerActor, later);
+    expect(opened.canComplete).toBe(true);
+    expect(
+      (await ganttForProject(fixture.pmActor, fixture.projectId)).mainTasks
+        .flatMap((task) => task.disciplineTasks)
+        .find((bar) => bar.id === later)?.waitingOn,
+    ).toEqual([]);
+
+    // Removing a link is audited and clears the wait.
+    const stillOpen = await makeMainTask(2, ["Gate", "Follower"]);
+    const ids = await subtaskIdsByTitle(stillOpen.id);
+    await addDependency(fixture.adminActor, {
+      predecessorId: ids.get("Gate") as string,
+      successorId: ids.get("Follower") as string,
+    });
+    const cleared = await removeDependency(fixture.adminActor, {
+      predecessorId: ids.get("Gate") as string,
+      successorId: ids.get("Follower") as string,
+    });
+    expect(cleared.dependencies).toEqual([]);
+    expect(cleared.canComplete).toBe(true);
+    expect(
+      await prisma.activityLog.count({
+        where: { entityId: ids.get("Follower") as string, action: "DEPENDENCY_REMOVED" },
+      }),
+    ).toBe(1);
+    await expect(
+      removeDependency(fixture.adminActor, {
+        predecessorId: ids.get("Gate") as string,
+        successorId: ids.get("Follower") as string,
+      }),
+    ).rejects.toThrow(/not linked/i);
+  });
+
+  it("is for administrators and project managers: an engineer is refused and nothing is saved", async () => {
+    const mainTask = await makeMainTask(2, ["First", "Second"]);
+    const subtasks = await subtaskIdsByTitle(mainTask.id);
+    const input = {
+      predecessorId: subtasks.get("First") as string,
+      successorId: subtasks.get("Second") as string,
+    };
+
+    await expect(addDependency(fixture.engineerActor, input)).rejects.toThrow(ForbiddenError);
+    expect(await prisma.taskDependency.count()).toBe(0);
+
+    await addDependency(fixture.pmActor, input);
+    await expect(removeDependency(fixture.engineerActor, input)).rejects.toThrow(ForbiddenError);
+    expect(await prisma.taskDependency.count()).toBe(1);
+  });
+
+  it("keeps a link inside one main task, so the picker only ever offers its siblings", async () => {
+    const one = await makeMainTask(1, ["Under one"]);
+    const two = await makeMainTask(1, ["Under two"]);
+    await expect(
+      addDependency(fixture.adminActor, {
+        predecessorId: (await subtaskIdsByTitle(one.id)).get("Under one") as string,
+        successorId: (await subtaskIdsByTitle(two.id)).get("Under two") as string,
+      }),
+    ).rejects.toThrow(/same main task/i);
     expect(await prisma.taskDependency.count()).toBe(0);
   });
 });

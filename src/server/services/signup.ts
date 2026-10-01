@@ -132,6 +132,9 @@ async function writeOrganization({
         passwordHash,
         // Whoever signs the company up runs it — there is nobody else to grant them access.
         role: "ADMIN",
+        // Alert emails on for a new account, set in code rather than by the column default (which
+        // is false, so the migration switched nobody on). Sent only once the address is confirmed.
+        emailAlerts: true,
       },
     });
 

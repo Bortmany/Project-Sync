@@ -37,7 +37,7 @@ export function Topbar({ name, email, role }: { name: string; email: string; rol
           onClick={() => setOpen((value) => !value)}
           aria-haspopup="menu"
           aria-expanded={open}
-          className="flex items-center gap-2 rounded-[var(--radius)] p-1 hover:bg-[var(--page-bg)]"
+          className="flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-[var(--radius)] p-1 hover:bg-[var(--page-bg)]"
         >
           <Avatar name={name} />
           <span className="hidden text-sm text-[var(--brand-text)] sm:inline">{name}</span>
@@ -55,7 +55,7 @@ export function Topbar({ name, email, role }: { name: string; email: string; rol
               href="/account"
               role="menuitem"
               onClick={() => setOpen(false)}
-              className="block rounded-[var(--radius)] px-2 py-2 text-left text-sm text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
+              className="flex min-h-11 items-center rounded-[var(--radius)] px-2 py-2 text-left text-sm text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
             >
               Your account
             </Link>
@@ -64,7 +64,7 @@ export function Topbar({ name, email, role }: { name: string; email: string; rol
               role="menuitem"
               onClick={signOut}
               disabled={signingOut}
-              className="w-full rounded-[var(--radius)] px-2 py-2 text-left text-sm text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
+              className="min-h-11 w-full rounded-[var(--radius)] px-2 py-2 text-left text-sm text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
             >
               {signingOut ? "Signing out…" : "Sign out"}
             </button>

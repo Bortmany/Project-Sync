@@ -67,12 +67,12 @@ export function GoodNews({ children }: { children: ReactNode }) {
 /** The privacy and terms line both public screens carry under their form. */
 export function AuthLegalLinks() {
   return (
-    <p className="mt-6 text-xs text-[var(--brand-gray)]">
-      <Link href="/privacy" className="underline-offset-2 hover:underline">
+    <p className="mt-6 flex flex-wrap items-center gap-x-2 text-xs text-[var(--brand-gray)]">
+      <Link href="/privacy" className="inline-flex min-h-11 items-center underline-offset-2 hover:underline">
         Privacy notice
       </Link>{" "}
       &middot;{" "}
-      <Link href="/terms" className="underline-offset-2 hover:underline">
+      <Link href="/terms" className="inline-flex min-h-11 items-center underline-offset-2 hover:underline">
         Terms of use
       </Link>
     </p>

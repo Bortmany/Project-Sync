@@ -14,6 +14,10 @@ import {
   EmptyState,
   ErrorBanner,
   FilterChips,
+  PhoneCard,
+  PhoneCardList,
+  DesktopTable,
+  CellText,
   PriorityFlag,
   ProgressBar,
   Select,
@@ -127,6 +131,10 @@ export function ProjectTasksTab({
     },
   ];
 
+  // The empty state carries its own "+ New main task"; the toolbar one would be a second copy.
+  const showEmptyState =
+    !tasks.isError && !tasks.isPending && rows.length === 0 && !hasActiveFilters(active) && phase === null;
+
   return (
     <div className="space-y-4">
       <PhaseRail
@@ -154,7 +162,11 @@ export function ProjectTasksTab({
             <option value="status">Status</option>
             <option value="title">Title</option>
           </Select>
-          {canManage ? <Button onClick={() => setDialogOpen(true)}>+ New main task</Button> : null}
+          {canManage && !showEmptyState ? (
+            <Button onClick={() => setDialogOpen(true)} className="whitespace-nowrap">
+              + New main task
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -174,7 +186,7 @@ export function ProjectTasksTab({
               setActive({});
               setPhase(null);
             }}
-            className="mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+            className="inline-flex min-h-11 items-center mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
           >
             Clear filters
           </button>
@@ -189,7 +201,71 @@ export function ProjectTasksTab({
           <EmptyState message="No main tasks yet. Check back once your project manager sets up the work." />
         )
       ) : (
-        <div className="overflow-x-auto rounded-[var(--radius)] border border-[var(--border)] bg-white">
+        <>
+        <PhoneCardList label="Main tasks">
+          {rows.map((task) => {
+            const soon = !task.isOverdue && isDueSoon(task.deadline);
+            return (
+              <PhoneCard
+                key={task.id}
+                href={`/tasks/${task.id}`}
+                title={task.title}
+                fields={[
+                  {
+                    label: "Deadline",
+                    value: (
+                      <span
+                        style={{
+                          color: task.isOverdue
+                            ? "var(--status-blocked)"
+                            : soon
+                              ? "var(--brand-stone)"
+                              : "var(--brand-text)",
+                        }}
+                      >
+                        {formatDate(task.deadline)}
+                        {task.isOverdue ? " · overdue" : ""}
+                      </span>
+                    ),
+                  },
+                  {
+                    label: "Status",
+                    value: <StatusBadge status={task.effectiveStatus} overridden={task.hasOverride} />,
+                  },
+                  { label: "Priority", value: <PriorityFlag priority={task.priority} /> },
+                  {
+                    label: "Disciplines",
+                    hidden: task.disciplineSummary.length === 0,
+                    value: (
+                      <span className="inline-flex flex-wrap items-center gap-1">
+                        {task.disciplineSummary.slice(0, 4).map((item) => (
+                          <DisciplineDot key={item.disciplineId} colorHex={item.colorHex} code={item.code} />
+                        ))}
+                        {task.disciplineSummary.length > 4 ? (
+                          <span className="text-xs text-[var(--brand-gray)]">
+                            +{task.disciplineSummary.length - 4}
+                          </span>
+                        ) : null}
+                      </span>
+                    ),
+                  },
+                  {
+                    label: "Progress",
+                    value: (
+                      <ProgressBar
+                        pct={task.progressPct}
+                        completed={task.counts.completed}
+                        total={task.counts.disciplineTasks}
+                        showCount
+                      />
+                    ),
+                  },
+                ]}
+              />
+            );
+          })}
+        </PhoneCardList>
+        <DesktopTable>
           <table className="w-full text-sm">
             <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--brand-gray)]">
               <tr>
@@ -209,9 +285,9 @@ export function ProjectTasksTab({
                     <td className="px-3">
                       <Link
                         href={`/tasks/${task.id}`}
-                        className="font-semibold text-[var(--brand-primary)] hover:underline"
+                        className="inline-flex min-h-11 items-center font-semibold text-[var(--brand-primary)] hover:underline"
                       >
-                        {task.title}
+                        <CellText>{task.title}</CellText>
                       </Link>
                     </td>
                     <td className="px-3">
@@ -261,7 +337,8 @@ export function ProjectTasksTab({
               })}
             </tbody>
           </table>
-        </div>
+        </DesktopTable>
+        </>
       )}
 
       {canManage ? (

@@ -16,7 +16,7 @@ import { UploadMeta, toFieldErrors } from "@/lib/zod-schemas";
 import { fail, failFrom, failWithFields, ok } from "@/server/http";
 import { SIGNED_OUT_MESSAGE, currentActor } from "@/server/session";
 import { assertStorageRoom } from "@/server/services/billing";
-import { uploadDocumentVersion } from "@/server/services/documents";
+import { assertFileSuitsRequirement, uploadDocumentVersion } from "@/server/services/documents";
 
 // Route handlers stream their own body, so Next applies no size limit here — the 25 MB ceiling is
 // enforced below from file.size before the bytes are ever pulled into memory.
@@ -91,6 +91,14 @@ export async function POST(request: Request) {
 
   const checked = validateUpload(buffer, originalName);
   if (!checked.ok) return fail(checked.error, 400);
+
+  // A plain text or CSV file cannot be the deliverable for a MANDATORY required document. Refused
+  // here, before storeFile(), so the refusal never leaves an orphan file or a green tick behind.
+  try {
+    await assertFileSuitsRequirement(actor, parsed.data, checked.ext);
+  } catch (error) {
+    return failFrom(error, { route: "POST /api/uploads", projectId: parsed.data.projectId });
+  }
 
   const stored = await storeFile(buffer, checked.ext);
 

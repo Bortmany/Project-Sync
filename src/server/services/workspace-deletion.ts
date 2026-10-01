@@ -403,6 +403,9 @@ async function deleteEveryRow(
   count(await tx.discipline.deleteMany({ where: { orgId } }));
   count(await tx.orgIntegration.deleteMany({ where: { orgId } }));
   count(await tx.microsoftConnection.deleteMany({ where: { orgId } }));
+  // The monthly AI usage rows. They would cascade with the company, but this file deletes table by
+  // table and never leans on a cascade, so they are named here and the deletion test proves it.
+  count(await tx.aiUsage.deleteMany({ where: { orgId } }));
   const users = count(await tx.user.deleteMany({ where: { orgId } }));
 
   await tx.organization.delete({ where: { id: orgId } });

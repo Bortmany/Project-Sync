@@ -10,7 +10,18 @@ import { formatDate } from "@/components/format";
 import { Badge } from "@/components/ui";
 import type { DisciplineTaskDTO } from "@/lib/zod-schemas";
 
-export function RequiredDocsChecklist({ task }: { task: DisciplineTaskDTO }) {
+export function RequiredDocsChecklist({
+  task,
+  canUpload = true,
+}: {
+  task: DisciplineTaskDTO;
+  /**
+   * Whether this person may file documents on this task (the same people the server lets upload).
+   * When not, the list is plainly read-only: no Upload or New revision button, and one quiet line
+   * saying whose it is. A courtesy only — the server refuses everyone else regardless.
+   */
+  canUpload?: boolean;
+}) {
   // The same query the Documents section uses, so a satisfied row can name the file that filled it.
   const documents = useDisciplineTaskDocuments(task.id);
 
@@ -73,7 +84,7 @@ export function RequiredDocsChecklist({ task }: { task: DisciplineTaskDTO }) {
                     View
                   </a>
                 ) : null}
-                {document ? (
+                {document && canUpload ? (
                   <UploadDropzone
                     mode="link"
                     buttonLabel="New revision"
@@ -88,10 +99,12 @@ export function RequiredDocsChecklist({ task }: { task: DisciplineTaskDTO }) {
             ) : (
               <span className="flex items-center gap-3">
                 <span className="text-xs text-[var(--brand-gray)]">Not uploaded</span>
+                {canUpload ? (
                 <UploadDropzone
                   mode="button"
                   buttonLabel="Upload"
                   requirementName={requirement.name}
+                  mandatoryRequirement={requirement.isMandatory}
                   target={{
                     projectId: task.projectId,
                     disciplineTaskId: task.id,
@@ -99,11 +112,17 @@ export function RequiredDocsChecklist({ task }: { task: DisciplineTaskDTO }) {
                   }}
                   extraKeys={[["task", task.mainTaskId]]}
                 />
+                ) : null}
               </span>
             )}
           </li>
         );
       })}
+      {!canUpload ? (
+        <li className="py-2 text-xs text-[var(--brand-gray)]">
+          Filed by the {task.disciplineName} team.
+        </li>
+      ) : null}
     </ul>
   );
 }

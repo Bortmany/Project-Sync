@@ -616,7 +616,14 @@ export function MainTaskView({ taskId }: { taskId: string }) {
               {
                 id: "documents",
                 label: "Documents",
-                content: <MainTaskDocumentsTab task={data} canDelete={canManage} />,
+                content: (
+                  <MainTaskDocumentsTab
+                    task={data}
+                    canDelete={canManage}
+                    me={me.data}
+                    project={project.data}
+                  />
+                ),
               },
               {
                 id: "comments",

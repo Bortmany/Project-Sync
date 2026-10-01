@@ -2,6 +2,11 @@
 
 import { describe, expect, it } from "vitest";
 import { MAX_UPLOAD_BYTES, validateUpload } from "@/lib/upload";
+import {
+  ACCEPTED_FILES_HINT,
+  mandatoryDocumentProblem,
+  mayFillMandatoryDocument,
+} from "@/lib/upload-rules";
 
 const PDF = Buffer.from(
   "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n",
@@ -111,5 +116,44 @@ describe("validateUpload — rejects anything suspicious", () => {
 
   it("keeps the default limit at 25 MB", () => {
     expect(MAX_UPLOAD_BYTES).toBe(25 * 1024 * 1024);
+  });
+});
+
+describe("the upload hint says exactly what is enforced", () => {
+  const typesInHint = ACCEPTED_FILES_HINT.replace(/, up to .*$/, "").split(/, | or /);
+
+  it("names every file type validateUpload accepts and no other", () => {
+    expect(typesInHint.sort()).toEqual(
+      ["CSV", "DOCX", "DWG", "JPEG", "PDF", "PNG", "PPTX", "TXT", "WebP", "XLSX", "ZIP"].sort(),
+    );
+    expect(ACCEPTED_FILES_HINT).toContain("25 MB");
+  });
+
+  it("matches the refusal validateUpload prints for a type it does not take", () => {
+    const refused = validateUpload(Buffer.from("MZ\x90\x00"), "tool.exe");
+    expect(refused.ok).toBe(false);
+    for (const type of typesInHint) expect(refused.error).toContain(type);
+  });
+});
+
+describe("what may satisfy a mandatory required document", () => {
+  it("refuses plain text and CSV, whatever the letter case", () => {
+    for (const ext of ["txt", "csv", "TXT", " Csv "]) {
+      expect(mayFillMandatoryDocument(ext)).toBe(false);
+      expect(mandatoryDocumentProblem(ext)).toMatch(/needs a drawing, a document or an image/);
+    }
+  });
+
+  it("allows every document-grade type validateUpload accepts", () => {
+    for (const ext of ["pdf", "dwg", "xlsx", "docx", "pptx", "png", "jpg", "webp", "zip"]) {
+      expect(mayFillMandatoryDocument(ext)).toBe(true);
+      expect(mandatoryDocumentProblem(ext)).toBeNull();
+    }
+  });
+
+  it("names the requirement and says plain text still attaches as an ordinary document", () => {
+    const sentence = mandatoryDocumentProblem("txt", "P&ID mark-up") as string;
+    expect(sentence).toContain('"P&ID mark-up" is a mandatory document');
+    expect(sentence).toContain("can still be attached as ordinary documents");
   });
 });

@@ -14,6 +14,7 @@
 //     read for a whole set of projects at once.
 
 import { notDeleted, prisma } from "@/lib/db";
+import { dayWindow, daysLate } from "@/lib/late";
 import { phaseLockedFor, sortPhases, type PhaseLockState } from "@/lib/phase-lock";
 import { effectiveStatus, isOverdue, type TaskStatusValue } from "@/lib/progress";
 import type {
@@ -36,6 +37,8 @@ import { checkDto } from "@/server/serialize";
 import { ACTIVITY } from "@/server/services/activity";
 import { phaseStatesFor } from "@/server/services/phases";
 import { listAnnouncementsForUser, listNoticesForExternal } from "@/server/services/posts";
+import { blockedCountsByProject, blockedTotal as sumBlocked, disciplineBlockedWhere, mainBlockedWhere } from "@/server/services/blocked";
+import { lateCountsByProject } from "@/server/services/late";
 import { assertCanViewProject, visibleProjects } from "@/server/services/projects";
 import type { ChatMessage } from "@/server/services/webhooks";
 
@@ -66,29 +69,15 @@ export const REOPEN_SCAN_LIMIT = 500;
 /** The most projects one digest message names, so a card can never outgrow the chat cap. */
 export const DIGEST_PROJECT_LIMIT = 12;
 
+/**
+ * How long a brief card's body may be. Slack refuses a section over 3,000 characters, so a brief
+ * stays below that; the ordinary 1,200 cap is for single-sentence notifications.
+ */
+export const BRIEF_BODY_LIMIT = 2_900;
+
 /* ------------------------------------------------------------------ */
 /* Small shared pieces                                                 */
 /* ------------------------------------------------------------------ */
-
-/**
- * The moment a deadline stops being "today". Deadlines are saved at UTC midnight and mean "by the
- * end of that day" (`isOverdue`), so the day window is worked out in UTC too — the same clock the
- * deadlines themselves were written on.
- */
-function dayWindow(now: Date): { startOfDay: Date; endOfDay: Date; overdueCutoff: Date } {
-  const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  return {
-    startOfDay,
-    endOfDay: new Date(startOfDay.getTime() + DAY_MS),
-    // isOverdue() is `deadline + one day <= now`, so this is the same line drawn in the database.
-    overdueCutoff: new Date(now.getTime() - DAY_MS),
-  };
-}
-
-/** Whole days past the deadline day — 1 the morning after, never 0. */
-function daysOver(deadline: Date, now: Date): number {
-  return Math.max(1, Math.floor((now.getTime() - deadline.getTime()) / DAY_MS));
-}
 
 const emptySection = (): BriefSectionDTO => ({ items: [], total: 0 });
 
@@ -296,7 +285,7 @@ export async function personBrief(actor: ActorContext, now: Date = new Date()): 
         projectCode: codeOf(task.mainTask.projectId),
         disciplineCode: task.discipline.code,
         deadline: task.deadline,
-        daysOverdue: daysOver(task.deadline, now),
+        daysOverdue: daysLate(task.deadline, now),
         body: null,
         note: null,
         at: null,
@@ -591,7 +580,7 @@ async function newlyUnblockedSection(
       projectCode: projectCodes.get(task.mainTask.projectId) ?? "",
       disciplineCode: task.discipline.code,
       deadline: task.deadline,
-      daysOverdue: isOverdue(task.deadline, task.status, now) ? daysOver(task.deadline, now) : null,
+      daysOverdue: isOverdue(task.deadline, task.status, now) ? daysLate(task.deadline, now) : null,
       body: null,
       note: gateWins
         ? `The "${phaseState?.name ?? "next"}" gate opened`
@@ -605,6 +594,127 @@ async function newlyUnblockedSection(
   // The scan itself is capped, so this count is what the scan found — never a promise about work
   // beyond the 200 open tasks it looked at.
   return { items: items.slice(0, SECTION_LIMIT), total: items.length };
+}
+
+/** One project's progress now against a moment in the past. `progressNow` / `progressThen` are percentages. */
+export type ProjectProgressSince = {
+  completed: number;
+  total: number;
+  progressNow: number;
+  completedThen: number;
+  totalThen: number;
+  progressThen: number;
+  since: Date;
+};
+
+/**
+ * Progress now against `since`, for many projects at once — no signed-in person, so the CALLER has
+ * already decided these projects may be read; `orgId` still scopes every read. One grouped read of
+ * the main tasks, one of the completion moments (`completionMoments`) and one small reopen read
+ * per project (so the reopen scan limit is genuinely per project). Every requested project that exists in the organisation gets an
+ * entry.
+ *
+ * The comparison is only ever made between things that existed then: a main task created after
+ * `since` is left out of BOTH numbers, so adding work cannot make progress appear to fall. Work
+ * reopened since then counts as complete THEN, and a completion whose moment cannot be recovered
+ * counts as old, so progress is never overstated.
+ */
+export async function progressSince(
+  orgId: string,
+  projectIds: string[],
+  since: Date,
+): Promise<Map<string, ProjectProgressSince>> {
+  const result = new Map<string, ProjectProgressSince>();
+  const ids = [...new Set(projectIds)];
+  if (ids.length === 0) return result;
+
+  const [tasks, ...reopenPerProject] = await Promise.all([
+    prisma.mainTask.findMany({
+      where: { projectId: { in: ids }, project: { orgId, ...notDeleted }, ...notDeleted },
+      select: {
+        id: true,
+        projectId: true,
+        phaseId: true,
+        status: true,
+        statusOverride: true,
+        overriddenAt: true,
+        createdAt: true,
+      },
+    }),
+    // Work that was reopened inside the window. A reopened task was, by definition, complete just
+    // before somebody reopened it — without this, finishing it again would be counted as fresh
+    // progress that never happened. One read per project, so the scan limit is truly per project:
+    // a busy project can never use up another's share and change its figure.
+    ...ids.map((projectId) =>
+      prisma.activityLog.findMany({
+        where: {
+          projectId,
+          project: { orgId },
+          entityType: "DisciplineTask",
+          action: ACTIVITY.REOPENED,
+          createdAt: { gte: since },
+        },
+        select: { entityId: true },
+        orderBy: { createdAt: "desc" },
+        take: REOPEN_SCAN_LIMIT,
+      }),
+    ),
+  ]);
+
+  const moments = await completionMoments(tasks);
+
+  const perProject = new Map<string, string[]>();
+  ids.forEach((projectId, index) => {
+    perProject.set(
+      projectId,
+      reopenPerProject[index].map((row) => row.entityId),
+    );
+  });
+  const reopenedByProject = new Map<string, Set<string>>();
+  const entityIds = [...new Set([...perProject.values()].flat())];
+  if (entityIds.length > 0) {
+    const behind = await prisma.disciplineTask.findMany({
+      where: { id: { in: entityIds }, mainTask: { project: { orgId } } },
+      select: { id: true, mainTaskId: true },
+    });
+    const mainOf = new Map(behind.map((row) => [row.id, row.mainTaskId]));
+    for (const [projectId, list] of perProject) {
+      const set = new Set<string>();
+      for (const entityId of list) {
+        const mainId = mainOf.get(entityId);
+        if (mainId) set.add(mainId);
+      }
+      reopenedByProject.set(projectId, set);
+    }
+  }
+
+  for (const projectId of ids) {
+    const own = tasks.filter((task) => task.projectId === projectId);
+    const reopened = reopenedByProject.get(projectId) ?? new Set<string>();
+    const total = own.length;
+    const completed = own.filter((task) => moments.has(task.id)).length;
+
+    const existedThen = own.filter((task) => task.createdAt <= since);
+    const totalThen = existedThen.length;
+    const completedThen = existedThen.filter((task) => {
+      // Reopened inside the window: it was complete before that, whatever it looks like now.
+      if (reopened.has(task.id)) return true;
+      if (!moments.has(task.id)) return false;
+      const at = moments.get(task.id) ?? null;
+      return at === null || at <= since;
+    }).length;
+
+    result.set(projectId, {
+      completed,
+      total,
+      progressNow: percent(completed, total),
+      completedThen,
+      totalThen,
+      progressThen: percent(completedThen, totalThen),
+      since,
+    });
+  }
+  return result;
 }
 
 /* ------------------------------------------------------------------ */
@@ -639,7 +749,7 @@ export async function projectBrief(
   const since = new Date(now.getTime() - PROGRESS_LOOKBACK_MS);
   const { overdueCutoff } = dayWindow(now);
 
-  const [tasks, phases, blockedRows, blockedTotal, overdueRows, reopenRows] = await Promise.all([
+  const [tasks, phases, blockedRows, blockedMainRows, blockedCounts, overdueRows, progressByProject] = await Promise.all([
     prisma.mainTask.findMany({
       where: { projectId: project.id, ...notDeleted },
       orderBy: [{ deadline: "asc" }, { title: "asc" }],
@@ -662,7 +772,7 @@ export async function projectBrief(
     }),
     prisma.disciplineTask.findMany({
       where: {
-        status: "BLOCKED",
+        ...disciplineBlockedWhere,
         ...notDeleted,
         mainTask: { projectId: project.id, ...notDeleted },
       },
@@ -671,18 +781,38 @@ export async function projectBrief(
       include: {
         discipline: { select: { code: true } },
         mainTask: { select: { title: true } },
+        assignee: { select: { name: true } },
         predecessorEdges: {
-          include: { predecessor: { select: { title: true, status: true, deletedAt: true } } },
+          include: {
+            predecessor: {
+              select: {
+                title: true,
+                status: true,
+                deletedAt: true,
+                assignee: { select: { name: true } },
+              },
+            },
+          },
         },
       },
     }),
-    prisma.disciplineTask.count({
-      where: {
-        status: "BLOCKED",
-        ...notDeleted,
-        mainTask: { projectId: project.id, ...notDeleted },
+    // Blocked MAIN tasks too: the one shared rule (./blocked.ts) counts both kinds, so the list
+    // names both kinds and the total here is the very number the dashboard tile shows.
+    prisma.mainTask.findMany({
+      where: { projectId: project.id, ...notDeleted, AND: [mainBlockedWhere] },
+      orderBy: [{ deadline: "asc" }, { title: "asc" }],
+      take: SECTION_LIMIT,
+      select: {
+        id: true,
+        title: true,
+        deadline: true,
+        disciplineTasks: {
+          where: { ...disciplineBlockedWhere, ...notDeleted },
+          select: { title: true, assignee: { select: { name: true } } },
+        },
       },
     }),
+    blockedCountsByProject(actor.orgId, [project.id]),
     // Grouped in the database: overdue work per discipline, never one query per discipline.
     prisma.disciplineTask.groupBy({
       by: ["disciplineId"],
@@ -694,43 +824,18 @@ export async function projectBrief(
       },
       _count: { _all: true },
     }),
-    // Work that was reopened inside the window. A reopened task was, by definition, complete just
-    // before somebody reopened it — without this, finishing it again would be counted as fresh
-    // progress that never happened.
-    prisma.activityLog.findMany({
-      where: {
-        projectId: project.id,
-        entityType: "DisciplineTask",
-        action: ACTIVITY.REOPENED,
-        createdAt: { gte: since },
-      },
-      select: { entityId: true },
-      take: REOPEN_SCAN_LIMIT,
-    }),
+    progressSince(actor.orgId, [project.id], since),
   ]);
 
-  const moments = await completionMoments(tasks);
-  const total = tasks.length;
-  const completed = moments.size;
-
-  const reopenedMainTaskIds = await mainTasksBehind(reopenRows.map((row) => row.entityId));
-
-  // The comparison is only ever made between things that existed then: a main task created inside
-  // the window is left out of BOTH numbers, so adding work to a project cannot make its progress
-  // appear to fall.
-  const existedThen = tasks.filter((task) => task.createdAt <= since);
-  const totalThen = existedThen.length;
-  const completedThen = existedThen.filter((task) => {
-    // Reopened inside the window: it was complete before that, whatever it looks like now. Counting
-    // it as complete THEN is the honest, conservative reading — a task finished for the first time
-    // inside the window and then reopened and finished again is the one case this understates.
-    if (reopenedMainTaskIds.has(task.id)) return true;
-    if (!moments.has(task.id)) return false;
-    // Complete now, and the moment is already behind the window (a moment we cannot recover counts
-    // as old, so progress is never overstated).
-    const at = moments.get(task.id) ?? null;
-    return at === null || at <= since;
-  }).length;
+  const progress = progressByProject.get(project.id) ?? {
+    completed: 0,
+    total: 0,
+    progressNow: 0,
+    completedThen: 0,
+    totalThen: 0,
+    progressThen: 0,
+    since,
+  };
 
   const disciplines =
     overdueRows.length === 0
@@ -748,26 +853,70 @@ export async function projectBrief(
       count: overdueRows.find((row) => row.disciplineId === discipline.id)?._count._all ?? 0,
     }));
 
-  const blockedTasks: BriefBlockedTaskDTO[] = blockedRows.map((task) => ({
-    id: task.id,
-    title: task.title,
-    linkUrl: `/discipline-tasks/${task.id}`,
-    disciplineCode: task.discipline.code,
-    mainTaskTitle: task.mainTask.title,
-    unmetDependencies: task.predecessorEdges
-      .filter((edge) => !edge.predecessor.deletedAt && edge.predecessor.status !== "COMPLETED")
-      .map((edge) => edge.predecessor.title),
+  const blockedDisciplineTasks = blockedRows.map((task) => ({
+    deadline: task.deadline,
+    item: {
+      id: task.id,
+      kind: "DISCIPLINE" as const,
+      title: task.title,
+      linkUrl: `/discipline-tasks/${task.id}`,
+      disciplineCode: task.discipline.code,
+      mainTaskTitle: task.mainTask.title,
+      unmetDependencies: task.predecessorEdges
+        .filter((edge) => !edge.predecessor.deletedAt && edge.predecessor.status !== "COMPLETED")
+        .map((edge) => edge.predecessor.title),
+      assigneeName: task.assignee?.name ?? null,
+      blockedBy: task.predecessorEdges
+        .filter((edge) => !edge.predecessor.deletedAt && edge.predecessor.status !== "COMPLETED")
+        .map((edge) => ({
+          title: edge.predecessor.title,
+          assigneeName: edge.predecessor.assignee?.name ?? null,
+        })),
+    },
   }));
+  // A blocked main task is "waiting on" the blocked discipline tasks under it, if there are any.
+  const blockedMainTasks = blockedMainRows.map((task) => ({
+    deadline: task.deadline,
+    item: {
+      id: task.id,
+      kind: "MAIN" as const,
+      title: task.title,
+      linkUrl: `/tasks/${task.id}`,
+      disciplineCode: null,
+      mainTaskTitle: task.title,
+      unmetDependencies: task.disciplineTasks.map((child) => child.title),
+      assigneeName: null,
+      blockedBy: task.disciplineTasks.map((child) => ({
+        title: child.title,
+        assigneeName: child.assignee?.name ?? null,
+      })),
+    },
+  }));
+  const blockedTasks: BriefBlockedTaskDTO[] = [...blockedMainTasks, ...blockedDisciplineTasks]
+    .sort((a, b) => a.deadline.getTime() - b.deadline.getTime())
+    .slice(0, SECTION_LIMIT)
+    .map((entry) => entry.item);
+  const blockedTotal = sumBlocked(blockedCounts.get(project.id) ?? { blockedMain: 0, blockedDiscipline: 0 });
 
   const states = await phaseStatesFor(project.id);
-  const lockedPhases: BriefLockedPhaseDTO[] = sortPhases([...states.values()])
+  const sortedStates = sortPhases([...states.values()]);
+  const lockedPhases: BriefLockedPhaseDTO[] = sortedStates
     .filter((state) => state.locked)
-    .map((state) => ({
-      id: state.id,
-      name: state.name,
-      lockedByPhaseName: state.lockedByPhaseName,
-      openTaskCount: state.taskCount - state.completedCount,
-    }));
+    .map((state) => {
+      // The sentence says "waiting on <blocking phase>, which still has N main tasks open": N is
+      // the BLOCKING phase's open count (the first phase with work open), not this phase's own.
+      const blocking = sortedStates.find(
+        (other) => other.name === state.lockedByPhaseName && other.completedCount < other.taskCount,
+      );
+      return {
+        id: state.id,
+        name: state.name,
+        lockedByPhaseName: state.lockedByPhaseName,
+        openTaskCount: blocking
+          ? blocking.taskCount - blocking.completedCount
+          : state.taskCount - state.completedCount,
+      };
+    });
 
   const openTasks = tasks.filter(
     (task) => effectiveStatus(task.status, task.statusOverride) !== "COMPLETED",
@@ -787,7 +936,7 @@ export async function projectBrief(
     disciplineCode: null,
     deadline: task.deadline,
     daysOverdue: isOverdue(task.deadline, effectiveStatus(task.status, task.statusOverride), now)
-      ? daysOver(task.deadline, now)
+      ? daysLate(task.deadline, now)
       : null,
     body: null,
     note: `${task.progressPct}% complete`,
@@ -800,12 +949,12 @@ export async function projectBrief(
     projectName: project.name,
     generatedAt: now,
     progress: {
-      completed,
-      total,
-      pct: percent(completed, total),
-      completedThen,
-      totalThen,
-      pctThen: percent(completedThen, totalThen),
+      completed: progress.completed,
+      total: progress.total,
+      pct: progress.progressNow,
+      completedThen: progress.completedThen,
+      totalThen: progress.totalThen,
+      pctThen: progress.progressThen,
       since,
     },
     blockedTasks,
@@ -831,16 +980,6 @@ export async function projectBrief(
   return checkDto(ProjectBriefSchema, dto, "ProjectBriefDTO");
 }
 
-/** The main tasks these discipline tasks belong to. One bounded read, never one per row. */
-async function mainTasksBehind(disciplineTaskIds: string[]): Promise<Set<string>> {
-  if (disciplineTaskIds.length === 0) return new Set();
-  const rows = await prisma.disciplineTask.findMany({
-    where: { id: { in: [...new Set(disciplineTaskIds)] } },
-    select: { mainTaskId: true },
-  });
-  return new Set(rows.map((row) => row.mainTaskId));
-}
-
 function percent(part: number, whole: number): number {
   if (whole === 0) return 0;
   if (part >= whole) return 100;
@@ -856,7 +995,9 @@ export type DigestLine = {
   code: string;
   name: string;
   pct: number;
-  overdue: number;
+  /** Late main tasks and late discipline tasks, named separately — one shared definition. */
+  lateMain: number;
+  lateDiscipline: number;
   blocked: number;
   nextGate: string | null;
 };
@@ -901,9 +1042,23 @@ const OPEN_WHERE = {
  * cap, so a busy company's digest is as true as a quiet one's; only the number of project LINES is
  * capped, and the card says how many were left out.
  */
-export async function orgDigest(orgId: string, now: Date = new Date()): Promise<OrgDigest | null> {
+export async function orgDigest(
+  orgId: string,
+  now: Date = new Date(),
+  options: { onlyProjectIds?: string[] } = {},
+): Promise<OrgDigest | null> {
+  // `onlyProjectIds` narrows the digest to those projects, applied in the same place `orgId` is.
+  // Absent, the digest is the whole company's, exactly as the sweep has always posted it. Ask
+  // Tielora passes the ids of `projectsVisibleTo(actor)`, so one person's question can never be
+  // handed the line of a project they are not on. An empty list means no projects, not "all".
+  const only = options.onlyProjectIds;
   const projects = await prisma.project.findMany({
-    where: { orgId, status: "ACTIVE", ...notDeleted },
+    where: {
+      orgId,
+      status: "ACTIVE",
+      ...notDeleted,
+      ...(only ? { id: { in: only } } : {}),
+    },
     orderBy: { createdAt: "desc" },
     take: DIGEST_PROJECT_LIMIT + 1,
     select: { id: true, name: true, code: true },
@@ -912,21 +1067,13 @@ export async function orgDigest(orgId: string, now: Date = new Date()): Promise<
 
   const shown = projects.slice(0, DIGEST_PROJECT_LIMIT);
   const projectIds = shown.map((project) => project.id);
-  const { overdueCutoff } = dayWindow(now);
   const inProjects = { projectId: { in: projectIds }, ...notDeleted };
 
-  const [totals, completed, overdue, openPhases, phases, blockedRows] = await Promise.all([
+  const [totals, completed, openPhases, phases, blockedCounts, lateCounts] = await Promise.all([
     prisma.mainTask.groupBy({ by: ["projectId"], where: inProjects, _count: { _all: true } }),
     prisma.mainTask.groupBy({
       by: ["projectId"],
       where: { ...inProjects, ...COMPLETE_WHERE },
-      _count: { _all: true },
-    }),
-    // Overdue is derived at read time everywhere; this is the same line drawn in the database —
-    // open work whose deadline day has fully passed. The same number the project page shows.
-    prisma.mainTask.groupBy({
-      by: ["projectId"],
-      where: { ...inProjects, ...OPEN_WHERE, deadline: { lte: overdueCutoff } },
       _count: { _all: true },
     }),
     // Which phases still hold open work — that is all the next gate needs.
@@ -939,30 +1086,13 @@ export async function orgDigest(orgId: string, now: Date = new Date()): Promise<
       where: { projectId: { in: projectIds } },
       select: { id: true, projectId: true, name: true, sortOrder: true },
     }),
-    // One row per main task that has blocked work under it — bounded by the work itself, not by a
-    // cap that could drop a project's blockers on the floor.
-    prisma.disciplineTask.groupBy({
-      by: ["mainTaskId"],
-      where: {
-        status: "BLOCKED",
-        ...notDeleted,
-        mainTask: { projectId: { in: projectIds }, ...notDeleted },
-      },
-      _count: { _all: true },
-    }),
+    // Blocked is the one shared definition (./blocked.ts): main tasks and discipline tasks together,
+    // exactly as the dashboard tile counts them.
+    blockedCountsByProject(orgId, projectIds),
+    // Late is the one shared definition (src/lib/late.ts): main tasks and discipline tasks, counted
+    // separately, exactly as the dashboard and the project header count them.
+    lateCountsByProject(orgId, projectIds, now),
   ]);
-
-  const owners = await prisma.mainTask.findMany({
-    where: { id: { in: blockedRows.map((row) => row.mainTaskId) } },
-    select: { id: true, projectId: true },
-  });
-  const projectOfTask = new Map(owners.map((task) => [task.id, task.projectId]));
-  const blockedByProject = new Map<string, number>();
-  for (const row of blockedRows) {
-    const projectId = projectOfTask.get(row.mainTaskId);
-    if (!projectId) continue;
-    blockedByProject.set(projectId, (blockedByProject.get(projectId) ?? 0) + row._count._all);
-  }
 
   const countIn = (rows: { projectId: string; _count: { _all: number } }[], projectId: string) =>
     rows.find((row) => row.projectId === projectId)?._count._all ?? 0;
@@ -981,13 +1111,25 @@ export async function orgDigest(orgId: string, now: Date = new Date()): Promise<
       code: project.code,
       name: project.name,
       pct: percent(countIn(completed, project.id), countIn(totals, project.id)),
-      overdue: countIn(overdue, project.id),
-      blocked: blockedByProject.get(project.id) ?? 0,
+      lateMain: lateCounts.get(project.id)?.lateMain ?? 0,
+      lateDiscipline: lateCounts.get(project.id)?.lateDiscipline ?? 0,
+      blocked: sumBlocked(blockedCounts.get(project.id) ?? { blockedMain: 0, blockedDiscipline: 0 }),
       nextGate: gate?.name ?? null,
     };
   });
 
   return { lines, moreProjects: Math.max(0, projects.length - shown.length) };
+}
+
+/**
+ * How much work is late, naming BOTH kinds ("2 main tasks and 5 discipline tasks late"), never a
+ * bare number. Shared by the daily digest ("overdue") and the weekly brief ("late").
+ */
+export function lateSentence(lateMain: number, lateDiscipline: number, word: "late" | "overdue"): string {
+  if (lateMain === 0 && lateDiscipline === 0) return `nothing ${word}`;
+  const main = `${lateMain} main ${lateMain === 1 ? "task" : "tasks"}`;
+  const discipline = `${lateDiscipline} discipline ${lateDiscipline === 1 ? "task" : "tasks"}`;
+  return `${main} and ${discipline} ${word}`;
 }
 
 /**
@@ -999,7 +1141,7 @@ export function digestMessage(digest: OrgDigest): ChatMessage {
   const lines = digest.lines.map((line) => {
     const parts = [
       `${line.pct}%`,
-      `${line.overdue} overdue`,
+      lateSentence(line.lateMain, line.lateDiscipline, "overdue"),
       `${line.blocked} blocked`,
       line.nextGate ? `next gate: ${line.nextGate}` : "no gate open",
     ];
@@ -1018,5 +1160,7 @@ export function digestMessage(digest: OrgDigest): ChatMessage {
     }`,
     body: lines.join("\n"),
     linkUrl: "/dashboard",
+    // Twelve longer lines do not fit the ordinary 1,200-character card body.
+    bodyLimit: BRIEF_BODY_LIMIT,
   };
 }

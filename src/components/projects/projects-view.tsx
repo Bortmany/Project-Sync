@@ -15,10 +15,14 @@ import { isManager, useMe, useProjects } from "@/components/hooks/use-api";
 import { formatDate } from "@/components/format";
 import {
   Button,
+  CellText,
+  DesktopTable,
   DisciplineDot,
   EmptyState,
   ErrorBanner,
   Input,
+  PhoneCard,
+  PhoneCardList,
   ProgressBar,
   SkeletonRows,
   StatusBadge,
@@ -133,7 +137,7 @@ export function ProjectsView() {
                       : [...current, option.value],
                   )
                 }
-                className={`min-h-9 rounded-full border px-3 text-xs font-semibold ${
+                className={`inline-flex min-h-11 items-center rounded-full border px-3 text-xs font-semibold ${
                   active
                     ? "border-[var(--brand-primary)] bg-[var(--brand-primary)] text-white"
                     : "border-[var(--border)] bg-white text-[var(--brand-text)]"
@@ -168,13 +172,71 @@ export function ProjectsView() {
           <button
             type="button"
             onClick={clearFilters}
-            className="mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+            className="inline-flex min-h-11 items-center mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
           >
             Clear filters
           </button>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-[var(--radius)] border border-[var(--border)] bg-white">
+        <>
+        <PhoneCardList label="Projects">
+          {visible.map((project) => {
+            const overdue =
+              project.targetDate !== null &&
+              project.status !== "COMPLETED" &&
+              project.targetDate.getTime() < Date.now();
+            return (
+              <PhoneCard
+                key={project.id}
+                href={`/projects/${project.id}`}
+                title={project.name}
+                meta={
+                  <span className="rounded-full bg-[var(--page-bg)] px-2 py-0.5 text-xs font-normal text-[var(--brand-text)]">
+                    {project.code}
+                  </span>
+                }
+                fields={[
+                  { label: "Status", value: <ProjectStatusBadge status={project.status} /> },
+                  {
+                    label: "Deadline",
+                    value: (
+                      <span style={{ color: overdue ? "var(--status-blocked)" : "var(--brand-text)" }}>
+                        {formatDate(project.targetDate)}
+                      </span>
+                    ),
+                  },
+                  {
+                    label: "Overdue",
+                    value:
+                      project.overdueCount > 0 ? (
+                        <span className="text-xs font-semibold text-[var(--status-blocked)]">
+                          {project.overdueCount} overdue
+                        </span>
+                      ) : (
+                        <span className="text-xs text-[var(--brand-gray)]">None</span>
+                      ),
+                  },
+                  {
+                    label: "Progress",
+                    value: (
+                      <>
+                        <ProgressBar pct={project.progressPct} />
+                        <span className="text-xs text-[var(--brand-gray)]">
+                          {project.mainTaskCount} main tasks
+                        </span>
+                      </>
+                    ),
+                  },
+                  {
+                    label: "Disciplines",
+                    value: <DisciplineDots disciplines={project.disciplines} />,
+                  },
+                ]}
+              />
+            );
+          })}
+        </PhoneCardList>
+        <DesktopTable>
           <table className="w-full text-sm">
             <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--brand-gray)]">
               <tr>
@@ -197,9 +259,9 @@ export function ProjectsView() {
                     <td className="px-3">
                       <Link
                         href={`/projects/${project.id}`}
-                        className="font-semibold text-[var(--brand-primary)] hover:underline"
+                        className="inline-flex min-h-11 items-center font-semibold text-[var(--brand-primary)] hover:underline"
                       >
-                        {project.name}
+                        <CellText>{project.name}</CellText>
                       </Link>
                       <span className="ml-2 rounded-full bg-[var(--page-bg)] px-2 py-0.5 text-xs text-[var(--brand-text)]">
                         {project.code}
@@ -237,14 +299,15 @@ export function ProjectsView() {
               })}
             </tbody>
           </table>
-        </div>
+        </DesktopTable>
+        </>
       )}
 
       {filtering && visible.length > 0 ? (
         <button
           type="button"
           onClick={clearFilters}
-          className="text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+          className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
         >
           Clear filters
         </button>

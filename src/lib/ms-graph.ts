@@ -51,7 +51,7 @@ export type MicrosoftConfig = {
 };
 
 /** Normalises APP_BASE_URL the same way the chat integration does — https/http, no trailing slash. */
-function baseUrl(env: NodeJS.ProcessEnv): string | null {
+export function appBaseUrl(env: NodeJS.ProcessEnv = process.env): string | null {
   const raw = env.APP_BASE_URL?.trim();
   if (!raw) return null;
   try {
@@ -74,7 +74,7 @@ export function microsoftConfig(env: NodeJS.ProcessEnv = process.env): Microsoft
 
   const configuredPath = env.MS_GRAPH_REDIRECT_PATH?.trim() || DEFAULT_REDIRECT_PATH;
   const redirectPath = configuredPath.startsWith("/") ? configuredPath : DEFAULT_REDIRECT_PATH;
-  const base = baseUrl(env);
+  const base = appBaseUrl(env);
 
   return {
     clientId,
@@ -229,6 +229,47 @@ export function authorizeUrl(config: MicrosoftConfig, redirectUri: string, state
   url.searchParams.set("scope", GRAPH_SCOPES);
   url.searchParams.set("prompt", "consent");
   url.searchParams.set("state", state);
+  return url.toString();
+}
+
+/* ------------------------------------------------------------------ */
+/* Sign in with Microsoft                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The only scopes a sign-in ever asks for: who you are, and nothing else. No `offline_access`, no
+ * `Files.Read.All` — ordinary users can approve these without an administrator.
+ */
+export const SIGNIN_SCOPES = "openid profile email";
+
+/** The second redirect address registered in Azure, beside the OneDrive one. Fixed on purpose. */
+export const SIGNIN_CALLBACK_PATH = "/api/auth/microsoft/callback";
+
+/** Microsoft's published signing keys, on the login host the guard already allows. */
+export const SIGNIN_JWKS_URL = `https://${LOGIN_HOST}/organizations/discovery/v2.0/keys`;
+
+/**
+ * Where "Sign in with Microsoft" (and an administrator's "Switch on") sends the browser. Work and
+ * school accounts only (`organizations`), the authorization-code flow with PKCE (S256), a `state`
+ * and a `nonce` bound to the attempt cookie. `prompt=select_account` so somebody signed in to two
+ * Microsoft accounts is asked which one they mean rather than silently handed the wrong one.
+ */
+export function signInAuthorizeUrl(
+  config: MicrosoftConfig,
+  redirectUri: string,
+  attempt: { state: string; nonce: string; codeChallenge: string },
+): string {
+  const url = new URL(`https://${LOGIN_HOST}/organizations/oauth2/v2.0/authorize`);
+  url.searchParams.set("client_id", config.clientId);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("response_mode", "query");
+  url.searchParams.set("redirect_uri", redirectUri);
+  url.searchParams.set("scope", SIGNIN_SCOPES);
+  url.searchParams.set("state", attempt.state);
+  url.searchParams.set("nonce", attempt.nonce);
+  url.searchParams.set("code_challenge", attempt.codeChallenge);
+  url.searchParams.set("code_challenge_method", "S256");
+  url.searchParams.set("prompt", "select_account");
   return url.toString();
 }
 
