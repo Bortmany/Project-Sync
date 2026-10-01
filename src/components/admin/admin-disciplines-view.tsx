@@ -231,7 +231,7 @@ export function AdminDisciplinesView({ disciplines }: { disciplines: DisciplineD
                     <button
                       type="button"
                       onClick={() => setEditing(discipline)}
-                      className="text-xs font-semibold text-[var(--brand-primary)] hover:underline"
+                      className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] hover:underline"
                     >
                       Edit
                     </button>

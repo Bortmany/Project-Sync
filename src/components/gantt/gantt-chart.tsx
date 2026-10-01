@@ -416,7 +416,7 @@ export function GanttChart({
               type="button"
               onClick={() => setZoom(option)}
               aria-pressed={zoom === option}
-              className={`px-3 py-1.5 text-xs font-semibold ${
+              className={`inline-flex min-h-11 items-center px-3 text-xs font-semibold ${
                 zoom === option
                   ? "bg-[var(--brand-primary)] text-white"
                   : "bg-white text-[var(--brand-text)] hover:bg-[var(--page-bg)]"

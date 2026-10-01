@@ -120,7 +120,7 @@ function DocumentRow({
           <button
             type="button"
             onClick={onOpenHistory}
-            className="inline-flex min-h-11 items-center min-w-0 max-w-md break-words text-left font-semibold text-[var(--brand-primary)] hover:underline"
+            className="inline-flex min-h-11 items-center min-w-0 max-w-xs break-words text-left font-semibold text-[var(--brand-primary)] hover:underline"
           >
             {document.title}
           </button>
@@ -162,7 +162,7 @@ function DocumentRow({
       </td>
 
       <td className="px-3">
-        <div className="flex items-center justify-end gap-3 text-xs">
+        <div className="flex flex-wrap items-center justify-end gap-x-3 text-xs">
           {revision ? (
             <a
               href={revision.downloadUrl}

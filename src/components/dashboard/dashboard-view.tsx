@@ -191,7 +191,10 @@ export function DashboardView({ askProjects = null }: { askProjects?: AskProject
         <Card
           title="My tasks"
           action={
-            <Link href="/my-tasks" className="text-sm font-semibold text-[var(--brand-primary)]">
+            <Link
+              href="/my-tasks"
+              className="relative text-sm font-semibold text-[var(--brand-primary)] after:absolute after:-inset-x-1 after:-inset-y-3.5 after:content-['']"
+            >
               View all →
             </Link>
           }
@@ -262,7 +265,7 @@ export function DashboardView({ askProjects = null }: { askProjects?: AskProject
           action={
             <Link
               href="/dashboard/list?tile=late"
-              className="text-sm font-semibold text-[var(--brand-primary)]"
+              className="relative text-sm font-semibold text-[var(--brand-primary)] after:absolute after:-inset-x-1 after:-inset-y-3.5 after:content-['']"
             >
               View all →
             </Link>
@@ -290,7 +293,7 @@ export function DashboardView({ askProjects = null }: { askProjects?: AskProject
           action={
             <Link
               href="/dashboard/list?tile=upcoming"
-              className="text-sm font-semibold text-[var(--brand-primary)]"
+              className="relative text-sm font-semibold text-[var(--brand-primary)] after:absolute after:-inset-x-1 after:-inset-y-3.5 after:content-['']"
             >
               View all →
             </Link>
