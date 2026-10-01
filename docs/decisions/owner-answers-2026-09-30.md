@@ -32,3 +32,5 @@ default, that default is now the decision.
 8. **Teams follow-ups kept out of this round:** the in-memory token fallback for phones/Safari (ship
    the "open Tielora in your browser" message instead); admins of a company without Microsoft linked
    still see the Teams app card with a notice.
+
+9. **Pricing spec approved** (2 Oct 2026): `docs/specs/align-2026-10/pricing-2026-10.md` with its three defaults — a Free company already over 10 contractors keeps them (only new ones refused); `/pricing` shows the AI allowance in dollars only once the deployment has the AI key; the "Pro is full" refusal points the admin at deactivating someone.
