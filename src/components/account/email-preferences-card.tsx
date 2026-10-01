@@ -9,8 +9,7 @@
 // greyed out, with a calm strip and a button to send the confirmation link again.
 //
 // A contractor (EXTERNAL) sees the Alerts row only, with its own words: they are never sent a daily
-// or weekly brief, and there is no space where those rows would be. The weekly brief row is not
-// drawn at all until the weekly-brief build lands.
+// or weekly brief, and there is no space where those rows would be.
 
 "use client";
 
@@ -20,7 +19,7 @@ import { useAction } from "@/components/hooks/use-action";
 import { Button, Card, Spinner, useToast } from "@/components/ui";
 import type { EmailPreferencesDTO, EmailPreferencesInput } from "@/lib/zod-schemas";
 
-type RowKey = "emailAlerts" | "emailDailyBrief";
+type RowKey = "emailAlerts" | "emailDailyBrief" | "emailWeeklyBrief";
 
 type Row = {
   key: RowKey;
@@ -56,6 +55,15 @@ const DAILY_BRIEF: Row = {
   off: "Daily brief is off.",
 };
 
+const WEEKLY_BRIEF: Row = {
+  key: "emailWeeklyBrief",
+  label: "Weekly brief",
+  helper:
+    "A summary every Monday morning (early morning UTC) of the projects you belong to: how far each has come since last week, what became late, which gates opened and which required documents are missing. Nothing is sent if you are on no active project.",
+  on: "Weekly brief is on. Your first one arrives next Monday.",
+  off: "Weekly brief is off.",
+};
+
 const SAVE_FAILED = "Couldn't save that. Try again.";
 
 /** A "slow down" answer carries its own plain sentence, which is worth showing as it is. */
@@ -75,6 +83,7 @@ export function EmailPreferencesCard({
   const [values, setValues] = useState<Record<RowKey, boolean>>({
     emailAlerts: preferences.emailAlerts,
     emailDailyBrief: preferences.emailDailyBrief,
+    emailWeeklyBrief: preferences.emailWeeklyBrief,
   });
   const [saving, setSaving] = useState<RowKey | null>(null);
   const resend = useAction();
@@ -84,7 +93,7 @@ export function EmailPreferencesCard({
   // card agrees with it.
   if (!preferences.available) return null;
 
-  const rows = external ? [CONTRACTOR_ALERTS] : [ALERTS, DAILY_BRIEF];
+  const rows = external ? [CONTRACTOR_ALERTS] : [ALERTS, DAILY_BRIEF, WEEKLY_BRIEF];
   const locked = !preferences.verified;
 
   async function toggle(row: Row, next: boolean) {
@@ -100,6 +109,7 @@ export function EmailPreferencesCard({
         setValues({
           emailAlerts: result.data.emailAlerts,
           emailDailyBrief: result.data.emailDailyBrief,
+          emailWeeklyBrief: result.data.emailWeeklyBrief,
         });
       } else {
         error = isWaitAWhile(result.error) ? result.error : SAVE_FAILED;

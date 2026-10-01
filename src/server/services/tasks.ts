@@ -1476,7 +1476,7 @@ type SubtaskRow = {
 };
 
 /** How many MANDATORY required documents each discipline task has, and how many are in place. */
-type RequiredDocCounts = Map<string, { total: number; satisfied: number }>;
+export type RequiredDocCounts = Map<string, { total: number; satisfied: number }>;
 
 /**
  * Mandatory required-document counts for a whole set of discipline tasks in two grouped queries —
@@ -1485,7 +1485,7 @@ type RequiredDocCounts = Map<string, { total: number; satisfied: number }>;
  * "Satisfied" is a mandatory requirement with a document attached (`documentId` is not null), the
  * same condition the gate uses.
  */
-async function requiredDocCountsFor(disciplineTaskIds: string[]): Promise<RequiredDocCounts> {
+export async function requiredDocCountsFor(disciplineTaskIds: string[]): Promise<RequiredDocCounts> {
   const counts: RequiredDocCounts = new Map();
   if (disciplineTaskIds.length === 0) return counts;
 

@@ -94,17 +94,26 @@ export const DUE_BUCKET_LABEL: Record<DueBucket, string> = {
 
 export const DUE_BUCKET_ORDER: DueBucket[] = ["overdue", "today", "week", "later"];
 
-/** Which group a deadline belongs to on the dashboard and My tasks. */
-export function dueBucket(deadline: Date, isOverdue: boolean, now: Date = new Date()): DueBucket {
+/**
+ * Which date group a deadline belongs to on the dashboard and My tasks — or `null` for finished
+ * work, which never sits under a date heading (it has its own "Completed" grouping). Without that,
+ * a task completed weeks after its deadline was filed under "Today".
+ *
+ * A deadline is a DAY stored at UTC midnight, so it is read as its UTC calendar day and compared
+ * with the viewer's own calendar day; reading it in local time shifts it a day west of UTC.
+ */
+export function dueBucket(
+  deadline: Date,
+  isOverdue: boolean,
+  now: Date = new Date(),
+  status?: string,
+): DueBucket | null {
+  if (status === "COMPLETED") return null;
   if (isOverdue) return "overdue";
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const due = new Date(
-    deadline.getFullYear(),
-    deadline.getMonth(),
-    deadline.getDate(),
-  ).getTime();
-  if (due <= startOfToday) return "today";
-  if (due <= startOfToday + 7 * DAY_MS) return "week";
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const due = Date.UTC(deadline.getUTCFullYear(), deadline.getUTCMonth(), deadline.getUTCDate());
+  if (due <= today) return "today";
+  if (due <= today + 7 * DAY_MS) return "week";
   return "later";
 }
 

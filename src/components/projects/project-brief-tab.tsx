@@ -143,9 +143,11 @@ export function ProjectBriefTab({ project }: { project: ProjectDTO }) {
                       <span className="text-xs text-[var(--brand-gray)]">{task.disciplineCode}</span>
                       <span className="text-xs text-[var(--brand-gray)]">{task.mainTaskTitle}</span>
                       <span className="text-xs text-[var(--brand-text)]">
-                        {task.unmetDependencies.length === 0
+                        {task.blockedBy.length === 0
                           ? "Marked blocked, with nothing named"
-                          : `Waiting on ${task.unmetDependencies.join(", ")}`}
+                          : `Waiting on ${task.blockedBy
+                              .map((entry) => `${entry.title} (${entry.assigneeName ?? "Not assigned"})`)
+                              .join(", ")}`}
                       </span>
                     </li>
                   ))}

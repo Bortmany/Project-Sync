@@ -125,6 +125,11 @@ export const ACTIVITY = {
   /** Somebody took a copy of their OWN data. One row per download. */
   PERSONAL_EXPORT: "PERSONAL_EXPORT",
   /**
+   * Somebody downloaded a status report of one project (PDF or PowerPoint). One row per successful
+   * download, `metadata: { format }`; the contents of the file are never recorded.
+   */
+  REPORT_EXPORTED: "REPORT_EXPORTED",
+  /**
    * Somebody deleted their own account. The summary deliberately does NOT carry their old name —
    * it is written in the same transaction that replaces it with "Former member", and a fresh row
    * naming them would undo the whole point. The older rows keep the name they were written with,

@@ -11,7 +11,13 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { ForbiddenError } from "@/lib/permissions";
-import { SaveIntegrationInput, maskWebhookUrl, webhookUrlProblem } from "@/lib/zod-schemas";
+import {
+  DEFAULT_EVENT_TOGGLES,
+  IntegrationEventToggles,
+  SaveIntegrationInput,
+  maskWebhookUrl,
+  webhookUrlProblem,
+} from "@/lib/zod-schemas";
 import { NotFoundError } from "@/server/errors";
 import {
   deleteIntegration,
@@ -56,7 +62,14 @@ import {
 import { setEmailPreferences } from "@/server/services/email-preferences";
 import { createMainTask } from "@/server/services/tasks";
 import { requestWorkspaceDeletion } from "@/server/services/workspace-deletion";
-import { emailSweepReminders, runSweepOnce, sendDailyBriefEmails } from "@/server/sweep";
+import {
+  emailSweepReminders,
+  postWeeklyBriefs,
+  runSweepOnce,
+  sendDailyBriefEmails,
+  sendWeeklyBriefEmails,
+} from "@/server/sweep";
+import { weeklyBoundary } from "@/server/services/weekly-brief";
 import { inThirtyDays, makeUser } from "@/server/__tests__/harness";
 import {
   EMAIL_BASE,
@@ -200,6 +213,8 @@ describe("what the admin screen is told", () => {
       announcements: false,
 
       dailyBrief: false,
+
+      weeklyBrief: false,
     };
     await setEventToggles(fixture.adminActor, { kind: "SLACK", eventToggles: chosen });
 
@@ -225,6 +240,7 @@ describe("what the admin screen is told", () => {
       // nobody asked for yet, so both only ever happen because an administrator switched them on.
       announcements: false,
       dailyBrief: false,
+      weeklyBrief: false,
     });
   });
 
@@ -272,6 +288,8 @@ describe("the audit trail", () => {
         announcements: false,
 
         dailyBrief: false,
+
+        weeklyBrief: false,
       },
     });
 
@@ -358,6 +376,7 @@ describe("which events actually go out", () => {
         gateOverride: true,
         announcements: false,
         dailyBrief: false,
+        weeklyBrief: false,
       },
     });
 
@@ -399,6 +418,7 @@ describe("which events actually go out", () => {
         gateOverride: true,
         announcements: true,
         dailyBrief: false,
+        weeklyBrief: false,
       },
     });
 
@@ -889,6 +909,7 @@ describe("alert emails, from notify() outwards", () => {
         gateOverride: false,
         announcements: false,
         dailyBrief: false,
+        weeklyBrief: false,
       },
     });
     await notifyFromAdmin([fixture.engineerActor.userId], "ASSIGNED");
@@ -1317,5 +1338,446 @@ describe("the daily brief email", () => {
     expect((await sendDailyBriefEmails(morning())).sent).toBe(0);
     expect(sentEmails(spy)).toHaveLength(0);
     expect((await actorForUser(fixture.pmActor.userId)).userId).toBe(fixture.pmActor.userId);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The weekly brief                                                    */
+/* ------------------------------------------------------------------ */
+
+/** Monday 00:00 UTC of the current week, plus the given hours (and optionally whole weeks). */
+const monday = (hours: number, weeks = 0): Date => {
+  const now = new Date();
+  const sinceMonday = (now.getUTCDay() + 6) % 7;
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - sinceMonday + 7 * weeks) +
+      hours * 60 * 60 * 1000,
+  );
+};
+const WEEKLY_SLACK_2 = "https://hooks.slack.com/services/T22222222/B22222222/AnotherSecretTokenVal";
+
+/** Posts to a given channel address, out of everything a spy received. */
+const postsTo = (spy: { mock: { calls: unknown[][] } }, url: string) =>
+  spy.mock.calls.filter((call) => String(call[0]) === url);
+
+async function connectWeekly(
+  kind: "SLACK" | "TEAMS",
+  url: string,
+  options: { weekly?: boolean; daily?: boolean; actor?: Fixture["adminActor"] } = {},
+) {
+  const actor = options.actor ?? fixture.adminActor;
+  await saveIntegration(actor, { kind, webhookUrl: url });
+  await setIntegrationEnabled(actor, { kind, enabled: true });
+  await setEventToggles(actor, {
+    kind,
+    eventToggles: {
+      ...DEFAULT_EVENT_TOGGLES,
+      weeklyBrief: options.weekly ?? true,
+      dailyBrief: options.daily ?? false,
+    },
+  });
+}
+
+describe("the weekly brief toggle", () => {
+  it("defaults to off, and an old six-key block still parses", () => {
+    const old = {
+      taskAssigned: true,
+      mention: true,
+      statusChange: true,
+      overdueReminder: true,
+      gateOverride: true,
+      dailyBrief: true,
+    };
+    const parsed = IntegrationEventToggles.parse(old);
+    expect(parsed.weeklyBrief).toBe(false);
+    expect(parsed.announcements).toBe(false);
+    expect(parsed.dailyBrief).toBe(true);
+    expect(DEFAULT_EVENT_TOGGLES.weeklyBrief).toBe(false);
+    expect(toggleForType("OVERDUE")).toBe("overdueReminder");
+  });
+
+  it("is off for a freshly connected channel, and the admin screen is told so", async () => {
+    await saveIntegration(fixture.adminActor, { kind: "SLACK", webhookUrl: SLACK_URL });
+    const slack = (await listIntegrationsForAdmin(fixture.adminActor)).find((item) => item.kind === "SLACK");
+    expect(slack?.eventToggles.weeklyBrief).toBe(false);
+  });
+});
+
+describe("the weekly brief, in chat", () => {
+  it("has a send line of Monday 05:00 UTC, open until 05:00 UTC Tuesday", () => {
+    expect(weeklyBoundary(monday(4.99))).toBeNull();
+    expect(weeklyBoundary(monday(5))).toEqual(monday(5));
+    expect(weeklyBoundary(monday(23))).toEqual(monday(5));
+    expect(weeklyBoundary(monday(28.99))).toEqual(monday(5));
+    expect(weeklyBoundary(monday(29))).toBeNull();
+    expect(weeklyBoundary(monday(24 * 6 + 12))).toBeNull(); // Sunday
+  });
+
+  it("goes once per channel per week, and again the next Monday", async () => {
+    await connectWeekly("SLACK", SLACK_URL);
+    const spy = mockFetchOk();
+
+    expect((await postWeeklyBriefs(monday(6))).channels).toBe(1);
+    expect(postsTo(spy, SLACK_URL)).toHaveLength(1);
+
+    await postWeeklyBriefs(monday(7));
+    await postWeeklyBriefs(monday(28));
+    expect(postsTo(spy, SLACK_URL)).toHaveLength(1);
+
+    await postWeeklyBriefs(monday(6, 1));
+    expect(postsTo(spy, SLACK_URL)).toHaveLength(2);
+  });
+
+  it("makes only the channel enabled later on Monday due", async () => {
+    await connectWeekly("SLACK", SLACK_URL);
+    const spy = mockFetchOk();
+    await postWeeklyBriefs(monday(6));
+
+    await connectWeekly("TEAMS", TEAMS_URL);
+    await postWeeklyBriefs(monday(9));
+
+    expect(postsTo(spy, SLACK_URL)).toHaveLength(1);
+    expect(postsTo(spy, TEAMS_URL)).toHaveLength(1);
+  });
+
+  it("is not sent before Monday 05:00, is sent late on Monday, and is skipped after Tuesday 05:00", async () => {
+    await connectWeekly("SLACK", SLACK_URL);
+    const spy = mockFetchOk();
+
+    await postWeeklyBriefs(monday(4.9));
+    expect(spy).not.toHaveBeenCalled();
+
+    await postWeeklyBriefs(monday(23));
+    expect(postsTo(spy, SLACK_URL)).toHaveLength(1);
+
+    // A server that was down all Monday and came up on Tuesday morning still sends ...
+    await prisma.orgIntegration.updateMany({ data: { weeklyBriefSentAt: null } });
+    await postWeeklyBriefs(monday(28));
+    expect(postsTo(spy, SLACK_URL)).toHaveLength(2);
+
+    // ... but from 05:00 UTC Tuesday the week is skipped, and nothing is stamped.
+    await prisma.orgIntegration.updateMany({ data: { weeklyBriefSentAt: null } });
+    await postWeeklyBriefs(monday(29));
+    await postWeeklyBriefs(monday(24 * 3 + 6));
+    expect(postsTo(spy, SLACK_URL)).toHaveLength(2);
+    expect((await prisma.orgIntegration.findFirstOrThrow()).weeklyBriefSentAt).toBeNull();
+  });
+
+  it("skips channels that are disabled or have the toggle off", async () => {
+    await connectWeekly("SLACK", SLACK_URL, { weekly: true });
+    await setIntegrationEnabled(fixture.adminActor, { kind: "SLACK", enabled: false });
+    await connectWeekly("TEAMS", TEAMS_URL, { weekly: false, daily: true });
+    const spy = mockFetchOk();
+
+    const run = await postWeeklyBriefs(monday(6));
+
+    expect(run).toEqual({ orgs: 0, channels: 0 });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("stamps a company with no active project and sends nothing", async () => {
+    await connectWeekly("SLACK", SLACK_URL);
+    await prisma.project.update({ where: { id: fixture.projectId }, data: { status: "ARCHIVED" } });
+    const spy = mockFetchOk();
+
+    const run = await postWeeklyBriefs(monday(6));
+
+    expect(run).toEqual({ orgs: 1, channels: 0 });
+    expect(spy).not.toHaveBeenCalled();
+    expect((await prisma.orgIntegration.findFirstOrThrow()).weeklyBriefSentAt).toEqual(monday(6));
+  });
+
+  it("uses its own 30-second budget, longest-waiting company first", async () => {
+    const other = await makeOrg("Second Company");
+    const second = await makeProjectFixture(other.id);
+    await connectWeekly("SLACK", SLACK_URL);
+    await connectWeekly("SLACK", WEEKLY_SLACK_2, { actor: second.adminActor });
+    // The second company has waited longest (never sent); the first was sent last week.
+    await prisma.orgIntegration.updateMany({
+      where: { orgId: fixture.orgId },
+      data: { weeklyBriefSentAt: monday(6, -1) },
+    });
+    const spy = mockFetchOk();
+
+    // A budget of zero still lets one company through, then holds the rest back.
+    const cut = await postWeeklyBriefs(monday(6), 0);
+    expect(cut.orgs).toBe(1);
+    expect(postsTo(spy, WEEKLY_SLACK_2)).toHaveLength(1);
+    expect(postsTo(spy, SLACK_URL)).toHaveLength(0);
+
+    const rest = await postWeeklyBriefs(monday(7), 0);
+    expect(rest.orgs).toBe(1);
+    expect(postsTo(spy, SLACK_URL)).toHaveLength(1);
+    expect(CHAT_DELIVERY_BUDGET_MS).toBe(30_000);
+  });
+
+  it("says what the brief promises: both kinds late, what is new this week, quiet projects listed", async () => {
+    await connectWeekly("SLACK", SLACK_URL);
+    const now = monday(6);
+    const threeDaysBefore = new Date(monday(0).getTime() - 3 * 24 * 60 * 60 * 1000);
+    const task = await createMainTask(fixture.adminActor, {
+      projectId: fixture.projectId,
+      title: "Late piping",
+      description: "Weekly brief test.",
+      priority: "HIGH",
+      deadline: inThirtyDays(),
+      disciplineTasks: [
+        {
+          disciplineId: fixture.disciplineId,
+          title: "Late spool",
+          assigneeId: fixture.engineerActor.userId,
+          deadline: inThirtyDays(),
+          isMandatory: true,
+          requiredDocuments: [{ name: "Weld map", isMandatory: true }],
+        },
+      ],
+    });
+    await prisma.mainTask.update({ where: { id: task.id }, data: { deadline: threeDaysBefore } });
+    await prisma.disciplineTask.updateMany({
+      where: { mainTaskId: task.id },
+      data: { deadline: threeDaysBefore },
+    });
+    const spy = mockFetchOk();
+
+    await postWeeklyBriefs(now);
+
+    const body = JSON.parse(String((postsTo(spy, SLACK_URL)[0][1] as RequestInit).body));
+    const text = JSON.stringify(body);
+    expect(text).toContain("This week's brief — 1 active project");
+    expect(text).toContain("1 main task and 1 discipline task late (2 new this week)");
+    expect(text).toContain("1 document missing");
+    expect(text).toContain("0% (no work yet a week ago)");
+    expect(text).not.toContain(SLACK_URL);
+  });
+
+  it("stays under the 28 KB cap at twelve projects, with 'and N more' after them", async () => {
+    await connectWeekly("SLACK", SLACK_URL);
+    const longName = "Enormous refinery turnaround programme with a very long name ".repeat(8);
+    for (let index = 0; index < 14; index += 1) {
+      await prisma.project.create({
+        data: {
+          orgId: fixture.orgId,
+          name: longName,
+          code: `BIG-${index}`,
+          description: "x",
+          createdById: fixture.adminActor.userId,
+        },
+      });
+    }
+    const spy = mockFetchOk();
+
+    await postWeeklyBriefs(monday(6));
+
+    const [, init] = postsTo(spy, SLACK_URL)[0];
+    const raw = String((init as RequestInit).body);
+    expect(Buffer.byteLength(raw, "utf8")).toBeLessThan(28 * 1024);
+    // 15 active projects in all: twelve lines, then the rest counted.
+    expect(raw).toContain("This week's brief — 15 active projects");
+    expect(raw).toContain("and 3 more active projects");
+    expect(raw).not.toContain("…\\n•"); // no line was cut off mid-list
+  });
+
+  it("writes no audit row and no notification row", async () => {
+    await connectWeekly("SLACK", SLACK_URL);
+    mockFetchOk();
+    const audit = await prisma.activityLog.count();
+    const notifications = await prisma.notification.count();
+
+    expect((await postWeeklyBriefs(monday(6))).channels).toBe(1);
+
+    expect(await prisma.activityLog.count()).toBe(audit);
+    expect(await prisma.notification.count()).toBe(notifications);
+  });
+
+  it("runs as part of the real sweep, after the daily digest", async () => {
+    await connectWeekly("SLACK", SLACK_URL);
+    const spy = mockFetchOk();
+
+    await runSweepOnce(monday(6));
+
+    expect(postsTo(spy, SLACK_URL)).toHaveLength(1);
+  });
+});
+
+describe("the weekly brief, by email", () => {
+  const stampOf = async (userId: string) =>
+    (await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { weeklyBriefEmailedAt: true } }))
+      .weeklyBriefEmailedAt;
+
+  /** A second project that only the project manager belongs to. */
+  async function otherProject() {
+    return prisma.project.create({
+      data: {
+        orgId: fixture.orgId,
+        name: "Hidden terminal build",
+        code: "HIDDEN-9",
+        description: "x",
+        createdById: fixture.adminActor.userId,
+        members: { create: [{ userId: fixture.pmActor.userId, projectRole: "PROJECT_MANAGER" }] },
+      },
+    });
+  }
+
+  beforeEach(() => configureEmail());
+  afterEach(() => goDormant());
+
+  it("goes only to people who opted in, are active and are not contractors", async () => {
+    const engineerEmail = await optIn(fixture.engineerActor.userId, { alerts: false, weekly: true });
+    await optIn(fixture.pmActor.userId, { alerts: false, weekly: false });
+    const contractor = await makeUser({ name: "Yusuf Contractor", role: "EXTERNAL", orgId: fixture.orgId });
+    await prisma.projectMember.create({
+      data: { projectId: fixture.projectId, userId: contractor.id, projectRole: "EXTERNAL" },
+    });
+    await optIn(contractor.id, { alerts: false, weekly: true });
+    const gone = await optIn(fixture.outsiderActor.userId, { alerts: false, weekly: true });
+    await prisma.user.update({ where: { id: fixture.outsiderActor.userId }, data: { isActive: false } });
+    const spy = mockEmailFetchOk();
+
+    const run = await sendWeeklyBriefEmails(monday(6));
+
+    expect(run).toEqual({ people: 1, sent: 1 });
+    const [email] = sentEmails(spy);
+    expect(email.to).toEqual([engineerEmail]);
+    expect(email.to).not.toContain(gone);
+    expect(email.subject).toBe("This week's brief — 1 active project");
+    expect(email.text).toContain("Tielora — Your week");
+    expect(email.text).toContain(`Open Tielora:\n${EMAIL_BASE}/dashboard`);
+    expect(email.headers?.["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
+    const token = /\?t=([^>]+)>/.exec(email.headers?.["List-Unsubscribe"] ?? "")?.[1] ?? "";
+    expect(verifyUnsubscribeToken(decodeURIComponent(token))?.kind).toBe("WEEKLY");
+    expect(await stampOf(fixture.engineerActor.userId)).toEqual(monday(6));
+    expect(await stampOf(contractor.id)).toBeNull();
+  });
+
+  it("names only the projects that person may see", async () => {
+    const hidden = await otherProject();
+    await optIn(fixture.engineerActor.userId, { alerts: false, weekly: true });
+    await optIn(fixture.pmActor.userId, { alerts: false, weekly: true });
+    await optIn(fixture.adminActor.userId, { alerts: false, weekly: true });
+    const spy = mockEmailFetchOk();
+    const visible = await prisma.project.findUniqueOrThrow({ where: { id: fixture.projectId } });
+
+    await sendWeeklyBriefEmails(monday(6));
+
+    const byName = (await prisma.user.findMany({ select: { id: true, email: true } })).reduce(
+      (map, user) => map.set(user.email, user.id),
+      new Map<string, string>(),
+    );
+    const textFor = (userId: string) =>
+      sentEmails(spy).find((email) => byName.get(email.to[0]) === userId)?.text ?? "";
+
+    // The engineer belongs to one project; the hidden one is not named, not even by count.
+    expect(textFor(fixture.engineerActor.userId)).toContain(visible.code);
+    expect(textFor(fixture.engineerActor.userId)).not.toContain(hidden.code);
+    expect(textFor(fixture.engineerActor.userId)).not.toContain("Hidden terminal");
+    expect(textFor(fixture.engineerActor.userId)).not.toContain("more active project");
+    // The project manager belongs to both, and an administrator sees all of their own company's.
+    expect(textFor(fixture.pmActor.userId)).toContain(hidden.code);
+    expect(textFor(fixture.adminActor.userId)).toContain(hidden.code);
+    expect(textFor(fixture.adminActor.userId)).toContain(visible.code);
+  });
+
+  it("sends nothing to a person who sees no project, but still stamps them", async () => {
+    await optIn(fixture.outsiderActor.userId, { alerts: false, weekly: true });
+    const spy = mockEmailFetchOk();
+
+    const run = await sendWeeklyBriefEmails(monday(6));
+
+    expect(run).toEqual({ people: 1, sent: 0 });
+    expect(sentEmails(spy)).toHaveLength(0);
+    expect(await stampOf(fixture.outsiderActor.userId)).toEqual(monday(6));
+  });
+
+  it("goes once a week, on the same send line and catch-up window as the chat card", async () => {
+    await optIn(fixture.engineerActor.userId, { alerts: false, weekly: true });
+    const spy = mockEmailFetchOk();
+
+    expect((await sendWeeklyBriefEmails(monday(4.5))).people).toBe(0);
+    expect((await sendWeeklyBriefEmails(monday(6))).sent).toBe(1);
+    expect((await sendWeeklyBriefEmails(monday(7))).people).toBe(0);
+    expect((await sendWeeklyBriefEmails(monday(6, 1))).sent).toBe(1);
+    expect(sentEmails(spy)).toHaveLength(2);
+
+    // Skipped after 05:00 UTC Tuesday.
+    await prisma.user.update({
+      where: { id: fixture.engineerActor.userId },
+      data: { weeklyBriefEmailedAt: null },
+    });
+    expect((await sendWeeklyBriefEmails(monday(29, 2))).people).toBe(0);
+    expect((await sendWeeklyBriefEmails(monday(28, 2))).sent).toBe(1);
+  });
+
+  it("resumes with the people it had not reached when the budget cut it short", async () => {
+    await optIn(fixture.engineerActor.userId, { alerts: false, weekly: true });
+    await optIn(fixture.pmActor.userId, { alerts: false, weekly: true });
+    const spy = mockEmailFetchOk();
+
+    expect((await sendWeeklyBriefEmails(monday(6), 0)).people).toBe(1);
+    expect((await sendWeeklyBriefEmails(monday(7), 0)).people).toBe(1);
+
+    const sent = sentEmails(spy);
+    expect(sent).toHaveLength(2);
+    expect(sent[0].to[0]).not.toBe(sent[1].to[0]);
+  });
+
+  it("stamps now when somebody switches it on, so the first one comes next Monday", async () => {
+    await optIn(fixture.engineerActor.userId, { alerts: false, weekly: false });
+    const spy = mockEmailFetchOk();
+
+    await setEmailPreferences(fixture.engineerActor, { emailWeeklyBrief: true });
+    const stamp = (await stampOf(fixture.engineerActor.userId)) as Date;
+    expect(stamp).not.toBeNull();
+
+    // A sweep on Monday morning of the week they switched it on finds them not due ...
+    const nextMonday = monday(6, 1);
+    expect(stamp.getTime()).toBeLessThan(nextMonday.getTime());
+    // ... and on next Monday they are.
+    expect((await sendWeeklyBriefEmails(nextMonday)).sent).toBe(1);
+    expect(sentEmails(spy)).toHaveLength(1);
+  });
+
+  it("does nothing and stamps nothing while email is not set up", async () => {
+    await optIn(fixture.engineerActor.userId, { alerts: false, weekly: true });
+    goDormant();
+    const spy = mockEmailFetchOk();
+
+    expect(await sendWeeklyBriefEmails(monday(6))).toEqual({ people: 0, sent: 0 });
+    expect(spy).not.toHaveBeenCalled();
+    expect(await stampOf(fixture.engineerActor.userId)).toBeNull();
+  });
+
+  it("writes no audit row and no notification row", async () => {
+    await optIn(fixture.engineerActor.userId, { alerts: false, weekly: true });
+    mockEmailFetchOk();
+    const audit = await prisma.activityLog.count();
+    const notifications = await prisma.notification.count();
+
+    expect((await sendWeeklyBriefEmails(monday(6))).sent).toBe(1);
+
+    expect(await prisma.activityLog.count()).toBe(audit);
+    expect(await prisma.notification.count()).toBe(notifications);
+  });
+
+  it("runs for a company with no chat channel at all, from the real sweep", async () => {
+    await optIn(fixture.engineerActor.userId, { alerts: false, weekly: true });
+    expect(await prisma.orgIntegration.count()).toBe(0);
+    const spy = mockEmailFetchOk();
+
+    await runSweepOnce(monday(6));
+
+    expect(sentEmails(spy).filter((email) => email.subject.startsWith("This week's brief"))).toHaveLength(1);
+  });
+
+  it("logs a failure with the purpose and the person's id only", async () => {
+    const address = await optIn(fixture.engineerActor.userId, { alerts: false, weekly: true });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("no", { status: 500 }));
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+
+    await sendWeeklyBriefEmails(monday(6));
+
+    const call = warn.mock.calls.find((entry) => entry[0] === "Could not send an email");
+    expect(call?.[1]).toMatchObject({ purpose: "WEEKLY_BRIEF", userId: fixture.engineerActor.userId });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(address);
+    expect(await stampOf(fixture.engineerActor.userId)).toEqual(monday(6));
   });
 });

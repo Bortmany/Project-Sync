@@ -3,6 +3,7 @@
 
 import { redirect } from "next/navigation";
 import { can } from "@/lib/permissions";
+import { teamsAppConfig } from "@/lib/teams-app";
 import { AdminIntegrationsView } from "@/components/admin/admin-integrations-view";
 import { NoAccess } from "@/components/admin/no-access";
 import { currentActor } from "@/server/session";
@@ -44,6 +45,7 @@ export default async function AdminIntegrationsPage({
       microsoftSignInOutcome={params.microsoftSignIn}
       emailAvailable={emailAvailable()}
       broadcastPolicy={broadcastPolicy}
+      teamsApp={teamsAppConfig() !== null}
     />
   );
 }

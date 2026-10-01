@@ -18,11 +18,28 @@ import {
   type SweepCounts,
   type SweepWebhookEvent,
 } from "@/server/services/notifications";
-import { deliverDailyBrief, deliverToOrgWebhooks } from "@/server/services/webhooks";
+import {
+  deliverDailyBrief,
+  deliverToOrgWebhooks,
+  deliverWeeklyBrief,
+} from "@/server/services/webhooks";
+import {
+  orgWeeklyBrief,
+  personWeeklyBrief,
+  weeklyBoundary,
+  weeklyBriefEmailContent,
+  weeklyBriefMessage,
+  type WeeklyCache,
+} from "@/server/services/weekly-brief";
 import { actorForUser } from "@/server/actor";
 import { personBrief } from "@/server/services/briefs";
 import { briefIsEmpty } from "@/lib/email-text";
-import { emailAvailable, sendAlertEmail, sendDailyBriefEmail } from "@/server/services/email";
+import {
+  emailAvailable,
+  sendAlertEmail,
+  sendDailyBriefEmail,
+  sendWeeklyBriefEmail,
+} from "@/server/services/email";
 import type { SweepAlertEmail } from "@/server/services/notifications";
 import {
   removeDeletedWorkspaceFiles,
@@ -122,10 +139,15 @@ export async function runSweepOnce(now: Date = new Date()): Promise<SweepResult>
   await emailSweepReminders(outcome.emails);
   // The once-a-day digest rides on the same hourly run, outside the transaction for the same reason.
   await postDailyDigests(now);
+  // The once-a-week brief, after the daily digest, on its own 30-second chat budget.
+  await postWeeklyBriefs(now);
   // And each person's own daily brief email. Its OWN step, deliberately not inside the digest:
   // `postDailyDigests` returns early when no company has a chat channel with the digest on, and a
   // company with no chat channel at all must still get its people's emails.
   await sendDailyBriefEmails(now);
+  // And each person's weekly brief email, likewise its own step: a company with no chat channel at
+  // all must still get its people's emails.
+  await sendWeeklyBriefEmails(now);
   // And so does the housekeeping: workspace export archives are deleted 48 hours after they were
   // built. It touches the disk rather than the database, it never throws, and nothing in the app
   // depends on it having run — a file left behind costs disk space, never correctness.
@@ -234,6 +256,94 @@ export async function postDailyDigests(
     return { orgs, channels };
   } catch (error) {
     logger.error("The daily brief digest could not finish", { error });
+    return { orgs: 0, channels: 0 };
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* The weekly brief (chat)                                             */
+/* ------------------------------------------------------------------ */
+
+export type WeeklyRun = { orgs: number; channels: number };
+
+/**
+ * Sends each company's weekly brief to the channels that asked for it, once a week, from the first
+ * sweep after Monday 05:00 UTC until 05:00 UTC Tuesday (then the week is skipped).
+ *
+ * The same rules as the daily digest, with the week for the day:
+ *  - **Once a week.** `OrgIntegration.weeklyBriefSentAt` is stamped after a company has been dealt
+ *    with, whether or not there was anything to say; a company with no active project is sent
+ *    nothing but is stamped.
+ *  - **Only the channels that were due are posted to** — the ids go to `deliverWeeklyBrief`, never
+ *    "every enabled channel", so a channel switched on later on Monday makes only itself due.
+ *  - **Off unless asked.** `enabled` AND the `weeklyBrief` toggle (default off).
+ *  - **Its own 30-second budget**, checked after each company, longest-waiting first.
+ *
+ * Writes no notification row and no audit row — the chat digest's documented exception. Never throws.
+ */
+export async function postWeeklyBriefs(
+  now: Date = new Date(),
+  budgetMs: number = CHAT_DELIVERY_BUDGET_MS,
+): Promise<WeeklyRun> {
+  const boundary = weeklyBoundary(now);
+  if (!boundary) return { orgs: 0, channels: 0 };
+
+  try {
+    const rows = await prisma.orgIntegration.findMany({
+      where: {
+        enabled: true,
+        OR: [{ weeklyBriefSentAt: null }, { weeklyBriefSentAt: { lt: boundary } }],
+      },
+      orderBy: { weeklyBriefSentAt: { sort: "asc", nulls: "first" } },
+      select: { id: true, orgId: true, eventToggles: true },
+    });
+
+    const wanted = new Map<string, string[]>();
+    for (const row of rows) {
+      const toggles = TogglesSchema.safeParse(row.eventToggles);
+      if (!toggles.success || !toggles.data.weeklyBrief) continue;
+      wanted.set(row.orgId, [...(wanted.get(row.orgId) ?? []), row.id]);
+    }
+    if (wanted.size === 0) return { orgs: 0, channels: 0 };
+
+    const deadline = Date.now() + budgetMs;
+    let orgs = 0;
+    let channels = 0;
+
+    for (const [orgId, integrationIds] of wanted) {
+      try {
+        const brief = await orgWeeklyBrief(orgId, now);
+        if (brief) {
+          channels += await deliverWeeklyBrief(orgId, integrationIds, weeklyBriefMessage(brief));
+        }
+      } catch (error) {
+        logger.error("A weekly brief could not be put together", {
+          orgId,
+          reason: error instanceof Error ? error.name : "unknown",
+        });
+      }
+      orgs += 1;
+
+      // Stamped after the attempt, for exactly the channels that were due.
+      await prisma.orgIntegration.updateMany({
+        where: { id: { in: integrationIds } },
+        data: { weeklyBriefSentAt: now },
+      });
+
+      if (Date.now() >= deadline) {
+        logger.info("Weekly briefs held back this sweep", {
+          sent: orgs,
+          heldBack: wanted.size - orgs,
+          reason: "the time budget for chat ran out",
+        });
+        break;
+      }
+    }
+
+    if (channels > 0) logger.info("Weekly briefs sent", { orgs, channels });
+    return { orgs, channels };
+  } catch (error) {
+    logger.error("The weekly brief could not finish", { error });
     return { orgs: 0, channels: 0 };
   }
 }
@@ -441,6 +551,109 @@ export async function sendDailyBriefEmails(
     return { people, sent };
   } catch (error) {
     logger.error("The daily brief emails could not finish", {
+      reason: error instanceof Error ? error.name : "unknown",
+    });
+    return { people, sent };
+  }
+}
+
+export type WeeklyBriefEmailRun = { people: number; sent: number };
+
+/**
+ * Sends each person who asked for it their weekly brief, once a week, on the same send line and
+ * catch-up window as the chat card (Monday 05:00 UTC until 05:00 UTC Tuesday).
+ *
+ *  - **Who.** Active, internal (a contractor is never a recipient, whatever their row says),
+ *    `emailWeeklyBrief` on, a confirmed address, and `weeklyBriefEmailedAt` null or before this
+ *    week's line — longest waiting first, so a run the budget cut short resumes where it stopped.
+ *  - **What.** Only the active projects of THEIR company that they may see (a member's own
+ *    memberships; an administrator: all of their own company's). Nobody visible, nothing sent.
+ *  - **Once a week, per person.** `User.weeklyBriefEmailedAt` is stamped after each attempt — sent,
+ *    empty or failed — so a failure is one attempt (plus the mail layer's one retry), not a storm.
+ *  - **Dormant email** → the whole step does nothing and stamps nothing.
+ *  - Writes no notification row and no audit row; a failure log line carries purpose and user id.
+ *
+ * Never throws.
+ */
+export async function sendWeeklyBriefEmails(
+  now: Date = new Date(),
+  budgetMs: number = EMAIL_DELIVERY_BUDGET_MS,
+): Promise<WeeklyBriefEmailRun> {
+  if (!emailAvailable()) return { people: 0, sent: 0 };
+  const boundary = weeklyBoundary(now);
+  if (!boundary) return { people: 0, sent: 0 };
+
+  let people = 0;
+  let sent = 0;
+  try {
+    const due = await prisma.user.findMany({
+      where: {
+        isActive: true,
+        role: { not: "EXTERNAL" },
+        emailWeeklyBrief: true,
+        emailVerifiedAt: { not: null },
+        OR: [{ weeklyBriefEmailedAt: null }, { weeklyBriefEmailedAt: { lt: boundary } }],
+      },
+      orderBy: [{ weeklyBriefEmailedAt: { sort: "asc", nulls: "first" } }, { id: "asc" }],
+      select: { id: true, email: true, orgId: true, role: true },
+    });
+
+    // Per company, what has already been worked out for a project, so two people in the same
+    // project cost one calculation rather than two.
+    const caches = new Map<string, WeeklyCache>();
+    const deadline = Date.now() + budgetMs;
+    for (const person of due) {
+      try {
+        const cache = caches.get(person.orgId) ?? new Map();
+        caches.set(person.orgId, cache);
+        const brief = await personWeeklyBrief(person.orgId, person, now, cache);
+        if (brief) {
+          const outcome = await sendWeeklyBriefEmail(
+            { id: person.id, email: person.email },
+            weeklyBriefEmailContent(brief, now),
+          );
+          if (outcome.status === "sent") sent += 1;
+        }
+      } catch (error) {
+        logger.error("Could not put a weekly brief email together", {
+          userId: person.id,
+          purpose: "WEEKLY_BRIEF",
+          reason: error instanceof Error ? error.name : "unknown",
+        });
+      }
+
+      // Stamped after the attempt, whatever it came to — one attempt a week.
+      // Its own try: one failed stamp must not abandon everybody still waiting.
+      try {
+        await prisma.user.update({
+          where: { id: person.id },
+          data: { weeklyBriefEmailedAt: now },
+        });
+      } catch (error) {
+        logger.error("Could not record a weekly brief email", {
+          userId: person.id,
+          reason: error instanceof Error ? error.name : "unknown",
+        });
+      }
+      people += 1;
+
+      if (Date.now() >= deadline) {
+        if (due.length > people) {
+          logger.info("Weekly brief emails held back this sweep", {
+            done: people,
+            heldBack: due.length - people,
+            reason: "the time budget for email ran out",
+          });
+        }
+        break;
+      }
+    }
+
+    if (sent > 0) logger.info("Weekly brief emails sent", { people, sent });
+    return { people, sent };
+  } catch (error) {
+    logger.error("The weekly brief emails could not finish", {
+      purpose: "WEEKLY_BRIEF",
       reason: error instanceof Error ? error.name : "unknown",
     });
     return { people, sent };

@@ -30,6 +30,8 @@ export type ChatMessage = {
   body: string;
   /** The in-app path, e.g. "/discipline-tasks/abc123". Turned into a full link when APP_BASE_URL is set. */
   linkUrl: string;
+  /** Only the briefs set this: a longer body cap (still far under the 28 KB payload cap). */
+  bodyLimit?: number;
 };
 
 /** One thing that happened, in the same words the in-app notification uses. */
@@ -48,11 +50,11 @@ const MAX_PAYLOAD_BYTES = 28 * 1024;
 const MAX_BODY_CHARS = 1_200;
 
 /**
- * The toggles that stand for a notification being copied to chat. `dailyBrief` is deliberately NOT
- * one of them: the digest is a summary of data the app already holds, not a fan-out of any
+ * The toggles that stand for a notification being copied to chat. `dailyBrief` and `weeklyBrief`
+ * are deliberately NOT among them: a digest is a summary of data the app already holds, not a fan-out of any
  * notification type, so the compiler refuses to let anything below map to it.
  */
-type FanOutToggle = Exclude<IntegrationEventName, "dailyBrief">;
+type FanOutToggle = Exclude<IntegrationEventName, "dailyBrief" | "weeklyBrief">;
 
 /**
  * Which toggle decides each kind of notification. Anything mapped to null is never delivered to
@@ -136,7 +138,7 @@ function teamsEscape(text: string): string {
  * from. A top-level `text` is always included as the fallback Slack shows in its notifications.
  */
 export function slackPayload(event: ChatMessage, link: string | null, source: string): unknown {
-  const body = shorten(event.body);
+  const body = shorten(event.body, event.bodyLimit ?? MAX_BODY_CHARS);
   const linkLine = link
     ? `<${link}|Open in Tielora>`
     : `Open ${slackEscape(event.linkUrl)} in Tielora`;
@@ -163,7 +165,7 @@ export function slackPayload(event: ChatMessage, link: string | null, source: st
  * when there is a real link to open; a card action with no address is rejected.
  */
 export function teamsPayload(event: ChatMessage, link: string | null, source: string): unknown {
-  const body = shorten(event.body);
+  const body = shorten(event.body, event.bodyLimit ?? MAX_BODY_CHARS);
   return {
     type: "message",
     attachments: [
@@ -354,14 +356,20 @@ export async function deliverToOrgWebhooks(orgId: string, event: WebhookEvent): 
  * read writing no audit row). It is a chat-only summary of data the app already holds, sent once a
  * day, and it is off unless an administrator asked for it.
  *
+ * The weekly brief travels the same road (`kind: "weekly"`), with its own toggle, its own footer
+ * line and its own log wording — and exactly the same "only the ids you were handed" rule.
+ *
  * Returns how many channels it reached, so the sweep can log the run. Never throws.
  */
-export async function deliverDailyBrief(
+export async function deliverBrief(
+  kind: "daily" | "weekly",
   orgId: string,
   integrationIds: string[],
   message: ChatMessage,
 ): Promise<number> {
   if (integrationIds.length === 0) return 0;
+  const toggle = kind === "daily" ? "dailyBrief" : "weeklyBrief";
+  const label = kind === "daily" ? "Daily brief" : "Weekly brief";
 
   let sent = 0;
   try {
@@ -375,21 +383,21 @@ export async function deliverDailyBrief(
     });
 
     for (const integration of integrations) {
-      const kind = integration.kind as IntegrationKindName;
+      const chatKind = integration.kind as IntegrationKindName;
       const toggles = togglesFrom(integration.eventToggles);
-      if (!toggles || !toggles.dailyBrief) continue;
+      if (!toggles || !toggles[toggle]) continue;
 
       const outcome = await postToWebhook(
-        kind,
+        chatKind,
         integration.webhookUrl,
-        buildPayload(kind, message, "Daily brief"),
+        buildPayload(chatKind, message, label),
       );
       if (outcome.ok) {
         sent += 1;
       } else {
         // Kind and organisation only. The address is a secret and never appears in a log line.
-        logger.warn("Could not deliver a daily brief", {
-          kind,
+        logger.warn(`Could not deliver a ${label.toLowerCase()}`, {
+          kind: chatKind,
           orgId,
           status: outcome.status,
           reason: outcome.reason,
@@ -397,9 +405,27 @@ export async function deliverDailyBrief(
       }
     }
   } catch (error) {
-    logger.error("Daily brief delivery failed", { orgId, error });
+    logger.error(`${label} delivery failed`, { orgId, error });
   }
   return sent;
+}
+
+/** The daily digest's delivery: `deliverBrief` with the daily toggle. */
+export function deliverDailyBrief(
+  orgId: string,
+  integrationIds: string[],
+  message: ChatMessage,
+): Promise<number> {
+  return deliverBrief("daily", orgId, integrationIds, message);
+}
+
+/** The weekly brief's delivery: `deliverBrief` with the weekly toggle. */
+export function deliverWeeklyBrief(
+  orgId: string,
+  integrationIds: string[],
+  message: ChatMessage,
+): Promise<number> {
+  return deliverBrief("weekly", orgId, integrationIds, message);
 }
 
 /** The small grey line at the bottom of a card — what kind of event this was, in plain English. */

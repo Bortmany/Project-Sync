@@ -11,6 +11,7 @@ import { pingDatabase } from "@/lib/db";
 import { sentryStatus } from "@/lib/error-reporting";
 import { isMicrosoftConfigured } from "@/lib/ms-graph";
 import { signupMode } from "@/lib/signup-mode";
+import { teamsAppStatus } from "@/lib/teams-app";
 import { uploadsDir } from "@/lib/upload";
 import { billingHealth } from "@/server/services/billing";
 import { emailStatus } from "@/server/services/email";
@@ -84,6 +85,10 @@ export async function GET() {
       sentry: sentryStatus(),
       integrations,
       microsoft,
+      // The Teams app (a "Your day" tab): "dormant" until TEAMS_APP_ID, APP_BASE_URL (https) and the
+      // Azure registration are all set, then "configured". A word and nothing else — never the app
+      // id, the host or a secret.
+      teams_app: teamsAppStatus(),
       // Transactional email: "dormant" until RESEND_API_KEY, EMAIL_FROM and APP_BASE_URL are all
       // set, then "configured". A word, and nothing else — no address, no count of anybody.
       email: emailStatus(),

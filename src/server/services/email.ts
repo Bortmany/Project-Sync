@@ -150,7 +150,7 @@ export type EmailMessage = {
 };
 
 /** The two kinds of email a person chooses, as they appear in a log line. */
-export type BulkEmailPurpose = "ALERT" | "DAILY_BRIEF";
+export type BulkEmailPurpose = "ALERT" | "DAILY_BRIEF" | "WEEKLY_BRIEF";
 
 /** Only ever used to make a log line useful. Never the address, never the link. */
 type SendContext = { purpose?: EmailedPurposeName | BulkEmailPurpose; userId?: string };
@@ -522,5 +522,39 @@ export async function sendDailyBriefEmail(
       headers: links.headers,
     },
     { purpose: "DAILY_BRIEF", userId: recipient.id },
+  );
+}
+
+/** Where the weekly brief's "Open Tielora" link goes. */
+const WEEKLY_PAGE_PATH = "/dashboard";
+
+/**
+ * One person's weekly brief: the subject and plain-text body were built from the projects THAT
+ * person may see (`personWeeklyBrief`), and arrive here already neutralised. The caller has already
+ * decided there is something to say — nothing is sent for a person with no visible project.
+ * Carries the WEEKLY unsubscribe link and headers; with no way out, nothing is sent.
+ */
+export async function sendWeeklyBriefEmail(
+  recipient: BulkRecipient,
+  content: { subject: string; body: string },
+): Promise<BulkEmailOutcome> {
+  if (!emailAvailable()) return { status: "dormant" };
+  const links = bulkLinks(recipient.id, "WEEKLY");
+  if (!links) return noWayOut("WEEKLY_BRIEF");
+
+  return sendEmail(
+    {
+      to: recipient.email,
+      subject: emailSubject(content.subject),
+      text: emailLayout({
+        kind: "Your week",
+        body: content.body,
+        openLabel: "Open Tielora:",
+        openLink: appLink(WEEKLY_PAGE_PATH),
+        footer: links.footer,
+      }),
+      headers: links.headers,
+    },
+    { purpose: "WEEKLY_BRIEF", userId: recipient.id },
   );
 }

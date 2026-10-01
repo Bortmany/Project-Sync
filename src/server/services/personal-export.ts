@@ -73,6 +73,7 @@ export async function downloadMyData(actor: ActorContext): Promise<PersonalExpor
       emailDailyBrief: true,
       emailWeeklyBrief: true,
       dailyBriefEmailedAt: true,
+      weeklyBriefEmailedAt: true,
       // Read only to answer yes or no below — the identifier itself never enters the file.
       microsoftOid: true,
       discipline: { select: { name: true } },
@@ -233,6 +234,7 @@ export async function downloadMyData(actor: ActorContext): Promise<PersonalExpor
         emailDailyBrief: me.emailDailyBrief,
         emailWeeklyBrief: me.emailWeeklyBrief,
         lastDailyBriefEmailAt: me.dailyBriefEmailedAt,
+        lastWeeklyBriefEmailAt: me.weeklyBriefEmailedAt,
         signedInWithMicrosoft: me.microsoftOid !== null,
       },
       projects: capped(memberships, "projects").map((row) => ({

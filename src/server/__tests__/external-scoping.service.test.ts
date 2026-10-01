@@ -23,11 +23,16 @@ vi.mock("next/headers", async () => {
 });
 
 import { GET as microsoftStartRoute } from "@/app/api/auth/microsoft/route";
+import TeamsTabPage from "@/app/teams/tab/page";
+import { TeamsBrief } from "@/components/teams/teams-brief";
+import { TeamsSignIn } from "@/components/teams/teams-sign-in";
+import { TEAMS_COOKIE } from "@/lib/teams-app";
+import { signInWithTeamsToken } from "@/server/services/teams-signin";
 import { GET as microsoftCallbackRoute } from "@/app/api/auth/microsoft/callback/route";
 import { homePathFor } from "@/components/shell/nav-items";
 import { SESSION_COOKIE, getSessionUser } from "@/lib/auth";
 import { signingKeys } from "@/server/services/microsoft-signin";
-import { sendDailyBriefEmails } from "@/server/sweep";
+import { sendDailyBriefEmails, sendWeeklyBriefEmails } from "@/server/sweep";
 import {
   EMAIL_BASE,
   configureEmail,
@@ -41,11 +46,13 @@ import {
   TEST_BASE_URL,
   claimsFor,
   configureMicrosoftEnv,
+  configureTeamsEnv,
   installFakeMicrosoft,
   makeKey,
   newOid,
   newTenant,
   signToken,
+  teamsClaimsFor,
   type FakeMicrosoft,
 } from "@/server/__tests__/microsoft-signin-fixtures";
 
@@ -65,7 +72,7 @@ import {
   editComment,
   listComments,
 } from "@/server/services/comments";
-import { getDashboardForActor } from "@/server/services/dashboard";
+import { getDashboardForActor, listTileWork } from "@/server/services/dashboard";
 import { listAllUsers, updateUser } from "@/server/services/admin";
 import { listUsers } from "@/server/services/directory";
 import {
@@ -313,6 +320,21 @@ describe("a contractor only sees the projects they hold work on", () => {
     expect(project.disciplines.map((row) => row.disciplineId)).toEqual([fixture.disciplineId]);
     // Their card counts their own work: one main task, not the project's two.
     expect(project.counts.mainTasks).toBe(1);
+  });
+});
+
+describe("a contractor has no status report", () => {
+  it("is not found, even for a project they hold work on, before any data is read, and is never audited", async () => {
+    const { buildReportData, exportStatusReport } = await import("@/server/services/report");
+
+    // The project they hold work on, and the one they do not: the same answer for both.
+    for (const projectId of [fixture.projectId, otherProjectId]) {
+      await expect(buildReportData(contractor, projectId)).rejects.toBeInstanceOf(NotFoundError);
+      await expect(exportStatusReport(contractor, projectId, "pdf")).rejects.toBeInstanceOf(NotFoundError);
+      await expect(exportStatusReport(contractor, projectId, "pptx")).rejects.toBeInstanceOf(NotFoundError);
+    }
+    // Not a single audit row: a refusal is not an export.
+    expect(await prisma.activityLog.count({ where: { action: "REPORT_EXPORTED" } })).toBe(0);
   });
 });
 
@@ -678,6 +700,35 @@ describe("a contractor's documents, search, directory and briefs are all narrowe
     expect(dashboard.recentActivity).toEqual([]);
     expect(dashboard.myTasks.map((task) => task.title)).toEqual([MINE]);
     expect(dashboard.awaitingMySignoff).toEqual([]);
+  });
+
+  it("reads 'Your work': every tile and list counts only their own tasks, never a colleague's", async () => {
+    // A colleague's task under the same parent and the parent itself run late; so does the
+    // contractor's own task. Only the contractor's own counts on their tiles.
+    const past = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+    await prisma.mainTask.updateMany({ where: { id: sharedMainTaskId }, data: { deadline: past } });
+    await prisma.disciplineTask.update({ where: { id: theirTaskId }, data: { deadline: past } });
+    await prisma.disciplineTask.update({ where: { id: myTaskId }, data: { deadline: past } });
+
+    const dashboard = await getDashboardForActor(contractor);
+    expect(dashboard.scope).toBe("OWN");
+    expect(dashboard.counts.total).toBe(1);
+    expect(dashboard.counts.overdue).toBe(1);
+    expect(dashboard.lateTasks.map((row) => row.id)).toEqual([myTaskId]);
+
+    const colleague = await getDashboardForActor(fixture.engineerActor);
+    expect(colleague.scope).toBe("COMPANY");
+    expect(colleague.counts.overdue).toBe(3);
+
+    for (const tile of ["all", "late", "in-progress", "blocked", "completed", "upcoming"] as const) {
+      const list = await listTileWork(contractor, tile);
+      expect(list.scope).toBe("OWN");
+      for (const row of list.items) {
+        expect(row.id).toBe(myTaskId);
+        expect(row.title).not.toBe(THEIRS);
+      }
+    }
+    expect((await listTileWork(contractor, "all")).total).toBe(dashboard.counts.total);
   });
 
   it("gets no discipline aggregate at all — a department's standing is not theirs to read", async () => {
@@ -1360,6 +1411,27 @@ describe("a contractor is emailed only their own notification rows", () => {
       (await prisma.user.findUniqueOrThrow({ where: { id: contractor.userId } })).dailyBriefEmailedAt,
     ).toBeNull();
   });
+
+  it("never sends them a weekly brief, even with the weekly email forced on in the database", async () => {
+    // A confirmed address and the switch on: only the role rule stands between them and an email.
+    await prisma.user.update({
+      where: { id: contractor.userId },
+      data: { emailDailyBrief: true, emailWeeklyBrief: true, emailVerifiedAt: new Date() },
+    });
+    const spy = mockEmailFetchOk();
+
+    // A Monday morning after the 05:00 line, inside the catch-up window.
+    const now = new Date();
+    const sinceMonday = (now.getUTCDay() + 6) % 7;
+    const monday = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - sinceMonday, 6),
+    );
+    expect(await sendWeeklyBriefEmails(monday)).toEqual({ people: 0, sent: 0 });
+    expect(sentEmails(spy)).toHaveLength(0);
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: contractor.userId } })).weeklyBriefEmailedAt,
+    ).toBeNull();
+  });
 });
 
 describe("a contractor at Sign in with Microsoft", () => {
@@ -1451,5 +1523,149 @@ describe("a contractor at Sign in with Microsoft", () => {
     const signedIn = await getSessionUser();
     expect(signedIn?.id).toBe(contractor.userId);
     expect(signedIn?.role).toBe("EXTERNAL");
+  });
+});
+
+// The Teams tab is the contractor's own "Your day" in another frame: built from the very same
+// `personBrief(actor)`, so it can only ever hold what that page holds — their assigned work and the
+// opt-in notices, never a colleague's task, the roster or a project they hold no work on.
+
+describe("a contractor in the Teams tab", () => {
+  const key = makeKey("kid-external-teams");
+  let restoreEnv: () => void = () => undefined;
+  let tid: string;
+  let oid: string;
+
+  const token = () => signToken(teamsClaimsFor({ tid, oid }), key);
+
+  type Page = { type: unknown; props: { brief: Record<string, unknown>; contractor?: boolean } };
+  async function tab(): Promise<Page> {
+    return (await TeamsTabPage({ searchParams: Promise.resolve({}) })) as unknown as Page;
+  }
+
+  /** Signs the contractor in to the tab, and keeps the tab's cookie the way a browser would. */
+  async function signInToTab() {
+    const outcome = await signInWithTeamsToken(token(), {});
+    if (outcome.kind !== "signed-in") throw new Error(`expected a sign-in, got ${outcome.kind}`);
+    jar.set(TEAMS_COOKIE, { value: outcome.sessionToken });
+  }
+
+  const plain = (value: unknown) => JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+
+  beforeEach(async () => {
+    jar.clear();
+    restoreEnv = configureTeamsEnv();
+    signingKeys.clear();
+    installFakeMicrosoft([key.jwk]);
+    tid = newTenant();
+    oid = newOid();
+    await prisma.organization.update({ where: { id: fixture.orgId }, data: { entraTenantId: tid } });
+    await prisma.user.update({
+      where: { id: contractor.userId },
+      data: { microsoftOid: oid, microsoftTenantId: tid },
+    });
+  });
+
+  afterEach(() => {
+    restoreEnv();
+    vi.restoreAllMocks();
+    jar.clear();
+  });
+
+  it("receives exactly the brief a contractor gets in the browser — their own work, nobody else's", async () => {
+    await prisma.disciplineTask.updateMany({
+      where: { id: { in: [myTaskId, theirTaskId] } },
+      data: { deadline: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) },
+    });
+    await signInToTab();
+
+    const page = await tab();
+    const browser = await personBrief(contractor);
+
+    expect(page.type).toBe(TeamsBrief);
+    expect(page.props.contractor).toBe(true);
+    for (const section of ["dueToday", "overdue", "newlyUnblocked", "mentions", "awaitingReview", "announcements", "awaitingAcknowledgement"]) {
+      expect(plain(page.props.brief)[section], section).toEqual(plain(browser)[section]);
+    }
+
+    const text = JSON.stringify(page.props.brief);
+    expect(text).toContain(MINE);
+    // Not another person's task, not the team roster, not a project they hold no work on.
+    expect(text).not.toContain(THEIRS);
+    expect(text).not.toContain("Pipe rack survey");
+    expect(text).not.toContain("Survey walkdown");
+    expect(text).not.toContain("Second project");
+    expect(text).not.toContain(theirTaskId);
+    for (const colleague of [fixture.adminActor, fixture.engineerActor, fixture.pmActor]) {
+      expect(text).not.toContain(colleague.name);
+      expect(text).not.toContain(colleague.email);
+    }
+  });
+
+  it("sees an opt-in notice as plain text with an empty link, and no acknowledgement request", async () => {
+    await createPost(fixture.adminActor, {
+      kind: "ANNOUNCEMENT",
+      title: "Gate 4 closed Friday",
+      body: "Use gate 2 instead.",
+      requiresAck: true,
+      includeExternals: true,
+    });
+    await createPost(fixture.adminActor, {
+      kind: "ANNOUNCEMENT",
+      title: "Internal only",
+      body: "Not for contractors.",
+    });
+    await signInToTab();
+
+    const page = await tab();
+    const brief = page.props.brief as {
+      announcements: { items: { title: string; body: string | null; linkUrl: string }[] };
+      awaitingAcknowledgement: { total: number };
+    };
+
+    expect(brief.announcements.items).toHaveLength(1);
+    expect(brief.announcements.items[0]).toMatchObject({
+      title: "Gate 4 closed Friday",
+      body: "Use gate 2 instead.",
+      linkUrl: "",
+    });
+    expect(brief.awaitingAcknowledgement.total).toBe(0);
+    expect(JSON.stringify(page.props.brief)).not.toContain("Internal only");
+  });
+
+  it("is refused at token exchange once their access has ended, or their account is deactivated", async () => {
+    await prisma.user.update({
+      where: { id: contractor.userId },
+      data: { accessExpiresAt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+    });
+    expect((await signInWithTeamsToken(token(), {})).kind).toBe("refused");
+
+    await prisma.user.update({
+      where: { id: contractor.userId },
+      data: { accessExpiresAt: null, isActive: false },
+    });
+    expect((await signInWithTeamsToken(token(), {})).kind).toBe("refused");
+    expect(await prisma.session.count({ where: { userId: contractor.userId } })).toBe(0);
+  });
+
+  it("is sent back to the sign-in state at the tab read when access ends while the tab is open", async () => {
+    await signInToTab();
+    expect((await tab()).type).toBe(TeamsBrief);
+
+    await prisma.user.update({
+      where: { id: contractor.userId },
+      data: { accessExpiresAt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+    });
+
+    expect((await tab()).type).toBe(TeamsSignIn);
+    expect(await prisma.session.count({ where: { userId: contractor.userId } })).toBe(0);
+  });
+
+  it("cannot be signed in from their employer's own Microsoft tenant", async () => {
+    // A contractor's own company has a different tenant; it owns no Tielora workspace.
+    const employerTenant = newTenant();
+    const outcome = await signInWithTeamsToken(signToken(teamsClaimsFor({ tid: employerTenant, oid }), key), {});
+    expect(outcome.kind).toBe("refused");
+    expect(await prisma.session.count()).toBe(0);
   });
 });

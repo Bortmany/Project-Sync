@@ -204,6 +204,9 @@ model OrgIntegration {
   /// delivery, not a derived state, which is why it is stored: it is the only thing that keeps the
   /// digest to once a day while the sweep itself runs every hour.
   dailyBriefSentAt DateTime?
+  /// When this channel's weekly brief last went out (or was dealt with) — stamped after each company
+  /// is handled, exactly as `dailyBriefSentAt` is. Null means "never".
+  weeklyBriefSentAt DateTime?
   createdById  String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -269,6 +272,9 @@ model User {
   /// chat digest. Per person rather than per company so a run cut short by its time budget resumes
   /// exactly where it stopped. Null means "never".
   dailyBriefEmailedAt DateTime?
+  /// When this person's weekly brief email was last attempted — per person, stamped after each
+  /// attempt, so a run cut short by its time budget resumes where it stopped. Null means "never".
+  weeklyBriefEmailedAt DateTime?
   isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())

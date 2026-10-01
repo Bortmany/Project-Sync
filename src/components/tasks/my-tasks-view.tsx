@@ -137,15 +137,32 @@ export function MyTasksView() {
   const view = params.get("view") === "timeline" ? "timeline" : "list";
   const groupBy = params.get("group") === "status" ? "status" : "due";
   const dueParam = params.getAll("due").join(",");
+  const statusParam = params.getAll("status").join(",");
+  const priorityParam = params.getAll("priority").join(",");
+  const disciplineParam = params.getAll("discipline").join(",");
 
-  // The sidebar's "Due today" / "Overdue" links change the address while this screen stays mounted,
-  // so the due filter follows the address rather than only being read once when the page opens.
+  // The sidebar's shortcuts ("Due today", "Overdue", "Awaiting review"...) change the address while
+  // this screen stays mounted, so every filter follows the address rather than only being read
+  // once when the page opens. A refresh of the same address has always given this result.
   useEffect(() => {
-    const due = dueParam ? dueParam.split(",") : [];
-    setFilters((current) =>
-      (current.due ?? []).join(",") === dueParam ? current : { ...current, due },
-    );
-  }, [dueParam]);
+    const split = (value: string) => (value ? value.split(",") : []);
+    setFilters((current) => {
+      const same =
+        (current.due ?? []).join(",") === dueParam &&
+        (current.status ?? []).join(",") === statusParam &&
+        (current.priority ?? []).join(",") === priorityParam &&
+        (current.discipline ?? []).join(",") === disciplineParam;
+      return same
+        ? current
+        : {
+            ...current,
+            due: split(dueParam),
+            status: split(statusParam),
+            priority: split(priorityParam),
+            discipline: split(disciplineParam),
+          };
+    });
+  }, [dueParam, statusParam, priorityParam, disciplineParam]);
 
   const tasks = useMemo(() => myTasks.data?.tasks ?? [], [myTasks.data]);
   const totals = myTasks.data?.totals;
@@ -176,7 +193,11 @@ export function MyTasksView() {
       if (status.length > 0 && !status.includes(task.status)) return false;
       if (priority.length > 0 && !priority.includes(task.priority)) return false;
       if (discipline.length > 0 && !discipline.includes(task.disciplineCode)) return false;
-      if (due.length > 0 && !due.includes(dueBucket(task.deadline, task.isOverdue))) return false;
+      if (due.length > 0) {
+        // Finished work has no date bucket, so a date filter never returns it.
+        const bucket = dueBucket(task.deadline, task.isOverdue, new Date(), task.status);
+        if (!bucket || !due.includes(bucket)) return false;
+      }
       return true;
     });
     return sortTasks(filtered, sort);

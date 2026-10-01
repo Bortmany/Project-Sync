@@ -39,6 +39,8 @@ export const EMAIL_TOKEN_TTL_MS: Record<EmailPurposeName, number> = {
   EXPORT: 24 * 60 * 60 * 1000, // 24 hours
   TWOFA_PENDING: 5 * 60 * 1000, // 5 minutes
   TWOFA_PENDING_MICROSOFT: 5 * 60 * 1000, // 5 minutes
+  // The Teams popup's hand-off code: never emailed, single use, worthless after two minutes.
+  TEAMS_HANDOFF: 2 * 60 * 1000, // 2 minutes
 };
 
 /**

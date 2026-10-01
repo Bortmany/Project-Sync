@@ -63,7 +63,8 @@ export default function PrivacyPage() {
           </li>
           <li>
             <strong>Sessions:</strong> a hashed sign-in token, the IP address and browser used to sign
-            in, and when the session expires.
+            in, and when the session expires. Inside Microsoft Teams, Tielora uses a separate sign-in
+            cookie that only works within Teams.
           </li>
           <li>
             <strong>Email links, if your company has email switched on:</strong> when you are invited,
@@ -120,7 +121,7 @@ export default function PrivacyPage() {
           </li>
           <li>
             <strong>Your email choices:</strong> whether you want alert emails, a daily brief and a
-            weekly summary, and the date your last daily brief email was sent.
+            weekly summary, and the dates your last daily brief and weekly summary emails were sent.
           </li>
         </ul>
       </section>
@@ -219,8 +220,8 @@ export default function PrivacyPage() {
           company announcement. Each one contains what that in-app notification says and nothing
           else: its headline, its sentence and a link back to Tielora. A <strong>daily brief</strong>{" "}
           is your own &ldquo;Your day&rdquo; page, sent early each morning (UTC) and skipped on a day
-          with nothing in it, and a <strong>weekly summary</strong>, once it is offered, works the
-          same way once a week.
+          with nothing in it, and a <strong>weekly summary</strong> works the same way once a
+          week, every Monday morning (UTC), and lists only the projects you belong to.
           Uploads and ordinary comments are never emailed.
         </p>
         <p>

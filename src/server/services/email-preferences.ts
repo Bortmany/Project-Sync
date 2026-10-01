@@ -121,6 +121,7 @@ export async function emailPreferencesFor(actor: ActorContext): Promise<EmailPre
  *
  * Switching the daily brief ON stamps `dailyBriefEmailedAt` with this moment, so the first one
  * arrives with the next morning's sweep rather than this afternoon — which is what the card says.
+ * Switching the weekly brief ON stamps `weeklyBriefEmailedAt` the same way: next Monday's.
  */
 export async function setEmailPreferences(
   actor: ActorContext,
@@ -153,6 +154,8 @@ export async function setEmailPreferences(
       data: {
         ...changed,
         ...(changed.emailDailyBrief === true ? { dailyBriefEmailedAt: new Date() } : {}),
+        // The same for the weekly one: switched on mid-week, the first arrives next Monday.
+        ...(changed.emailWeeklyBrief === true ? { weeklyBriefEmailedAt: new Date() } : {}),
       },
       select: PREFERENCE_SELECT,
     });

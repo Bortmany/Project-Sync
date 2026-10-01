@@ -8,7 +8,7 @@
 //     Azure app is registered the Microsoft card is simply absent and the rest close up.
 //  2. The Microsoft 365 card's two labelled parts, and its On state reading only company facts.
 //  3. Your account: no Email card at all while email is dormant; Alerts and Daily brief when it is
-//     set up; Alerts only for a contractor (THE EXTERNAL RULE); no Weekly brief row yet.
+//     set up; Alerts only for a contractor (THE EXTERNAL RULE); the Weekly brief row for everyone else.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -33,6 +33,7 @@ const TOGGLES = {
   gateOverride: true,
   announcements: false,
   dailyBrief: false,
+  weeklyBrief: false,
 };
 
 function chat(kind: "SLACK" | "TEAMS"): OrgIntegrationDTO {
@@ -279,7 +280,7 @@ describe("Your account → Email", () => {
     expect(html).not.toContain("Daily brief");
   });
 
-  it("offers Alerts and Daily brief, between two-factor and the danger zone", async () => {
+  it("offers Alerts, Daily brief and Weekly brief, between two-factor and the danger zone", async () => {
     const html = await accountHtml();
 
     expect(html).toContain(">Email</h2>");
@@ -287,10 +288,10 @@ describe("Your account → Email", () => {
     expect(html).toContain("salma@company.com");
     expect(html).toContain(">Alerts");
     expect(html).toContain(">Daily brief");
-    expect(html).not.toContain("Weekly brief");
+    expect(html).toContain(">Weekly brief");
     expect(html).toContain("Every email has a one-click unsubscribe link.");
     expect(html).toContain('<legend class="sr-only">Email preferences</legend>');
-    expect(html.match(/type="checkbox"/g) ?? []).toHaveLength(2);
+    expect(html.match(/type="checkbox"/g) ?? []).toHaveLength(3);
 
     const email = html.indexOf(">Email</h2>");
     expect(html.indexOf("Two-factor authentication")).toBeLessThan(email);

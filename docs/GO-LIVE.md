@@ -96,6 +96,8 @@ Set these in the Railway service's Variables tab — never in the repo, never in
 | `MS_GRAPH_CLIENT_ID` | Optional | The Application (client) ID of the Azure app registration (section 6). It powers **both** Microsoft features: OneDrive/SharePoint attachments and **Sign in with Microsoft**. Not a secret, but both stay completely dormant until it and the secret below are both set: no card, no tab, **no button on the login page**, and every Microsoft route answers "not set up". Even once set, **no company sees Sign in with Microsoft work until its own administrator switches it on** in Admin → Integrations. `/api/health` reports `"microsoft": {"status": "dormant", "connectedOrgs": 0, "signInOrgs": 0}` until then; `signInOrgs` is how many companies have switched sign-in on. |
 | `MS_GRAPH_CLIENT_SECRET` | Optional | **A real secret.** The client secret Value from the same Azure app registration, shown once when it is created. Client secrets expire — set a calendar reminder before the date you chose, because when it expires every company's attachments **and every Microsoft sign-in** stop working until it is replaced (passwords keep working throughout). |
 | `MS_GRAPH_REDIRECT_PATH` | Optional | Defaults to `/api/integrations/microsoft/callback`, which is the path to register in Azure. Only change it if something in front of the app rewrites that path. |
+| `TEAMS_APP_ID` | Optional | A GUID you generate **once** (any GUID — for example run `uuidgen` in Terminal, or use a GUID generator website). It names the Tielora app inside Teams; it is **not a secret**. The Teams app is **dormant** until it is set **and** `APP_BASE_URL` is an https address **and** the Azure app above is registered: no "Microsoft Teams app" card in Admin → Integrations, the download and the `/teams/tab` page say "not found", and `/api/health` reads `"teams_app":"dormant"`. See section 6b. |
+| `TEAMS_SSO_AUDIENCE` | Optional | Leave unset. The Teams sign-in token is accepted only if its audience is exactly the Azure app's client ID (what a version-2 token carries). If a real token from your Microsoft 365 test company shows a different audience — the `api://<host>/<client id>` address — put **that one value** here. Never both. See section 6b. |
 | `PADDLE_API_KEY` | Optional | **A real secret.** The server-side API key from the Paddle dashboard (section 8). Sandbox and live have separate keys and one does not work against the other's host. Leave it unset and payments stay completely dormant: no buttons on Admin → Billing, both billing actions refuse plainly, `/api/billing/webhook` answers "not set up", and `/api/health` reports `"billing": "dormant"`. Plans and limits carry on working exactly as they do today. |
 | `PADDLE_WEBHOOK_SECRET` | Optional | **A real secret.** The notification destination's own secret (`pdl_ntfset_…`), copied from Dashboard → Developer tools → Notifications → your destination. It is what proves a webhook really came from Paddle; without it nothing is trusted and the webhook answers 503. Each destination has its own — the sandbox one and the live one are different. |
 | `PADDLE_PRICE_ID_PRO` | Optional | The price id (`pri_…`) of the Pro subscription price. Not a secret. Sandbox and live have different ids. |
@@ -238,6 +240,13 @@ deliberate and documented in `next.config.ts`: inline scripts (Next.js streams p
 inline `<script>` tags and this repo has no middleware to mint a nonce) and inline styles.
 `'unsafe-eval'` is added **in development only**, where the bundler needs it.
 
+**One page is deliberately framable: `/teams/tab`** (the Tielora tab inside Microsoft Teams). It alone
+answers with `frame-ancestors 'self'` plus an explicit list of Microsoft Teams hosts and **no**
+`X-Frame-Options`; every other page and every API route stays `frame-ancestors 'none'` with
+`X-Frame-Options: DENY`. A test (`security-headers.test.ts`) walks every route and fails if a second
+one ever gains a frame permission. The Microsoft hosts in the list are a working starting list;
+confirm them in a real Teams window (see section 6b).
+
 Be honest about what this buys: while inline scripts are allowed, the policy is defence in depth —
 it blocks things like loading code or sending data to another domain, but it does **not** stop
 cross-site scripting. Escaping and validating what users type is what stops that.
@@ -248,7 +257,8 @@ re-verify against a running production build — reading the config is not verif
 
 ```bash
 npm run build && npx next start -p 3199
-curl -sD - -o /dev/null http://localhost:3199/login   # headers land
+curl -sD - -o /dev/null http://localhost:3199/login   # headers land: X-Frame-Options: DENY and frame-ancestors 'none'
+curl -sD - -o /dev/null http://localhost:3199/teams/tab   # the Teams list in frame-ancestors, and NO X-Frame-Options line
 # open http://localhost:3199 in a browser and check the console for CSP errors
 ```
 
@@ -396,6 +406,91 @@ the login button. The sign-in approval asks for less, so it is a different link,
 id>&scope=openid%20profile%20email&redirect_uri=<APP_BASE_URL>/api/auth/microsoft/callback` once,
 after which Switch on and the login button both work for that company. A company that uses both
 features needs both approvals.
+
+---
+
+## 6b. Teams app — publishing (owner's one-off setup, after section 6)
+
+The Tielora app for Microsoft Teams is one small package with one **personal tab, "Your day"**:
+the same brief as Tielora's own Your day page, read-only, inside Teams. Every row opens Tielora in
+the person's browser. Channel notifications (the Teams webhook card) are separate and unchanged.
+Until you do the steps below **nothing exists**: no card, no package, no tab page.
+
+**What you need first:** section 6 done (the Azure app registered, `APP_BASE_URL` set to an **https**
+address) and at least one company with **Sign in with Microsoft switched on** (the tab identifies
+people by their Microsoft company and personal id, exactly like that sign-in — it never matches on
+email).
+
+1. **Make the app's ID.** Generate a GUID once and put it in Railway as **`TEAMS_APP_ID`**. It is
+   not a secret, but keep it the same forever: changing it makes Teams treat it as a different app.
+2. **In the existing Azure registration → Expose an API.**
+   - Set the **Application ID URI** to `api://<your host>/<client id>` — for example
+     `api://tielora.up.railway.app/0b7c9a52-…` (the host is `APP_BASE_URL` without `https://`).
+   - **Add a scope** named **`access_as_user`** ("Admins and users" can consent).
+   - Under **Authorized client applications**, add these two Microsoft Teams clients and tick the
+     `access_as_user` scope for each: **`1fec8e78-bce4-4aaf-ab1b-5451cc387264`** (Teams desktop and
+     mobile) and **`5e3ce6c0-2b1f-4285-8d4b-75ee78787346`** (Teams web). *Re-check both ids on
+     Microsoft Learn ("Update manifest to enable SSO for tabs") — they are Microsoft's to change.*
+3. **The registration must issue version-2 tokens.** In the registration's **Manifest**, set
+   `"accessTokenAcceptedVersion": 2` and save. (Tielora refuses a token that is not version 2.)
+4. **Redirect address for the popup.** The sign-in window reuses the sign-in address you already
+   registered in section 6 (`<APP_BASE_URL>/api/auth/microsoft/callback`) — nothing new to add. If
+   you test on a preview address (next item), add that address's callback as another Web redirect.
+5. **Redeploy**, then open `https://<domain>/api/health` while signed in: it must read
+   **`"teams_app":"configured"`**. If it reads `"dormant"`, one of `TEAMS_APP_ID`, https
+   `APP_BASE_URL`, `MS_GRAPH_CLIENT_ID` or `MS_GRAPH_CLIENT_SECRET` is missing.
+6. **Download the package.** As a company administrator, open **Admin → Integrations → Microsoft
+   Teams app → Download Tielora for Teams**. You get `tielora-teams-app.zip` with exactly three files
+   (a manifest and two small pictures). It is the same for every company and holds no secret. (An
+   administrator whose company has not switched on Sign in with Microsoft sees a notice on the card;
+   the download still works.)
+7. **Check the package before anybody else sees it.** In **dev.teams.microsoft.com → Apps → Import
+   app**, pick the zip: the validation screen must say no errors. *Compare day: the manifest uses
+   schema version 1.17 (still accepted); if the portal asks for a newer one, change the constant in
+   `src/lib/teams-manifest.ts` and bump `TEAMS_APP_VERSION`.*
+
+**Testing.** You need a **Microsoft 365 work or school tenant** — the free **Microsoft 365 Developer
+Program** sandbox is ideal (Teams, test users, and custom app upload switched on). A personal
+Outlook or Hotmail account cannot work. **Teams will not load `http://localhost`**: test through a
+public **https** address (`/phone-preview`, or the Railway preview) and set `APP_BASE_URL` to it
+for the test. Upload the zip in Teams (Apps → Manage your apps → Upload an app → **Upload a custom
+app**); a Tielora icon appears with a **Your day** tab. Try it on desktop, in the Teams web
+browser, and on a phone: each shows the day, or shows "Open Tielora in your browser" — never a
+blank screen. A second sandbox tenant with no Tielora company must see the sign-in state and the
+same one failure sentence, never anybody's data.
+
+**How people get it.**
+- *Pilots (sideload):* each person (or you) uploads the zip as a custom app. Needs custom-app upload
+  switched on in that company's Teams.
+- *A whole company:* that company's Teams administrator opens the **Teams admin centre → Teams apps
+  → Manage apps → Upload new app**, picks the zip, and optionally adds it to a setup policy so it
+  appears pinned for everyone. The first time, a person may see a Microsoft approval screen; if it
+  says **"needs admin approval"**, their Microsoft administrator approves it once with the link in
+  section 6 (scope `openid profile email` **plus** `api://<host>/<client id>/access_as_user`).
+- *The Teams Store:* later — weeks of Microsoft review, and it needs the privacy, terms and
+  support pages checked. Not part of this round.
+
+**If you change the web address** (for example moving from the Railway address to a custom domain)
+the Application ID URI, the redirect addresses **and the Teams package** all contain it: update the
+Azure Application ID URI and redirects, set the new `APP_BASE_URL`, bump `TEAMS_APP_VERSION` in
+`src/lib/teams-manifest.ts`, download a fresh zip, and re-upload it everywhere it was installed.
+Until then the old tab points at the old address.
+
+**If the tab shows blank in Teams:**
+1. `https://<domain>/api/health` (signed in) must say `"teams_app":"configured"`.
+2. `curl -sD - -o /dev/null https://<domain>/teams/tab` must show a `frame-ancestors` line naming the
+   Teams hosts and **no** `X-Frame-Options`. A `DENY` there means Teams cannot show it.
+3. In the browser's console inside the Teams web app, a line starting "Refused to frame…" names the
+   host Teams loaded it from. *Compare day:* add that host to the list in `next.config.ts`
+   (`TEAMS_FRAME_ANCESTORS`) — **never** a bare `*` — and re-run the security-headers test.
+4. If the tab says "Your browser is blocking Tielora inside Teams", that browser (often Safari or
+   Teams on an iPhone) refuses the tab's sign-in cookie. That is the intended fallback: the button
+   opens Tielora in the browser. (A memory-only fallback is deliberately not built.)
+
+**Compare-day checks (need your Microsoft tenant, cannot be proved from code):** the manifest passes
+the Developer Portal; the real token's audience matches (`TEAMS_SSO_AUDIENCE` if not); the exact
+frame-ancestors host list is enough for Teams desktop, web and mobile; the signing in popup closes
+and fills the tab; two-factor is still asked.
 
 ---
 
@@ -659,6 +754,10 @@ Named here so nobody assumes otherwise:
   existed. **Bounces and complaints are not handled either**: Resend's reports of an address that
   bounced or marked Tielora as spam are not read, and a bouncing address is not marked bad. Named
   follow-up if complaints appear.
+- **Other alphabets in the PDF status report** — the PDF shows only Latin letters; text in any other
+  script (Arabic, Chinese, and so on) appears as "?". The report
+  is built with two small code libraries, `pdfkit` and `pptxgenjs`: no browser and no system package
+  is needed, so nothing extra has to be installed on Railway.
 - **A queue behind chat delivery** — a Slack or Teams message is attempted once, retried once if the
   chat tool says "too many requests", and otherwise dropped with a logged line. Delivery state lives
   in the process, not in a table, exactly like rate limiting. In-app notifications are always written

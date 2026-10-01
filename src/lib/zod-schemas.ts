@@ -328,6 +328,9 @@ export const ProjectDTO = z.object({
     mainTasks: z.number().int(),
     completed: z.number().int(),
     overdue: z.number().int(),
+    /** The shared "late" figure, both kinds named (see src/lib/late.ts). */
+    lateMain: z.number().int(),
+    lateDiscipline: z.number().int(),
   }),
   progressPct: z.number().int(),
 });
@@ -886,7 +889,25 @@ export const SearchResultsDTO = z.object({
 });
 export type SearchResultsDTO = z.infer<typeof SearchResultsDTO>;
 
+/** One main task or discipline task on the dashboard's Late / Upcoming cards and tile lists. */
+export const DashboardWorkItem = z.object({
+  id: id,
+  kind: z.enum(["MAIN", "DISCIPLINE"]),
+  title: z.string(),
+  projectCode: z.string(),
+  deadline: dateOut,
+  status: TaskStatusSchema,
+  isOverdue: z.boolean(),
+  /** Whole days past the deadline day (late rows only). */
+  daysLate: z.number().int().nullable().default(null),
+  /** Whole days until the deadline (upcoming rows only; 0 = today). */
+  daysUntil: z.number().int().nullable().default(null),
+});
+export type DashboardWorkItem = z.infer<typeof DashboardWorkItem>;
+
 export const DashboardDTO = z.object({
+  /** Whose work the counts are: the whole company (the projects you may see) or only your own. */
+  scope: z.enum(["COMPANY", "OWN"]).default("COMPANY"),
   counts: z.object({
     total: z.number().int(),
     inProgress: z.number().int(),
@@ -938,17 +959,10 @@ export const DashboardDTO = z.object({
       pct: z.number().int(),
     }),
   ),
-  upcomingDeadlines: z.array(
-    z.object({
-      id: id,
-      kind: z.enum(["MAIN", "DISCIPLINE"]),
-      title: z.string(),
-      projectCode: z.string(),
-      deadline: dateOut,
-      status: TaskStatusSchema,
-      isOverdue: z.boolean(),
-    }),
-  ),
+  /** Late work, most days late first (capped; `counts.overdue` is the whole number). */
+  lateTasks: z.array(DashboardWorkItem).default([]),
+  /** Unfinished work due in the next 14 days, soonest first. Nothing late is ever in it. */
+  upcomingDeadlines: z.array(DashboardWorkItem),
   recentActivity: z.array(ActivityItemDTO),
 });
 export type DashboardDTO = z.infer<typeof DashboardDTO>;
@@ -1197,6 +1211,10 @@ export const BriefBlockedTaskDTO = z.object({
   disciplineCode: z.string(),
   mainTaskTitle: z.string(),
   unmetDependencies: z.array(z.string()),
+  /** Who holds the blocked task; null when nobody does. */
+  assigneeName: z.string().nullable(),
+  /** The same blocking tasks as `unmetDependencies`, in the same order, with who holds each. */
+  blockedBy: z.array(z.object({ title: z.string(), assigneeName: z.string().nullable() })),
 });
 export type BriefBlockedTaskDTO = z.infer<typeof BriefBlockedTaskDTO>;
 
@@ -1258,9 +1276,10 @@ export type IntegrationKindName = z.infer<typeof IntegrationKindSchema>;
 /**
  * The events an organisation can switch on or off for a chat channel.
  *
- * The first five are notification copies — each one is what a `NotificationType` maps to. The sixth,
- * `dailyBrief`, is NOT a notification fan-out at all: it is the once-a-day digest of work the app
- * has already recorded, and nothing in the app ever writes a notification of that kind. See
+ * The first six are notification copies — each one is what a `NotificationType` maps to. The
+ * seventh and eighth, `dailyBrief` and `weeklyBrief`, are NOT notification fan-outs at all: they are
+ * the once-a-day and once-a-week digests of work the app has already recorded, and nothing in the
+ * app ever writes a notification of those kinds. See
  * `TOGGLE_FOR_TYPE` in src/server/services/webhooks.ts, which the compiler stops from mapping
  * anything to it.
  */
@@ -1272,6 +1291,7 @@ export const IntegrationEventSchema = z.enum([
   "gateOverride",
   "announcements",
   "dailyBrief",
+  "weeklyBrief",
 ]);
 export type IntegrationEventName = z.infer<typeof IntegrationEventSchema>;
 
@@ -1297,6 +1317,8 @@ export const IntegrationEventToggles = z.object({
    */
   announcements: z.boolean().default(false),
   dailyBrief: z.boolean().default(false),
+  /** The Monday digest. Same default, same reason: a block saved before it existed reads "off". */
+  weeklyBrief: z.boolean().default(false),
 });
 export type IntegrationEventToggles = z.infer<typeof IntegrationEventToggles>;
 
@@ -1313,6 +1335,7 @@ export const DEFAULT_EVENT_TOGGLES: IntegrationEventToggles = {
   gateOverride: true,
   announcements: false,
   dailyBrief: false,
+  weeklyBrief: false,
 };
 
 /**
@@ -1804,13 +1827,17 @@ export const EmailPurposeSchema = z.enum([
   "EXPORT",
   "TWOFA_PENDING",
   "TWOFA_PENDING_MICROSOFT",
+  // The fourth never-emailed purpose: the single-use, two-minute hand-off code between the Teams
+  // sign-in popup and the Teams tab. Hash only; it says "this person's Microsoft identity was
+  // accepted a moment ago" and is never a session on its own.
+  "TEAMS_HANDOFF",
 ]);
 export type EmailPurposeName = z.infer<typeof EmailPurposeSchema>;
 
 /** The purposes that really are sent by email. The other two are deliberately not among them. */
 export type EmailedPurposeName = Exclude<
   EmailPurposeName,
-  "EXPORT" | "TWOFA_PENDING" | "TWOFA_PENDING_MICROSOFT"
+  "EXPORT" | "TWOFA_PENDING" | "TWOFA_PENDING_MICROSOFT" | "TEAMS_HANDOFF"
 >;
 
 /**
@@ -2002,6 +2029,21 @@ export const TwoFactorChallengeInput = z
 export type TwoFactorChallengeInput = z.infer<typeof TwoFactorChallengeInput>;
 
 /**
+ * The Teams tab signing in: exactly ONE of the token Teams handed the tab (single sign-on) or the
+ * one-time code the Microsoft popup handed back. Never both, never neither. (`POST /api/teams/session`.)
+ */
+export const TeamsSessionInput = z
+  .object({
+    ssoToken: z.string().min(20).max(16_384).optional(),
+    handoffCode: EmailTokenSchema.optional(),
+  })
+  .strict()
+  .refine((value) => Boolean(value.ssoToken) !== Boolean(value.handoffCode), {
+    message: "Send one sign-in proof.",
+  });
+export type TeamsSessionInput = z.infer<typeof TeamsSessionInput>;
+
+/**
  * What the sign-in route answers when the password was right and the account has two-factor on.
  * **There is no session and no cookie in this answer** — only a five-minute ticket to the second
  * step.
@@ -2076,6 +2118,8 @@ export const PersonalExportDTO = z.object({
     emailWeeklyBrief: z.boolean(),
     /** When your daily brief email was last attempted, or null for never. */
     lastDailyBriefEmailAt: dateOut.nullable(),
+    /** When your weekly brief email was last attempted, or null for never. */
+    lastWeeklyBriefEmailAt: dateOut.nullable(),
     /** Whether your account is linked to a Microsoft sign-in — yes or no, never the identifier. */
     signedInWithMicrosoft: z.boolean(),
   }),

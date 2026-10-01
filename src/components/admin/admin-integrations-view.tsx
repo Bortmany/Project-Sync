@@ -20,6 +20,7 @@ import {
 } from "@/components/actions";
 import { AdminBroadcastCard } from "@/components/admin/admin-broadcast-card";
 import { AdminMicrosoftCard } from "@/components/admin/admin-microsoft-card";
+import { AdminTeamsAppCard } from "@/components/admin/admin-teams-app-card";
 import { fieldError, useAction } from "@/components/hooks/use-action";
 import { Badge, Button, Card, ErrorBanner, Field, Input, Modal, useToast } from "@/components/ui";
 import type {
@@ -99,6 +100,11 @@ const EVENT_LABELS: { key: IntegrationEventName; label: string; hint: string }[]
     key: "dailyBrief",
     label: "Daily brief",
     hint: "One message early each morning UTC: every active project with its progress, overdue and blocked counts, and the next gate. Off unless you switch it on.",
+  },
+  {
+    key: "weeklyBrief",
+    label: "Weekly brief",
+    hint: "Sent once a week, early Monday morning UTC. A summary of how far each project has come since last week, what became late, which gates opened and which required documents are still missing. Off unless you switch it on.",
   },
 ];
 
@@ -189,6 +195,15 @@ function EventToggleList({
   function toggle(key: IntegrationEventName, next: boolean) {
     const eventToggles: IntegrationEventToggles = { ...integration.eventToggles, [key]: next };
     run(() => setEventToggles({ kind: integration.kind, eventToggles }), {
+      // Only the weekly switch says anything: it is the one whose effect (a Monday card) is not
+      // visible on this screen.
+      ...(key === "weeklyBrief"
+        ? {
+            success: next
+              ? "Weekly brief is on. The first one goes out next Monday."
+              : "Weekly brief is off.",
+          }
+        : {}),
       failure: "Couldn't change that. Try again.",
       onSuccess: onChanged,
     });
@@ -200,10 +215,13 @@ function EventToggleList({
         What gets sent
       </legend>
       {EVENT_LABELS.map((event) => (
-        <label key={event.key} className="flex items-start gap-2 text-sm text-[var(--brand-text)]">
+        <label
+          key={event.key}
+          className="flex min-h-11 items-start gap-2 text-sm text-[var(--brand-text)]"
+        >
           <input
             type="checkbox"
-            className="mt-1"
+            className="mt-1 h-5 w-5 shrink-0"
             checked={integration.eventToggles[event.key]}
             onChange={(input) => toggle(event.key, input.target.checked)}
           />
@@ -344,6 +362,7 @@ export function AdminIntegrationsView({
   microsoftSignInOutcome,
   emailAvailable,
   broadcastPolicy,
+  teamsApp = false,
 }: {
   integrations: OrgIntegrationDTO[];
   microsoft: MicrosoftConnectionDTO;
@@ -355,6 +374,8 @@ export function AdminIntegrationsView({
   emailAvailable: boolean;
   /** The company's noticeboard setting — who may start a post to the whole company. */
   broadcastPolicy: BroadcastPolicyName;
+  /** Whether this Tielora has set the Teams app up (TEAMS_APP_ID etc.). False = the card is absent. */
+  teamsApp?: boolean;
 }) {
   const chatCards = CHAT_ORDER.flatMap((kind) =>
     integrations.filter((integration) => integration.kind === kind),
@@ -382,6 +403,9 @@ export function AdminIntegrationsView({
           signInOutcome={microsoftSignInOutcome}
           emailAvailable={emailAvailable}
         />
+        {/* Absent while the Teams app is not set up on this Tielora. Shown even when this company
+            has not yet switched on Sign in with Microsoft — with a notice saying so. */}
+        {teamsApp ? <AdminTeamsAppCard microsoftSignInOn={microsoftSignIn.enabled} /> : null}
         {chatCards.map((integration) => (
           <IntegrationCard key={integration.kind} integration={integration} />
         ))}

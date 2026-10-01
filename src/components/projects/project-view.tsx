@@ -8,6 +8,7 @@ import { setExternalSignoffRequired, updateProject } from "@/components/actions"
 import { ProjectActivity } from "@/components/activity/activity-feeds";
 import { ProjectDocumentsTab } from "@/components/documents/project-documents";
 import { ProjectTimelineTab } from "@/components/gantt/timeline-tab";
+import { ExportMenu } from "@/components/projects/export-menu";
 import { ProjectBriefTab } from "@/components/projects/project-brief-tab";
 import { ProjectStatusBadge } from "@/components/projects/projects-view";
 import { ProjectTasksTab } from "@/components/projects/project-tasks-tab";
@@ -164,6 +165,12 @@ function EditProjectDialog({
   );
 }
 
+/** "2 main tasks and 5 discipline tasks are past their deadline." — both kinds named in words. */
+function lateHint(main: number, discipline: number): string {
+  const count = (n: number, one: string) => (n === 0 ? `no ${one}s` : `${n} ${one}${n === 1 ? "" : "s"}`);
+  return `${count(main, "main task")} and ${count(discipline, "discipline task")} are past their deadline.`;
+}
+
 export function ProjectView({ projectId }: { projectId: string }) {
   const me = useMe();
   const project = useProject(projectId);
@@ -207,10 +214,17 @@ export function ProjectView({ projectId }: { projectId: string }) {
           </span>
           <ProjectStatusBadge status={data.status} />
           <FavoriteStar targetType="PROJECT" targetId={data.id} />
-          {canManage ? (
-            <Button variant="ghost" onClick={() => setEditOpen(true)}>
-              Edit
-            </Button>
+          {/* The action row: its own row on a phone, the far right of the name line on a laptop.
+              The Export error line lands directly under it. Contractors get no Export at all. */}
+          {me.data && (canManage || !external) ? (
+            <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:justify-end">
+              {canManage ? (
+                <Button variant="ghost" className="min-h-11" onClick={() => setEditOpen(true)}>
+                  Edit
+                </Button>
+              ) : null}
+              <ExportMenu projectId={data.id} projectCode={data.code} />
+            </div>
           ) : null}
         </div>
 
@@ -235,9 +249,12 @@ export function ProjectView({ projectId }: { projectId: string }) {
               />
             ))}
           </span>
-          {data.counts.overdue > 0 ? (
-            <span className="font-semibold text-[var(--status-blocked)]">
-              {data.counts.overdue} overdue
+          {data.counts.lateMain + data.counts.lateDiscipline > 0 ? (
+            <span
+              className="font-semibold text-[var(--status-blocked)]"
+              title={lateHint(data.counts.lateMain, data.counts.lateDiscipline)}
+            >
+              {data.counts.lateMain + data.counts.lateDiscipline} late
             </span>
           ) : null}
         </div>

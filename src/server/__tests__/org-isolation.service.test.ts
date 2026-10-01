@@ -16,6 +16,22 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 
 process.env.DATA_DIR = path.join(os.tmpdir(), "tielora-test-data");
 
+// The Teams tab's routes and page read the cookie jar next/headers would give a live request.
+const jar = vi.hoisted(() => new Map<string, { value: string; options?: Record<string, unknown> }>());
+vi.mock("next/headers", async () => {
+  const fixtures = await import("@/server/__tests__/microsoft-signin-fixtures");
+  return fixtures.cookieJarModule(jar);
+});
+
+import { GET as teamsManifestRoute } from "@/app/api/teams/manifest/route";
+import TeamsTabPage from "@/app/teams/tab/page";
+import { TeamsBrief } from "@/components/teams/teams-brief";
+import { TeamsSignIn } from "@/components/teams/teams-sign-in";
+import { SESSION_COOKIE, mintSession } from "@/lib/auth";
+import { TEAMS_COOKIE } from "@/lib/teams-app";
+import { issueEmailToken } from "@/server/services/email-tokens";
+import { signInWithHandoff, signInWithTeamsToken } from "@/server/services/teams-signin";
+
 import { prisma } from "@/lib/db";
 import { searchEverything } from "@/lib/search";
 import { ForbiddenError } from "@/lib/permissions";
@@ -80,6 +96,7 @@ import {
   microsoftConnectionFor,
 } from "@/server/services/microsoft";
 import { orgDigest, personBrief, projectBrief } from "@/server/services/briefs";
+import { getDashboardForActor, listTileWork } from "@/server/services/dashboard";
 import {
   acknowledgePost,
   createPost,
@@ -108,7 +125,14 @@ import {
   whenExportSettles,
   workspaceExportStatus,
 } from "@/server/services/workspace-export";
-import { DIGEST_HOUR_UTC, postDailyDigests, runSweepOnce, sendDailyBriefEmails } from "@/server/sweep";
+import {
+  DIGEST_HOUR_UTC,
+  postDailyDigests,
+  postWeeklyBriefs,
+  runSweepOnce,
+  sendDailyBriefEmails,
+  sendWeeklyBriefEmails,
+} from "@/server/sweep";
 import { notify } from "@/server/services/notify";
 import { unsubscribeWithToken } from "@/server/services/email-preferences";
 import { unsubscribeToken } from "@/lib/unsubscribe-token";
@@ -146,6 +170,8 @@ import {
   newOid,
   newTenant,
   signToken,
+  configureTeamsEnv,
+  teamsClaimsFor,
   type FakeMicrosoft,
 } from "@/server/__tests__/microsoft-signin-fixtures";
 
@@ -362,6 +388,29 @@ describe("an administrator of one company cannot reach another company's work", 
     expect(
       await toggleFavorite(acme.admin, { targetType: "MAIN_TASK", targetId: acme.mainTaskId }),
     ).toEqual({ favorited: true });
+  });
+});
+
+describe("the status report stops at the company door", () => {
+  it("another company's project on the report is not found, never forbidden, and is never audited", async () => {
+    const { exportStatusReport, buildReportData } = await import("@/server/services/report");
+
+    for (const format of ["pdf", "pptx"] as const) {
+      await expect(exportStatusReport(acme.admin, rival.projectId, format)).rejects.toBeInstanceOf(NotFoundError);
+      await expect(exportStatusReport(rival.admin, acme.projectId, format)).rejects.toBeInstanceOf(NotFoundError);
+    }
+    await expect(buildReportData(acme.admin, rival.projectId)).rejects.not.toBeInstanceOf(ForbiddenError);
+    expect(await prisma.activityLog.count({ where: { action: "REPORT_EXPORTED" } })).toBe(0);
+
+    // Their own project is fine, which proves the refusals above are about the company. Both
+    // companies named their work identically, yet each report holds only its own ids' worth.
+    const mine = await buildReportData(acme.admin, acme.projectId);
+    expect(mine.project.id).toBe(acme.projectId);
+    const theirs = await buildReportData(rival.admin, rival.projectId);
+    expect(theirs.project.id).toBe(rival.projectId);
+    expect(mine.timeline.mainTasks.map((task) => task.id)).toEqual([acme.mainTaskId]);
+    expect(theirs.timeline.mainTasks.map((task) => task.id)).toEqual([rival.mainTaskId]);
+    expect(await prisma.activityLog.count({ where: { action: "REPORT_EXPORTED" } })).toBe(0);
   });
 });
 
@@ -662,6 +711,8 @@ describe("one company's chat channel is not another company's", () => {
           announcements: false,
 
           dailyBrief: false,
+
+          weeklyBrief: false,
         },
       }),
     ).rejects.toBeInstanceOf(NotFoundError);
@@ -843,6 +894,8 @@ describe("a brief never reaches across companies", () => {
         announcements: false,
 
         dailyBrief: true,
+
+        weeklyBrief: false,
       },
     });
     await saveIntegration(rival.admin, {
@@ -1687,6 +1740,72 @@ describe("alert and brief emails never cross the company door", () => {
     expect(rivalCopy).not.toContain(acmeEmail);
   });
 
+  it("the weekly brief, in chat and by email, never names another company's project or reaches its people", async () => {
+    const RIVAL_PROJECT = "Rival confidential expansion";
+    const RIVAL_SLACK = "https://hooks.slack.com/services/TRIVAL/BRIVAL/RivalWeeklySecretTokenValue";
+    const ACME_SLACK = "https://hooks.slack.com/services/TACME/BACME/AcmeWeeklySecretTokenValue";
+    const rivalProject = await prisma.project.update({
+      where: { id: rival.projectId },
+      data: { name: RIVAL_PROJECT, code: "RIVAL-SECRET" },
+    });
+    const acmeProject = await prisma.project.findUniqueOrThrow({ where: { id: acme.projectId } });
+
+    // Both companies run a weekly card into their own channel.
+    const weeklyOn = {
+      taskAssigned: true,
+      mention: true,
+      statusChange: true,
+      overdueReminder: true,
+      gateOverride: true,
+      announcements: false,
+      dailyBrief: false,
+      weeklyBrief: true,
+    };
+    await saveIntegration(acme.admin, { kind: "SLACK", webhookUrl: ACME_SLACK });
+    await setIntegrationEnabled(acme.admin, { kind: "SLACK", enabled: true });
+    await setEventToggles(acme.admin, { kind: "SLACK", eventToggles: weeklyOn });
+    await saveIntegration(rival.admin, { kind: "SLACK", webhookUrl: RIVAL_SLACK });
+    await setIntegrationEnabled(rival.admin, { kind: "SLACK", enabled: true });
+    await setEventToggles(rival.admin, { kind: "SLACK", eventToggles: weeklyOn });
+
+    // Each company has one person asking for the email; a third, in Acme, has not asked.
+    const acmeEmail = await optIn(acme.engineer.userId, { alerts: false, weekly: true });
+    const rivalEmail = await optIn(rival.engineer.userId, { alerts: false, weekly: true });
+    await optIn(acme.admin.userId, { alerts: false, weekly: false });
+    const spy = mockEmailFetchOk();
+    const today = new Date();
+    const sinceMonday = (today.getUTCDay() + 6) % 7;
+    const mondayMorning = new Date(
+      Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - sinceMonday, 6),
+    );
+
+    await postWeeklyBriefs(mondayMorning);
+    await sendWeeklyBriefEmails(mondayMorning);
+
+    const toUrl = (url: string) =>
+      spy.mock.calls.filter((call) => String(call[0]) === url).map((call) => String((call[1] as RequestInit).body));
+    const acmeCard = toUrl(ACME_SLACK);
+    const rivalCard = toUrl(RIVAL_SLACK);
+    expect(acmeCard).toHaveLength(1);
+    expect(rivalCard).toHaveLength(1);
+    expect(acmeCard[0]).toContain(acmeProject.code);
+    expect(acmeCard[0]).not.toContain(rivalProject.code);
+    expect(acmeCard[0]).not.toContain(RIVAL_PROJECT);
+    expect(rivalCard[0]).toContain(rivalProject.code);
+    expect(rivalCard[0]).not.toContain(acmeProject.code);
+
+    const emails = sentEmails(spy);
+    expect(emails).toHaveLength(2);
+    const acmeCopy = emails.find((email) => email.to.includes(acmeEmail));
+    const rivalCopy = emails.find((email) => email.to.includes(rivalEmail));
+    expect(acmeCopy?.text).toContain(acmeProject.code);
+    expect(JSON.stringify(acmeCopy)).not.toContain(rivalProject.code);
+    expect(JSON.stringify(acmeCopy)).not.toContain(rivalEmail);
+    expect(rivalCopy?.text).toContain(rivalProject.code);
+    expect(JSON.stringify(rivalCopy)).not.toContain(acmeProject.code);
+    expect(JSON.stringify(rivalCopy)).not.toContain(acmeEmail);
+  });
+
   it("an unsubscribe token changes only the one person it names", async () => {
     const everyone = [acme.engineer, acme.admin, rival.engineer, rival.admin].map((person) => person.userId);
     for (const userId of everyone) await optIn(userId, { alerts: true, daily: true });
@@ -1705,5 +1824,196 @@ describe("alert and brief emails never cross the company door", () => {
     const audit = await prisma.activityLog.findMany({ where: { action: "EMAIL_PREFERENCES_CHANGED" } });
     expect(audit).toHaveLength(1);
     expect(audit[0]!.actorId).toBe(acme.engineer.userId);
+  });
+});
+
+describe("the dashboard's company-wide tiles never count another company's row", () => {
+  it("counts only the company's own work, and every tile list holds only its own rows", async () => {
+    // Each company holds one main task and one discipline task with identical titles.
+    const mine = await getDashboardForActor(acme.admin);
+    const theirs = await getDashboardForActor(rival.admin);
+    expect(mine.counts.total).toBe(2);
+    expect(theirs.counts.total).toBe(2);
+
+    // Make the rival's work late: the acme tiles and lists must not move.
+    const past = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+    await prisma.mainTask.updateMany({
+      where: { project: { orgId: rival.fixture.orgId } },
+      data: { deadline: past },
+    });
+    await prisma.disciplineTask.updateMany({
+      where: { mainTask: { project: { orgId: rival.fixture.orgId } } },
+      data: { deadline: past },
+    });
+    const after = await getDashboardForActor(acme.admin);
+    expect(after.counts).toEqual(mine.counts);
+    expect(after.lateTasks).toEqual([]);
+    expect((await getDashboardForActor(rival.admin)).counts.overdue).toBe(2);
+    expect((await listTileWork(acme.admin, "late")).total).toBe(0);
+    const everything = await listTileWork(acme.admin, "all");
+    expect(everything.items.map((row) => row.id).sort()).toEqual(
+      [acme.mainTaskId, acme.disciplineTaskId].sort(),
+    );
+  });
+});
+
+// The Teams tab signs people in from a token Teams hands it — also an OUTSIDE party's claim about
+// which company somebody is in — and reads their day from the tab's own cookie. The same wall holds:
+// the token's `tid` picks exactly one company, `oid` alone finds a person inside it, and nothing the
+// tab does can reach another company. Tokens here are REALLY signed.
+
+describe("The Teams tab never lands in another company", () => {
+  const key = makeKey("kid-isolation-teams");
+  let restoreEnv: () => void = () => undefined;
+  let acmeTid: string;
+  let rivalTid: string;
+  const acmeOid = newOid();
+
+  const token = (tid: string, oid: string) => signToken(teamsClaimsFor({ tid, oid }), key);
+
+  async function sessionFor(userId: string): Promise<void> {
+    const minted = mintSession();
+    await prisma.session.create({ data: { tokenHash: minted.tokenHash, userId, expiresAt: minted.expiresAt } });
+    jar.set(SESSION_COOKIE, { value: minted.rawToken });
+  }
+
+  beforeEach(async () => {
+    jar.clear();
+    restoreEnv = configureTeamsEnv();
+    signingKeys.clear();
+    installFakeMicrosoft([key.jwk]);
+    acmeTid = newTenant();
+    rivalTid = newTenant();
+    await prisma.organization.update({ where: { id: acme.admin.orgId }, data: { entraTenantId: acmeTid } });
+    await prisma.organization.update({ where: { id: rival.admin.orgId }, data: { entraTenantId: rivalTid } });
+    await prisma.user.update({
+      where: { id: acme.engineer.userId },
+      data: { microsoftOid: acmeOid, microsoftTenantId: acmeTid },
+    });
+  });
+
+  afterEach(() => {
+    restoreEnv();
+    vi.restoreAllMocks();
+    jar.clear();
+  });
+
+  it("signs in company A's person from company A's own tenant — the control", async () => {
+    const outcome = await signInWithTeamsToken(token(acmeTid, acmeOid), {});
+    expect(outcome.kind).toBe("signed-in");
+  });
+
+  it("never yields a company-A person from company B's tenant, even with the same oid", async () => {
+    // A perfectly valid token from company B's tenant carrying company A's person's exact oid.
+    const outcome = await signInWithTeamsToken(token(rivalTid, acmeOid), {});
+
+    expect(outcome.kind).toBe("refused");
+    expect(await prisma.session.count({ where: { userId: acme.engineer.userId } })).toBe(0);
+    expect(await prisma.activityLog.count({ where: { action: "LOGIN" } })).toBe(0);
+  });
+
+  it("answers a tenant no company owns exactly as it answers a wrong company", async () => {
+    const wrongCompany = await signInWithTeamsToken(token(rivalTid, acmeOid), {});
+    const unknownTenant = await signInWithTeamsToken(token(newTenant(), acmeOid), {});
+
+    expect(wrongCompany.kind).toBe("refused");
+    expect(unknownTenant.kind).toBe("refused");
+    // Neither outcome carries anything a caller could tell apart.
+    expect(Object.keys(wrongCompany).sort()).toEqual(Object.keys(unknownTenant).sort());
+    expect(await prisma.session.count()).toBe(0);
+  });
+
+  it("refuses a person linked under a tenant their company no longer owns", async () => {
+    // Company A switched Microsoft sign-in off and on again with a different tenant; the old link is
+    // not trusted against the new tenant.
+    await prisma.organization.update({ where: { id: acme.admin.orgId }, data: { entraTenantId: newTenant() } });
+    expect((await signInWithTeamsToken(token(acmeTid, acmeOid), {})).kind).toBe("refused");
+  });
+
+  it("a hand-off code minted for a company-A person cannot be exchanged into a session for anyone else", async () => {
+    const issued = await issueEmailToken(acme.engineer.userId, "TEAMS_HANDOFF");
+
+    const outcome = await signInWithHandoff(issued.rawToken, {});
+    expect(outcome.kind).toBe("signed-in");
+    const sessions = await prisma.session.findMany({});
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].userId).toBe(acme.engineer.userId);
+
+    // …and it is dead after the one use.
+    expect((await signInWithHandoff(issued.rawToken, {})).kind).toBe("refused");
+    expect(await prisma.session.count()).toBe(1);
+  });
+
+  it("a hand-off code for a person whose company has since switched Microsoft sign-in off is refused", async () => {
+    const issued = await issueEmailToken(acme.engineer.userId, "TEAMS_HANDOFF");
+    await disableMicrosoftSignIn(acme.admin);
+
+    expect((await signInWithHandoff(issued.rawToken, {})).kind).toBe("refused");
+    expect(await prisma.session.count()).toBe(0);
+  });
+
+  it("the package download is 'not found' for a signed-out caller, a non-admin and a rival's administrator reads nothing of ours", async () => {
+    expect((await teamsManifestRoute()).status).toBe(404);
+
+    await sessionFor(acme.engineer.userId);
+    expect((await teamsManifestRoute()).status).toBe(404);
+
+    // Another company's administrator gets the same public package — it names no company — and
+    // the answer carries no trace of ours.
+    jar.clear();
+    await sessionFor(rival.admin.userId);
+    const response = await teamsManifestRoute();
+    expect(response.status).toBe(200);
+    const bytes = (await response.arrayBuffer()) as ArrayBuffer;
+    const text = Buffer.from(bytes).toString("latin1");
+    expect(text).not.toContain(acmeTid);
+    expect(text).not.toContain(rivalTid);
+  });
+
+  it("the tab page is scoped by the tab session's own company: it draws that person's day and nobody else's", async () => {
+    // Give company A's engineer work due today, and confirm company B's tab never shows it.
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    await prisma.disciplineTask.updateMany({
+      where: { mainTask: { project: { orgId: acme.admin.orgId } } },
+      data: { deadline: today },
+    });
+
+    const aOutcome = await signInWithTeamsToken(token(acmeTid, acmeOid), {});
+    if (aOutcome.kind !== "signed-in") throw new Error("expected a sign-in");
+    jar.set(TEAMS_COOKIE, { value: aOutcome.sessionToken });
+    const aPage = (await TeamsTabPage({ searchParams: Promise.resolve({}) })) as unknown as {
+      type: unknown;
+      props: { brief: { dueToday: { items: { title: string }[] }; overdue: { total: number } } };
+    };
+    expect(aPage.type).toBe(TeamsBrief);
+    const aTitles = JSON.stringify(aPage.props.brief);
+    expect(aTitles).toContain(SUBTASK_TITLE);
+
+    // A person of company B, signed in to the tab, sees only company B's own assigned work.
+    jar.clear();
+    const rivalOid = newOid();
+    await prisma.user.update({
+      where: { id: rival.engineer.userId },
+      data: { microsoftOid: rivalOid, microsoftTenantId: rivalTid },
+    });
+    const bOutcome = await signInWithTeamsToken(token(rivalTid, rivalOid), {});
+    if (bOutcome.kind !== "signed-in") throw new Error("expected a sign-in");
+    jar.set(TEAMS_COOKIE, { value: bOutcome.sessionToken });
+    const bPage = (await TeamsTabPage({ searchParams: Promise.resolve({}) })) as unknown as {
+      props: { brief: unknown };
+    };
+    const brief = await (await import("@/server/services/briefs")).personBrief(rival.engineer);
+    expect(JSON.parse(JSON.stringify(bPage.props.brief)).overdue).toEqual(JSON.parse(JSON.stringify(brief.overdue)));
+    // Company A's own ids never appear in company B's tab.
+    expect(JSON.stringify(bPage.props.brief)).not.toContain(acme.disciplineTaskId);
+    expect(JSON.stringify(bPage.props.brief)).not.toContain(acme.mainTaskId);
+
+    // And a browser session alone never shows a tab at all.
+    jar.clear();
+    await sessionFor(acme.engineer.userId);
+    expect(((await TeamsTabPage({ searchParams: Promise.resolve({}) })) as unknown as { type: unknown }).type).toBe(
+      TeamsSignIn,
+    );
   });
 });
