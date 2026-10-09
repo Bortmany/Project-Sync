@@ -23,7 +23,8 @@ import {
   readIdToken,
   tokenUrl,
 } from "@/lib/ms-graph";
-import { GRAPH_SCOPES } from "@/lib/ms-graph";
+import { GRAPH_SCOPES, SIGNIN_JWKS_URL, SIGNIN_SCOPES } from "@/lib/ms-graph";
+import { type Jwk, usableKeys } from "@/lib/ms-id-token";
 import { ServiceError } from "@/server/errors";
 
 /** How long any one call to Microsoft may take before it is abandoned. */
@@ -68,7 +69,13 @@ async function microsoftFetch(url: string, init: RequestInit, timeoutMs = REQUES
       // surprise is exactly what should not be followed.
       redirect: "manual",
     });
-  } catch {
+  } catch (error) {
+    // A timeout, DNS failure or refused connection. Host only: never the address's query, a code
+    // or a token, so the sign-in and the file picker are not failing in silence.
+    logger.warn("Microsoft could not be reached", {
+      host: new URL(url).host,
+      reason: error instanceof Error ? error.name : "unknown",
+    });
     throw new ServiceError(GRAPH_UNAVAILABLE);
   }
 }
@@ -173,6 +180,71 @@ export async function refreshTokens(
   });
 
   return readTokenResponse(response);
+}
+
+/* ------------------------------------------------------------------ */
+/* Sign in with Microsoft                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Swaps a sign-in code (plus its PKCE verifier) for an ID token — and ONLY the ID token. The
+ * access token Microsoft also returns is dropped on the floor: sign-in stores nothing but the
+ * identifiers the caller pulls out of a validated ID token. Any failure is a ServiceError whose
+ * message says nothing about what Microsoft sent; the error CODE alone is logged.
+ */
+export async function exchangeSignInCode(
+  config: MicrosoftConfig,
+  redirectUri: string,
+  code: string,
+  codeVerifier: string,
+): Promise<string> {
+  const body = new URLSearchParams({
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: redirectUri,
+    code_verifier: codeVerifier,
+    scope: SIGNIN_SCOPES,
+  });
+
+  const response = await microsoftFetch(tokenUrl("organizations"), {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+
+  let payload: TokenResponse;
+  try {
+    payload = (await response.json()) as TokenResponse;
+  } catch {
+    throw new ServiceError(GRAPH_UNAVAILABLE);
+  }
+  if (!response.ok || typeof payload.id_token !== "string") {
+    logger.warn("Microsoft refused a sign-in code", {
+      status: response.status,
+      reason: typeof payload.error === "string" ? payload.error : "unknown",
+    });
+    throw new ServiceError(GRAPH_UNAVAILABLE);
+  }
+  return payload.id_token;
+}
+
+/** Microsoft's published signing keys, through the same host guard as every other call. */
+export async function fetchSigningKeys(): Promise<Jwk[]> {
+  const response = await microsoftFetch(SIGNIN_JWKS_URL, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    logger.warn("Microsoft's signing keys could not be fetched", { status: response.status });
+    return [];
+  }
+  try {
+    return usableKeys(await response.json());
+  } catch {
+    return [];
+  }
 }
 
 /* ------------------------------------------------------------------ */

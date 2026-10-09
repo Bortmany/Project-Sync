@@ -273,7 +273,7 @@ export function NewProjectDialog({
                 {(disciplines.data ?? []).map((discipline) => (
                   <label
                     key={discipline.id}
-                    className="flex min-h-9 cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-[var(--page-bg)]"
+                    className="flex min-h-11 cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-[var(--page-bg)]"
                   >
                     <input
                       type="checkbox"

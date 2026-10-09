@@ -125,7 +125,9 @@ export async function listActivity(
     });
     if (!task) throw new NotFoundError("We could not find that task.");
     await assertCanViewProject(actor, task.mainTask.projectId);
-    return readActivity({ entityId: task.id }, limit);
+    // A "waits on" row names the OTHER task by title, so a contractor never reads one (THE EXTERNAL
+    // RULE). The audit row itself is untouched — it is only left out of what they are shown.
+    return readActivity({ entityId: task.id }, limit, isExternal(actor));
   }
 
   throw new ServiceError("Tell us which task or project you want the activity for.");
@@ -347,9 +349,12 @@ export async function commentScope(
 async function readActivity(
   where: { projectId?: string; entityId?: string | { in: string[] } },
   take: number,
+  hideDependencyRows = false,
 ): Promise<ActivityItemDTO[]> {
   const rows = await prisma.activityLog.findMany({
-    where,
+    where: hideDependencyRows
+      ? { ...where, action: { notIn: [ACTIVITY.DEPENDENCY_ADDED, ACTIVITY.DEPENDENCY_REMOVED] } }
+      : where,
     orderBy: { createdAt: "desc" },
     take,
     include: { actor: { select: { name: true } } },

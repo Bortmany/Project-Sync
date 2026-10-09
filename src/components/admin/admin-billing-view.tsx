@@ -6,13 +6,15 @@
 // paying. While no payment provider is set up there are no buttons at all: not greyed out, not
 // disabled with a tooltip, simply absent, the same discipline the Microsoft card follows.
 //
-// Every number here is counted at read time by billingStatus(); nothing about usage is stored.
+// Every number here is counted at read time by billingStatus(); nothing about usage is stored,
+// except AI spend (the one stored usage figure: tokens at an outside provider cannot be recounted).
 //
 // WHAT THIS SCREEN DELIBERATELY DOES NOT SAY: a renewal date, an amount, a card, an invoice. None
 // of it is stored in this app — the provider holds it, and "Manage billing" is the door to it. The
 // copy below says so rather than inventing a date it cannot know.
 
 import { BillingButtons, BillingReturnStrip } from "@/components/admin/admin-billing-actions";
+import { formatDateUtc } from "@/components/format";
 import { Badge, Card, ProgressBar } from "@/components/ui";
 import {
   PLANS,
@@ -20,11 +22,12 @@ import {
   formatBytes,
   isOverLimit,
   limitAmount,
+  limitLabel,
   limitShort,
   usagePct,
   type LimitKind,
 } from "@/lib/plan-limits";
-import type { BillingStatusDTO, PlanName } from "@/lib/zod-schemas";
+import type { BillingAiUsageDTO, BillingStatusDTO, PlanName } from "@/lib/zod-schemas";
 
 /**
  * What each plan includes, in the order the meters below run — BUILT FROM `PLANS`, never typed out.
@@ -38,10 +41,12 @@ const INCLUDES: Record<PlanName, string[]> = {
 
 function includesFor(plan: PlanName): string[] {
   const limits = PLANS[plan];
-  const people = limits.users === null ? limitAmount("users", null) : `Up to ${limitAmount("users", limits.users)}`;
+  const upTo = (kind: LimitKind, limit: number | null) =>
+    limit === null ? limitAmount(kind, null) : `Up to ${limitAmount(kind, limit)}`;
   return [
     capitalise(limitAmount("projects", limits.projects)),
-    capitalise(people),
+    capitalise(upTo("users", limits.users)),
+    capitalise(upTo("contractors", limits.contractors)),
     capitalise(limitAmount("documentBytes", limits.documentBytes)),
   ];
 }
@@ -69,11 +74,17 @@ function Meter({
   kind,
   used,
   limit,
+  plan,
+  helper,
 }: {
   label: string;
   kind: LimitKind;
   used: number;
   limit: number | null;
+  /** On Pro there is no higher plan, so the over-limit line must not say "or you upgrade". */
+  plan: PlanName;
+  /** A small line under the meter, e.g. the contractors promise. */
+  helper?: string;
 }) {
   const shown = kind === "documentBytes" ? formatBytes(used) : String(used);
   const over = isOverLimit(used, limit);
@@ -117,7 +128,67 @@ function Meter({
       {over ? (
         <p className="text-xs text-[var(--status-blocked)]">
           You have more than your plan&rsquo;s limit — nothing is at risk, but you can&rsquo;t add
-          another until you&rsquo;re back under, or you upgrade.
+          another until you&rsquo;re back under{plan === "PRO" ? "." : ", or you upgrade."}
+        </p>
+      ) : null}
+      {helper ? <p className="break-words text-xs text-[var(--brand-text)]">{helper}</p> : null}
+    </div>
+  );
+}
+
+/** "$0.42": dollars with cents, the way the allowance and the spend are always shown. */
+function dollars(value: number): string {
+  return `$${value.toFixed(2)}`;
+}
+
+/**
+ * The "AI this month" meter. Drawn only when billingStatus() carries an `ai` block, which it does
+ * only on a deployment that has the AI key. A plan with no AI allowance gets a plain row, no bar.
+ * "At the allowance" uses the existing red "over" look: the app has no amber token.
+ */
+function AiMeter({ ai }: { ai: BillingAiUsageDTO }) {
+  if (ai.capUsd <= 0) {
+    return (
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="text-sm text-[var(--brand-text)]">AI this month</span>
+        <span className="text-sm text-[var(--brand-ink)]">Not included in your plan</span>
+      </div>
+    );
+  }
+
+  const atAllowance = ai.atAllowance;
+  const reset = formatDateUtc(ai.resetsOn);
+
+  return (
+    <div className="space-y-1" data-testid="ai-meter">
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="text-sm text-[var(--brand-text)]">AI this month</span>
+        <span
+          className="text-sm tabular-nums"
+          style={{ color: atAllowance ? "var(--status-blocked)" : "var(--brand-ink)" }}
+        >
+          {dollars(ai.usedUsd)} / {dollars(ai.capUsd)}
+        </span>
+      </div>
+      <span className="inline-flex w-full items-center">
+        {atAllowance ? (
+          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--brand-gray)]/40">
+            <span
+              className="block h-full rounded-full bg-[var(--status-blocked)]"
+              style={{ width: "100%" }}
+            />
+          </span>
+        ) : (
+          <ProgressBar pct={usagePct(ai.usedUsd, ai.capUsd)} />
+        )}
+      </span>
+      <p className="break-words text-xs text-[var(--brand-text)]">
+        {ai.requests} AI {ai.requests === 1 ? "request" : "requests"} this month · Resets on {reset}
+      </p>
+      {atAllowance ? (
+        <p className="break-words text-xs text-[var(--status-blocked)]">
+          You have used this month&rsquo;s AI allowance. Ask Tielora and AI-written summaries are
+          paused until {reset}. Everything else works as normal.
         </p>
       ) : null}
     </div>
@@ -147,23 +218,44 @@ function CurrentPlanCard({ status }: { status: BillingStatusDTO }) {
             {INCLUDES[status.plan].map((line) => (
               <li key={line}>{line}</li>
             ))}
+            {status.ai ? (
+              <li>{`AI allowance: $${PLANS[status.plan].aiMonthlyUsd} of use a month`}</li>
+            ) : null}
           </ul>
         </div>
 
         <div className="space-y-3">
           <Meter
-            label="Projects"
+            label={limitLabel("projects")}
             kind="projects"
             used={status.usage.projects}
             limit={status.limits.projects}
+            plan={status.plan}
           />
-          <Meter label="People" kind="users" used={status.usage.users} limit={status.limits.users} />
           <Meter
-            label="Documents"
+            label={limitLabel("users")}
+            kind="users"
+            used={status.usage.users}
+            limit={status.limits.users}
+            plan={status.plan}
+          />
+          <Meter
+            label={limitLabel("contractors")}
+            kind="contractors"
+            used={status.usage.contractors}
+            limit={status.limits.contractors}
+            plan={status.plan}
+            helper="Contractors don’t count as office staff and are never charged for."
+          />
+          <Meter
+            label={limitLabel("documentBytes")}
             kind="documentBytes"
             used={status.usage.documentBytes}
             limit={status.limits.documentBytes}
+            plan={status.plan}
           />
+          {/* Absent on a deployment with no AI key, so Billing is unchanged there. */}
+          {status.ai ? <AiMeter ai={status.ai} /> : null}
         </div>
 
         {status.provider.configured ? (
@@ -219,7 +311,12 @@ function PlansRow({ label, free, pro }: { label: string; free: string; pro: stri
   );
 }
 
-function PlansCard({ plan }: { plan: BillingStatusDTO["plan"] }) {
+/** "Up to 10" for a ceiling, "Unlimited" for none. */
+function upTo(kind: LimitKind, limit: number | null): string {
+  return limit === null ? limitShort(kind, null) : `Up to ${limitShort(kind, limit)}`;
+}
+
+function PlansCard({ plan, showAi }: { plan: BillingStatusDTO["plan"]; showAi: boolean }) {
   return (
     <Card title="Plans">
       <div className="grid grid-cols-[1fr_auto_auto] gap-x-4">
@@ -233,15 +330,28 @@ function PlansCard({ plan }: { plan: BillingStatusDTO["plan"] }) {
           pro={limitShort("projects", PLANS.PRO.projects)}
         />
         <PlansRow
-          label="People"
-          free={`Up to ${limitShort("users", PLANS.FREE.users)}`}
-          pro={limitShort("users", PLANS.PRO.users)}
+          label={limitLabel("users")}
+          free={upTo("users", PLANS.FREE.users)}
+          pro={upTo("users", PLANS.PRO.users)}
+        />
+        <PlansRow
+          label={limitLabel("contractors")}
+          free={upTo("contractors", PLANS.FREE.contractors)}
+          pro={upTo("contractors", PLANS.PRO.contractors)}
         />
         <PlansRow
           label="Documents"
           free={limitShort("documentBytes", PLANS.FREE.documentBytes)}
           pro={limitShort("documentBytes", PLANS.PRO.documentBytes)}
         />
+        {/* The AI allowance is advertised only where AI is switched on for the deployment. */}
+        {showAi ? (
+          <PlansRow
+            label="AI allowance"
+            free={`$${PLANS.FREE.aiMonthlyUsd} of use a month`}
+            pro={`$${PLANS.PRO.aiMonthlyUsd} of use a month`}
+          />
+        ) : null}
         {/* On Pro, the Pro column says so instead of repeating a price nobody is about to pay. */}
         <PlansRow label="Price" free="Free" pro={plan === "PRO" ? "Your plan" : PRO_PRICE} />
       </div>
@@ -273,7 +383,7 @@ export function AdminBillingView({
 
       <div className="max-w-2xl space-y-8">
         <CurrentPlanCard status={status} />
-        <PlansCard plan={status.plan} />
+        <PlansCard plan={status.plan} showAi={Boolean(status.ai)} />
       </div>
     </div>
   );

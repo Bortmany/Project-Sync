@@ -56,3 +56,22 @@ body {
   outline: 2px solid var(--brand-accent);
   outline-offset: 2px;
 }
+
+/* Ask Tielora's panel slides in (200ms). Used behind `motion-safe:` so "reduce motion" just shows it. */
+@keyframes ask-tielora-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes ask-tielora-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}

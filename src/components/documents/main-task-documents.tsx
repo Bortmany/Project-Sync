@@ -6,17 +6,28 @@
 import { useMainTaskDocuments } from "@/components/hooks/use-api";
 import { DocumentTable, type DocumentGroup } from "@/components/documents/document-table";
 import { UploadDropzone } from "@/components/documents/upload-dropzone";
+import { canUploadRevisionTo } from "@/components/documents/can-upload";
+import type { MeDTO } from "@/components/hooks/use-api";
 import { EmptyState } from "@/components/ui";
-import type { MainTaskDTO } from "@/lib/zod-schemas";
+import type { MainTaskDTO, ProjectDTO } from "@/lib/zod-schemas";
 
 export function MainTaskDocumentsTab({
   task,
   canDelete,
+  me,
+  project,
 }: {
   task: MainTaskDTO;
   canDelete: boolean;
+  /** Who is looking, and the project they are on: decides who is offered an upload. */
+  me?: MeDTO;
+  project?: ProjectDTO;
 }) {
   const documents = useMainTaskDocuments(task.id);
+  // The same people the server lets upload. Everyone else reads the documents without buttons.
+  const canUploadFor = (document: { disciplineTaskId: string | null }) =>
+    canUploadRevisionTo(me, project, document, task.disciplineSummary);
+  const canUploadShared = canUploadFor({ disciplineTaskId: null });
   const rows = documents.data ?? [];
 
   const shared = rows.filter((document) => document.disciplineTaskId === null);
@@ -37,7 +48,9 @@ export function MainTaskDocumentsTab({
 
   return (
     <div className="space-y-4">
-      <UploadDropzone target={{ projectId: task.projectId, mainTaskId: task.id }} />
+      {canUploadShared ? (
+        <UploadDropzone target={{ projectId: task.projectId, mainTaskId: task.id }} />
+      ) : null}
 
       <DocumentTable
         groups={groups}
@@ -45,17 +58,22 @@ export function MainTaskDocumentsTab({
         isError={documents.isError}
         onRetry={() => void documents.refetch()}
         canDelete={canDelete}
+        canUploadFor={canUploadFor}
         empty={
           <EmptyState
-            message="No documents yet. Upload the first one."
+            message={
+              canUploadShared ? "No documents yet. Upload the first one." : "No documents have been filed yet."
+            }
             // Its own opener, so the empty state is actionable without scrolling back to the drop
             // area. The server checks who may upload here, exactly as it does for the drop area.
             action={
-              <UploadDropzone
-                target={{ projectId: task.projectId, mainTaskId: task.id }}
-                mode="button"
-                buttonLabel="Upload a document"
-              />
+              canUploadShared ? (
+                <UploadDropzone
+                  target={{ projectId: task.projectId, mainTaskId: task.id }}
+                  mode="button"
+                  buttonLabel="Upload a document"
+                />
+              ) : undefined
             }
           />
         }

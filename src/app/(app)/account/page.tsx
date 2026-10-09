@@ -7,9 +7,12 @@
 import { redirect } from "next/navigation";
 import { AccountView } from "@/components/account/account-view";
 import { DeleteAccountCard } from "@/components/account/delete-account-card";
+import { EmailPreferencesCard } from "@/components/account/email-preferences-card";
 import { TwoFactorCard } from "@/components/account/two-factor-card";
+import { isExternal } from "@/server/actor";
 import { currentActor } from "@/server/session";
 import { accountDeletionOptions } from "@/server/services/account-deletion";
+import { emailPreferencesFor } from "@/server/services/email-preferences";
 import { twoFactorStatus } from "@/server/services/two-factor";
 
 export const metadata = { title: "Your account — Tielora" };
@@ -27,6 +30,11 @@ export default async function AccountPage() {
   // first paint rather than flickering from "off" to "on". Never the secret, never a code.
   const twoFactor = await twoFactorStatus(actor);
 
+  // Your own email choices, read the same way. While this Tielora sends no email the card is not
+  // drawn at all — nobody signed in can fix that, and a greyed card would advertise a feature that
+  // does not exist here.
+  const emailPreferences = await emailPreferencesFor(actor);
+
   return (
     <div className="space-y-6">
       <div>
@@ -43,6 +51,9 @@ export default async function AccountPage() {
           enabledAt={twoFactor.enabledAt}
           recoveryCodesLeft={twoFactor.recoveryCodesLeft}
         />
+        {emailPreferences.available ? (
+          <EmailPreferencesCard preferences={emailPreferences} external={isExternal(actor)} />
+        ) : null}
         {/* The danger zone, red-tinted and set apart by the space-y-8 gap above it. */}
         <DeleteAccountCard soleAdmin={options.soleAdmin} />
       </div>

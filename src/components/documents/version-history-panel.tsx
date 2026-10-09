@@ -67,7 +67,7 @@ export function VersionHistoryPanel({
             type="button"
             onClick={onClose}
             aria-label="Close version history"
-            className="rounded p-1 text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded p-1 text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
               <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.5" />
@@ -117,7 +117,7 @@ export function VersionHistoryPanel({
                     <span>{formatFileSize(version.sizeBytes)}</span>
                     <a
                       href={version.downloadUrl}
-                      className="font-semibold text-[var(--brand-primary)] hover:underline"
+                      className="inline-flex min-h-11 items-center font-semibold text-[var(--brand-primary)] hover:underline"
                     >
                       Download
                     </a>

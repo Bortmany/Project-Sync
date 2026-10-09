@@ -11,11 +11,14 @@ import { pingDatabase } from "@/lib/db";
 import { sentryStatus } from "@/lib/error-reporting";
 import { isMicrosoftConfigured } from "@/lib/ms-graph";
 import { signupMode } from "@/lib/signup-mode";
+import { teamsAppStatus } from "@/lib/teams-app";
 import { uploadsDir } from "@/lib/upload";
+import { aiHealth } from "@/server/services/ai";
 import { billingHealth } from "@/server/services/billing";
 import { emailStatus } from "@/server/services/email";
 import { integrationCounts } from "@/server/services/integrations";
 import { microsoftHealth } from "@/server/services/microsoft";
+import { microsoftSignInOrgCount } from "@/server/services/microsoft-signin";
 import { currentActor } from "@/server/session";
 import { sweepStatus } from "@/server/sweep";
 
@@ -64,9 +67,15 @@ export async function GET() {
 
   // Microsoft 365 file attachments: "dormant" until the Azure app is registered, then "configured"
   // with how many companies have connected. A number and a word — nothing that names anybody.
+  // `signInOrgs` is how many companies have "Sign in with Microsoft" switched on: a count, never
+  // a tenant id or a company name.
   const microsoft = dbUp
-    ? await microsoftHealth()
-    : { status: isMicrosoftConfigured() ? "configured" : "dormant", connectedOrgs: 0 };
+    ? { ...(await microsoftHealth()), signInOrgs: await microsoftSignInOrgCount() }
+    : {
+        status: isMicrosoftConfigured() ? "configured" : "dormant",
+        connectedOrgs: 0,
+        signInOrgs: 0,
+      };
 
   return NextResponse.json(
     {
@@ -77,12 +86,19 @@ export async function GET() {
       sentry: sentryStatus(),
       integrations,
       microsoft,
+      // The Teams app (a "Your day" tab): "dormant" until TEAMS_APP_ID, APP_BASE_URL (https) and the
+      // Azure registration are all set, then "configured". A word and nothing else — never the app
+      // id, the host or a secret.
+      teams_app: teamsAppStatus(),
       // Transactional email: "dormant" until RESEND_API_KEY, EMAIL_FROM and APP_BASE_URL are all
       // set, then "configured". A word, and nothing else — no address, no count of anybody.
       email: emailStatus(),
       // Payments: "dormant" until all four provider variables are set, then "configured". A word
       // about configuration and nothing else — never a plan count, never a balance, never money.
       billing: billingHealth(),
+      // Ask Tielora and AI-written briefs: "dormant" until ANTHROPIC_API_KEY is set, then
+      // "configured". A word and nothing else: never a company count, a spend or part of the key.
+      ai: aiHealth(),
       // Who may create a new company here: "open", "invite" or "closed". The mode and nothing
       // else — never a code, never how many there are.
       signups: signupMode(),

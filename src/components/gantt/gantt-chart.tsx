@@ -68,6 +68,8 @@ type Row = {
   locked: boolean;
   /** Only on a band header: how much of that phase is finished. */
   phaseCounts: { completedCount: number; taskCount: number } | null;
+  /** Discipline rows only: the earlier tasks this one is still waiting on. Shown as text, no arrows. */
+  waitingOn?: string[];
 };
 
 type Drag = { rowKey: string; mode: "move" | "resize"; startX: number; days: number };
@@ -188,6 +190,7 @@ export function GanttChart({
           mainTaskId: task.id,
           locked,
           phaseCounts: null,
+          waitingOn: subtask.waitingOn ?? [],
         });
       }
     }
@@ -413,7 +416,7 @@ export function GanttChart({
               type="button"
               onClick={() => setZoom(option)}
               aria-pressed={zoom === option}
-              className={`px-3 py-1.5 text-xs font-semibold ${
+              className={`inline-flex min-h-11 items-center px-3 text-xs font-semibold ${
                 zoom === option
                   ? "bg-[var(--brand-primary)] text-white"
                   : "bg-white text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
@@ -431,7 +434,7 @@ export function GanttChart({
           onClick={() =>
             setCollapsed(allCollapsed ? new Set() : new Set(gantt.mainTasks.map((task) => task.id)))
           }
-          className="text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+          className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
         >
           {allCollapsed ? "Expand all" : "Collapse all"}
         </button>
@@ -527,6 +530,16 @@ export function GanttChart({
                 >
                   {row.title}
                 </Link>
+
+                {row.waitingOn && row.waitingOn.length > 0 ? (
+                  <span
+                    className="max-w-24 shrink-0 truncate text-[10px] italic text-[var(--brand-text)]"
+                    title={`Waiting on ${row.waitingOn.join(", ")}`}
+                  >
+                    Waiting on {row.waitingOn[0]}
+                    {row.waitingOn.length > 1 ? ` +${row.waitingOn.length - 1}` : ""}
+                  </span>
+                ) : null}
 
                 <span className="shrink-0 text-[10px] text-[var(--brand-gray)]">
                   {dates.startDate ? `${formatShortDate(dates.startDate)}–` : ""}

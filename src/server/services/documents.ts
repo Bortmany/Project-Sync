@@ -11,6 +11,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { activeDocuments, notDeleted, prisma } from "@/lib/db";
 import { assertCan } from "@/lib/permissions";
 import { safeOriginalName, storedFilePath } from "@/lib/upload";
+import { mandatoryDocumentProblem, mayFillMandatoryDocument } from "@/lib/upload-rules";
 import type {
   DocumentDTO,
   DocumentVersionDTO,
@@ -61,6 +62,10 @@ export async function uploadDocumentVersion(
 ): Promise<DocumentVersionDTO> {
   const target = await assertCanUploadTo(actor, meta);
 
+  // The backstop for assertFileSuitsRequirement(): whatever route brought the file here, a plain
+  // text or CSV file can never earn a mandatory document's tick.
+  await assertSuitsMandatory(target, meta, file.ext);
+
   // The plan's storage ceiling, before the revision is recorded. Every upload in the app arrives
   // here — the browser's dropzone and a Microsoft 365 attachment alike — so this is the only place
   // it has to be checked. Files already stored are never touched: a company over its cap keeps
@@ -84,6 +89,50 @@ export async function uploadDocumentVersion(
   await notifyWatchers(actor, target, filename);
 
   return buildVersionDTO(versionId);
+}
+
+/**
+ * Called by the upload route (and the Microsoft attach) AFTER validateUpload() and BEFORE storeFile():
+ * a file that cannot be the deliverable for a mandatory required document is refused in plain English
+ * before a byte is written, so no orphan file is left behind. Ordinary documents are untouched.
+ * Permission is judged first, so somebody who may not upload here only ever hears that.
+ */
+export async function assertFileSuitsRequirement(
+  actor: ActorContext,
+  meta: UploadMeta,
+  ext: string,
+): Promise<void> {
+  if (mayFillMandatoryDocument(ext)) return;
+  const target = await assertCanUploadTo(actor, meta);
+  await assertSuitsMandatory(target, meta, ext);
+}
+
+/**
+ * The rule itself. It applies to a new checklist upload AND to a new revision of a document that
+ * already satisfies a mandatory item — otherwise a real PDF could be followed by a junk text file
+ * under the same green tick. Nothing already filed is re-judged.
+ */
+async function assertSuitsMandatory(
+  target: UploadTarget,
+  meta: UploadMeta,
+  ext: string,
+): Promise<void> {
+  if (mayFillMandatoryDocument(ext)) return;
+
+  const filters: Prisma.RequiredDocumentWhereInput[] = [];
+  if (meta.requiredDocumentId) filters.push({ id: meta.requiredDocumentId });
+  if (meta.documentId) filters.push({ documentId: meta.documentId });
+  if (filters.length === 0) return;
+
+  const mandatory = await prisma.requiredDocument.findFirst({
+    where: {
+      isMandatory: true,
+      OR: filters,
+      disciplineTask: { mainTask: { project: { orgId: target.orgId } } },
+    },
+    select: { name: true },
+  });
+  if (mandatory) throw new ServiceError(mandatoryDocumentProblem(ext, mandatory.name) as string);
 }
 
 /**

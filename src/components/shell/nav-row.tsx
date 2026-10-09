@@ -43,7 +43,6 @@ export function NavRow({
   collapsed = false,
   subItem = false,
   dotColor,
-  touch = false,
   onClick,
   trailing,
 }: NavRowProps) {
@@ -61,7 +60,7 @@ export function NavRow({
       title={label}
       onClick={onClick}
       aria-current={active ? "page" : undefined}
-      className={`${BASE} ${size} ${touch ? "min-h-11" : ""} ${active ? ACTIVE : IDLE}`}
+      className={`${BASE} ${size} min-h-11 ${active ? ACTIVE : IDLE}`}
     >
       {Icon ? <Icon size={18} /> : null}
       {!Icon && subItem ? (
@@ -99,7 +98,7 @@ export function NavGroupToggle({
       aria-expanded={open}
       aria-controls={controls}
       aria-label={open ? `Hide ${label} links` : `Show ${label} links`}
-      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-white/60 transition-colors hover:bg-[var(--brand-mid)] hover:text-white"
+      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--radius)] text-white/60 transition-colors hover:bg-[var(--brand-mid)] hover:text-white"
     >
       <span className={`transition-transform ${open ? "rotate-0" : "-rotate-90"}`}>{children}</span>
     </button>

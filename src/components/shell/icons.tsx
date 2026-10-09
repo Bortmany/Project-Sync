@@ -174,3 +174,13 @@ export function StarIcon({ size = 18, className, filled = false }: IconProps & {
     </svg>
   );
 }
+
+/** A four-point sparkle with a small companion: the mark for Ask Tielora. */
+export function SparkleIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size, className)}>
+      <path d="M8.5 3l1.6 4.4L14.5 9l-4.4 1.6L8.5 15l-1.6-4.4L2.5 9l4.4-1.6z" />
+      <path d="M15.5 2.5v3M14 4h3" />
+    </svg>
+  );
+}

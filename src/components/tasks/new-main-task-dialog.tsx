@@ -291,7 +291,7 @@ export function NewMainTaskDialog({
             const row = rows[discipline.disciplineId];
             return (
               <div key={discipline.id} className="rounded-[var(--radius)] border border-[var(--border)] p-3">
-                <label className="flex min-h-9 cursor-pointer items-center gap-2 text-sm">
+                <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm">
                   <input
                     type="checkbox"
                     checked={Boolean(row)}

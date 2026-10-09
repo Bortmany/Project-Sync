@@ -20,7 +20,7 @@ export default function PrivacyPage() {
   return (
     <LegalPage
       title="Privacy notice"
-      lastUpdated="31 Aug 2026"
+      lastUpdated="1 Oct 2026"
       notice="This notice is a template written to describe the app honestly. It has not yet been reviewed by a lawyer, and should be before the app is relied on for real projects."
       otherHref="/terms"
       otherLabel="Terms of use"
@@ -63,7 +63,8 @@ export default function PrivacyPage() {
           </li>
           <li>
             <strong>Sessions:</strong> a hashed sign-in token, the IP address and browser used to sign
-            in, and when the session expires.
+            in, and when the session expires. Inside Microsoft Teams, Tielora uses a separate sign-in
+            cookie that only works within Teams.
           </li>
           <li>
             <strong>Email links, if your company has email switched on:</strong> when you are invited,
@@ -110,6 +111,17 @@ export default function PrivacyPage() {
             <strong>A Microsoft 365 connection</strong>, if your administrator sets one up: which
             Microsoft work domain it is, which administrator connected it and when, and the sign-in
             tokens for that one account, kept encrypted and never shown to anybody. See below.
+          </li>
+          <li>
+            <strong>Your Microsoft sign-in link, if you use it:</strong> a permanent identifier
+            Microsoft gives us for your work account and the identifier of your company&apos;s
+            Microsoft directory, kept so we recognise you next time. For each company that switches
+            Microsoft sign-in on, we also store its Microsoft directory identifier. See
+            &ldquo;Signing in with Microsoft&rdquo; below.
+          </li>
+          <li>
+            <strong>Your email choices:</strong> whether you want alert emails, a daily brief and a
+            weekly summary, and the dates your last daily brief and weekly summary emails were sent.
           </li>
         </ul>
       </section>
@@ -197,17 +209,61 @@ export default function PrivacyPage() {
       <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
         <h2 className="text-base font-semibold text-[var(--brand-ink)]">The emails we send you</h2>
         <p>
-          There are only three, and each is about your account rather than your work: an invitation
-          to set your first password, a password reset you asked for, and a request to confirm your
-          email address. Each carries your name and a link that works once and then expires. They are
-          sent through Resend, an email delivery service, which handles your name and address in
-          order to deliver the message.
+          Three emails are about your account: an invitation to set your first password, a password
+          reset you asked for, and a request to confirm your email address. Each carries your name
+          and a link that works once and then expires.
         </p>
         <p>
-          No task, comment, document or deadline is ever emailed to anybody — work notifications stay
-          in the app, with the optional chat copy described above. If your company has not switched
-          email on, none of these are sent at all and your administrator sets passwords for you
-          instead.
+          The others are about your work, and you choose them. <strong>Alert emails</strong> are one
+          email for each alert you would see in the app — a task assigned to you, a mention, a
+          change on your work, a deadline coming up or passed, a stage opened by an override, or a
+          company announcement. Each one contains what that in-app notification says and nothing
+          else: its headline, its sentence and a link back to Tielora. A <strong>daily brief</strong>{" "}
+          is your own &ldquo;Your day&rdquo; page, sent early each morning (UTC) and skipped on a day
+          with nothing in it, and a <strong>weekly summary</strong> works the same way once a
+          week, every Monday morning (UTC), and lists only the projects you belong to.
+          Uploads and ordinary comments are never emailed.
+        </p>
+        <p>
+          These are off unless you switch them on — except that when your account is newly created,
+          alert emails start switched on, and both briefs start off. They go only to an address you
+          have confirmed, every one has a one-click unsubscribe link, and you can change all of them
+          at any time on <strong>Your account</strong>. External contractors can only choose alert
+          emails, and only for their own work; they are never sent a brief.
+        </p>
+        <p>
+          All of these emails are sent through Resend, an email delivery service, which handles your
+          name, your address and the email itself in order to deliver it. We keep no copy of any
+          email. If your company has not switched email on, none of them are sent at all and your
+          administrator sets passwords for you instead.
+        </p>
+      </section>
+
+      <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
+        <h2 className="text-base font-semibold text-[var(--brand-ink)]">
+          Signing in with Microsoft
+        </h2>
+        <p>
+          If your company&apos;s administrator switches it on, you can sign in with the Microsoft work
+          account you already use instead of your Tielora password. Your password keeps working
+          either way, and it only works if you already have a Tielora account.
+        </p>
+        <p>
+          When you sign in this way, Microsoft tells us which company&apos;s Microsoft directory you
+          belong to, a permanent identifier for your work account, and your work email address. We
+          ask only for the basic sign-in permissions — who you are, and nothing else. We do not read
+          your mailbox, your files or your contacts to sign you in, and we keep no Microsoft sign-in
+          token: only the two identifiers listed above, so we recognise you next time. Your email
+          address is used only to find your Tielora account the first time.
+        </p>
+        <p>
+          If you have switched on two-factor sign-in in Tielora, you are still asked for your code
+          after Microsoft. The permanent identifier Microsoft gives your own work account never
+          appears in the activity trail, in our logs or in either copy of your data, and your link is
+          removed when you delete your account or your administrator switches Microsoft sign-in off.
+          Your company&apos;s Microsoft directory identifier is different: it is company settings,
+          not something about you, so it is recorded in the activity trail when an administrator
+          switches Microsoft sign-in on, and it appears in the company&apos;s own copy of its data.
         </p>
       </section>
 
@@ -218,10 +274,81 @@ export default function PrivacyPage() {
           are in: assigning and tracking work, gating task completion on required documents, keeping
           a dependable audit trail, and notifying people about work relevant to them. Nothing here is
           used for advertising and nothing is ever sold. The only information that leaves this app is
-          the chat copy described above, while your administrator has that switched on, the account
-          emails described below, and — if your company pays for a plan — your company&apos;s own
-          identifier passed to the payment provider, so they can tell us which company paid.
+          the chat copy described above, while your administrator has that switched on, the emails
+          described above, the question and project details described under Ask Tielora below, while
+          your administrator has that switched on, and — if your company pays for a plan — your
+          company&apos;s own identifier passed to the payment provider, so they can tell us which
+          company paid.
         </p>
+      </section>
+
+      <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
+        <h2 className="text-base font-semibold text-[var(--brand-ink)]">
+          Ask Tielora and AI-written summaries, if your administrator switches them on
+        </h2>
+        <p>
+          Ask Tielora lets someone on your team type a question about their projects and get a short
+          written answer. AI-written briefs add two or three sentences, written by AI, to the top of
+          the company&apos;s daily and weekly brief, including the copy posted to Slack or Teams.
+          Both are off for every company until its
+          administrator switches them on, they can be switched off at any time in Admin →
+          Integrations, and contractors never see them.
+        </p>
+        <p>
+          <strong>What is sent.</strong> To answer a question, we send the question you typed and the
+          names, codes, deadlines, progress figures and task titles of the projects you are on (for
+          an administrator, all of the company&apos;s projects). To write a summary, we send the same
+          figures the daily brief already shows. They go to Anthropic, which is a{" "}
+          <strong>sub-processor</strong>: it handles that text to produce the answer. Its handling is
+          governed by its own commercial terms with us rather than by this notice. Your data may be processed outside your country.
+
+        </p>
+        <p>
+          <strong>What is not sent.</strong> People&apos;s names or email addresses, comments,
+          documents or their contents, passwords, sign-in details, or anything from another company.
+        </p>
+        <p>
+          <strong>What Tielora keeps.</strong> Not the question and not the answer: close the panel
+          or refresh the page and they are gone. We keep only a running total of how much the company
+          has used this month, and a record that a question was asked — who asked and when, never
+          what they asked or what came back. That record is part of the permanent audit trail
+          described above.
+        </p>
+        <p>
+          <strong>A monthly allowance.</strong> Each company has one, shown in Admin → Billing. When
+          it is used up, questions are declined until the next month and briefs go out without the
+          written summary.
+        </p>
+        <p>
+          <strong>Please be careful what you type.</strong> Do not put personal or confidential
+          information into a question. And <strong>answers can be wrong</strong>: check the task
+          before you act on one.
+        </p>
+      </section>
+
+      <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
+        <h2 className="text-base font-semibold text-[var(--brand-ink)]">
+          Who else handles information for us
+        </h2>
+        <p>
+          These companies process information on our behalf, each only for the purpose shown:
+        </p>
+        <ul className="list-disc space-y-1 pl-5">
+          <li>
+            <strong>Anthropic</strong> — writes AI answers and summaries, only if your administrator
+            switches them on.
+          </li>
+          <li>
+            <strong>Paddle</strong> — takes payments, only if your company pays for a plan.
+          </li>
+          <li>
+            <strong>Resend</strong> — delivers email, only if your company has email switched on.
+          </li>
+          <li>
+            <strong>Slack and Microsoft</strong> — chat, sign-in and files, only if your company
+            connects them.
+          </li>
+        </ul>
       </section>
 
       <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
@@ -239,7 +366,9 @@ export default function PrivacyPage() {
           <strong>Admin → Data &amp; privacy</strong>: a copy of everything the workspace holds, as
           data files plus every uploaded document and revision. It never contains anybody&apos;s
           password, any sign-in session, any one-time email link, anybody&apos;s two-factor secret or
-          recovery codes, or the address of a connected chat channel. That copy is prepared on our server, can be downloaded for one day using a link
+          recovery codes, the personal Microsoft identifier of anybody&apos;s work account (only
+          the company&apos;s own Microsoft directory identifier is included), or the address of a connected
+          chat channel. That copy is prepared on our server, can be downloaded for one day using a link
           only an administrator of your own company can use, and is deleted from our server two days
           after it was made.
         </p>

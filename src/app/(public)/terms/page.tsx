@@ -15,7 +15,7 @@ export default function TermsPage() {
   return (
     <LegalPage
       title="Terms of use"
-      lastUpdated="31 Aug 2026"
+      lastUpdated="1 Oct 2026"
       notice="This is a template written to describe the app honestly. It has not yet been reviewed by a lawyer, and should be before the app is relied on for real projects."
       otherHref="/privacy"
       otherLabel="Privacy notice"
@@ -89,6 +89,42 @@ export default function TermsPage() {
           formal approvals, or the controlled processes your company already requires for project
           deliverables — it exists to track and support that work, not to certify it.
         </p>
+      </section>
+
+      <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">
+        <h2 className="text-base font-semibold text-[var(--brand-ink)]">Ask Tielora and AI summaries</h2>
+        <p>
+          Ask Tielora and AI-written summaries are optional. They are off until your workspace
+          administrator switches them on, and they can be switched off again at any time.
+        </p>
+        <ul className="list-disc space-y-2 pl-5">
+          <li>
+            Answers and summaries are written by a third-party AI model. They may be wrong or
+            incomplete. They are a coordination aid and{" "}
+            <strong>
+              do not replace engineering judgment, formal approvals or your company&apos;s controlled
+              processes
+            </strong>
+            , so check the task before you act on one.
+          </li>
+          <li>
+            Do not enter secrets, personal data, or content you have no right to share into a
+            question. What is sent, and to whom, is described in the{" "}
+            <Link href="/privacy" className="text-[var(--brand-primary)] underline-offset-2 hover:underline">
+              privacy notice
+            </Link>
+            .
+          </li>
+          <li>
+            Each company has a monthly allowance for AI use, which can change with its plan. When it
+            is used up, questions are declined until the next month and briefs go out without the
+            written summary.
+          </li>
+          <li>
+            The feature may be unavailable at any time, without notice. Everything else in Tielora
+            carries on working as normal.
+          </li>
+        </ul>
       </section>
 
       <section className="mt-8 space-y-3 text-sm leading-relaxed text-[var(--brand-text)]">

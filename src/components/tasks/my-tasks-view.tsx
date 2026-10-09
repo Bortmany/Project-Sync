@@ -15,10 +15,14 @@ import { ChevronDownIcon } from "@/components/shell/icons";
 import { dueBucket, formatDate } from "@/components/format";
 import {
   Button,
+  CellText,
+  DesktopTable,
   DisciplineDot,
   EmptyState,
   ErrorBanner,
   FilterChips,
+  PhoneCard,
+  PhoneCardList,
   PriorityFlag,
   Select,
   SkeletonRows,
@@ -108,7 +112,7 @@ function SegmentedLinks({
           key={option.label}
           href={option.href}
           aria-current={option.active ? "page" : undefined}
-          className={`px-3 py-1.5 text-xs font-semibold transition-colors ${
+          className={`inline-flex min-h-11 items-center px-3 py-1.5 text-xs font-semibold transition-colors ${
             option.active
               ? "bg-[var(--brand-primary)] text-white"
               : "text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
@@ -137,15 +141,32 @@ export function MyTasksView() {
   const view = params.get("view") === "timeline" ? "timeline" : "list";
   const groupBy = params.get("group") === "status" ? "status" : "due";
   const dueParam = params.getAll("due").join(",");
+  const statusParam = params.getAll("status").join(",");
+  const priorityParam = params.getAll("priority").join(",");
+  const disciplineParam = params.getAll("discipline").join(",");
 
-  // The sidebar's "Due today" / "Overdue" links change the address while this screen stays mounted,
-  // so the due filter follows the address rather than only being read once when the page opens.
+  // The sidebar's shortcuts ("Due today", "Overdue", "Awaiting review"...) change the address while
+  // this screen stays mounted, so every filter follows the address rather than only being read
+  // once when the page opens. A refresh of the same address has always given this result.
   useEffect(() => {
-    const due = dueParam ? dueParam.split(",") : [];
-    setFilters((current) =>
-      (current.due ?? []).join(",") === dueParam ? current : { ...current, due },
-    );
-  }, [dueParam]);
+    const split = (value: string) => (value ? value.split(",") : []);
+    setFilters((current) => {
+      const same =
+        (current.due ?? []).join(",") === dueParam &&
+        (current.status ?? []).join(",") === statusParam &&
+        (current.priority ?? []).join(",") === priorityParam &&
+        (current.discipline ?? []).join(",") === disciplineParam;
+      return same
+        ? current
+        : {
+            ...current,
+            due: split(dueParam),
+            status: split(statusParam),
+            priority: split(priorityParam),
+            discipline: split(disciplineParam),
+          };
+    });
+  }, [dueParam, statusParam, priorityParam, disciplineParam]);
 
   const tasks = useMemo(() => myTasks.data?.tasks ?? [], [myTasks.data]);
   const totals = myTasks.data?.totals;
@@ -176,7 +197,11 @@ export function MyTasksView() {
       if (status.length > 0 && !status.includes(task.status)) return false;
       if (priority.length > 0 && !priority.includes(task.priority)) return false;
       if (discipline.length > 0 && !discipline.includes(task.disciplineCode)) return false;
-      if (due.length > 0 && !due.includes(dueBucket(task.deadline, task.isOverdue))) return false;
+      if (due.length > 0) {
+        // Finished work has no date bucket, so a date filter never returns it.
+        const bucket = dueBucket(task.deadline, task.isOverdue, new Date(), task.status);
+        if (!bucket || !due.includes(bucket)) return false;
+      }
       return true;
     });
     return sortTasks(filtered, sort);
@@ -303,7 +328,7 @@ export function MyTasksView() {
                       onClick={() => setShowCompleted((value) => !value)}
                       aria-expanded={open}
                       aria-controls="my-tasks-completed"
-                      className="flex items-center gap-1 uppercase tracking-wide text-[var(--brand-gray)] hover:text-[var(--brand-primary)]"
+                      className="inline-flex min-h-11 items-center gap-1 uppercase tracking-wide text-[var(--brand-gray)] hover:text-[var(--brand-primary)]"
                     >
                       <span className={`transition-transform ${open ? "" : "-rotate-90"}`}>
                         <ChevronDownIcon size={14} />
@@ -331,7 +356,7 @@ export function MyTasksView() {
           <button
             type="button"
             onClick={clearFilters}
-            className="mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+            className="inline-flex min-h-11 items-center mt-1 font-semibold text-[var(--brand-primary)] underline underline-offset-2"
           >
             Clear filters
           </button>
@@ -339,7 +364,37 @@ export function MyTasksView() {
       ) : grouped ? (
         <MyTaskGroups tasks={visible} rich />
       ) : (
-        <div className="overflow-x-auto rounded-[var(--radius)] border border-[var(--border)] bg-white">
+        <>
+        <PhoneCardList label="My tasks">
+          {visible.map((task) => (
+            <PhoneCard
+              key={task.id}
+              href={`/discipline-tasks/${task.id}`}
+              title={task.title}
+              fields={[
+                {
+                  label: "Deadline",
+                  value: (
+                    <span style={{ color: task.isOverdue ? "var(--status-blocked)" : "var(--brand-text)" }}>
+                      {formatDate(task.deadline)}
+                      {task.isOverdue ? " · overdue" : ""}
+                    </span>
+                  ),
+                },
+                { label: "Status", value: <StatusBadge status={task.status} /> },
+                { label: "Priority", value: <PriorityFlag priority={task.priority} /> },
+                { label: "Project", value: task.projectCode },
+                {
+                  label: "Discipline",
+                  value: (
+                    <DisciplineDot colorHex={task.disciplineColorHex} code={task.disciplineCode} showCode />
+                  ),
+                },
+              ]}
+            />
+          ))}
+        </PhoneCardList>
+        <DesktopTable>
           <table className="w-full text-sm">
             <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--brand-gray)]">
               <tr>
@@ -357,9 +412,9 @@ export function MyTasksView() {
                   <td className="px-3">
                     <Link
                       href={`/discipline-tasks/${task.id}`}
-                      className="font-semibold text-[var(--brand-primary)] hover:underline"
+                      className="inline-flex min-h-11 items-center font-semibold text-[var(--brand-primary)] hover:underline"
                     >
-                      {task.title}
+                      <CellText>{task.title}</CellText>
                     </Link>
                   </td>
                   <td className="px-3 text-[var(--brand-text)]">{task.projectCode}</td>
@@ -386,7 +441,8 @@ export function MyTasksView() {
               ))}
             </tbody>
           </table>
-        </div>
+        </DesktopTable>
+        </>
       )}
 
       {myTasks.data?.truncated ? (
@@ -400,7 +456,7 @@ export function MyTasksView() {
         <button
           type="button"
           onClick={clearFilters}
-          className="text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+          className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] underline underline-offset-2"
         >
           Clear filters
         </button>

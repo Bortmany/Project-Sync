@@ -54,7 +54,7 @@ export function ActivityItem({ item }: { item: ActivityItemDTO }) {
       </span>
       <span className="min-w-0 flex-1">
         {href ? (
-          <Link href={href} className="hover:underline">
+          <Link href={href} className="relative block hover:underline after:absolute after:inset-x-0 after:-inset-y-3.5 after:content-['']">
             {body}
           </Link>
         ) : (

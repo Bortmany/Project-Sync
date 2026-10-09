@@ -10,6 +10,7 @@ import {
   notDeleted,
   prisma,
 } from "@/lib/db";
+import { dayWindow } from "@/lib/late";
 import { effectiveStatus, isOverdue } from "@/lib/progress";
 import type {
   CreateProjectInput,
@@ -35,6 +36,7 @@ import { phasesForTemplate, templateNameOf } from "@/server/industry-templates";
 import { checkDto, checkDtoList } from "@/server/serialize";
 import { ACTIVITY, appendActivity } from "@/server/services/activity";
 import { assertProjectRoom, assertProjectRoomInTransaction } from "@/server/services/billing";
+import { lateCountsByProject } from "@/server/services/late";
 
 /* ------------------------------------------------------------------ */
 /* Reads                                                               */
@@ -638,6 +640,27 @@ export async function buildProjectDTO(
     isOverdue(task.deadline, effectiveStatus(task.status, task.statusOverride), now),
   ).length;
 
+  // The shared "late" figure, both kinds. A contractor's is narrowed to what is theirs: their
+  // visible main tasks, and only the discipline tasks assigned to them.
+  const late =
+    external && viewer
+      ? {
+          lateMain: overdue,
+          lateDiscipline: await prisma.disciplineTask.count({
+            where: {
+              ...notDeleted,
+              assigneeId: viewer.userId,
+              status: { not: "COMPLETED" },
+              deadline: { lte: dayWindow(now).overdueCutoff },
+              mainTask: { projectId: project.id, ...notDeleted },
+            },
+          }),
+        }
+      : ((await lateCountsByProject(project.orgId, [project.id], now)).get(project.id) ?? {
+          lateMain: 0,
+          lateDiscipline: 0,
+        });
+
   const dto: ProjectDTO = {
     id: project.id,
     name: project.name,
@@ -679,7 +702,7 @@ export async function buildProjectDTO(
         disciplineId: member.disciplineId,
         disciplineCode: member.discipline?.code ?? null,
       })),
-    counts: { mainTasks: tasks.length, completed, overdue },
+    counts: { mainTasks: tasks.length, completed, overdue, ...late },
     progressPct: averageProgress(tasks, completed),
   };
 
@@ -774,7 +797,7 @@ async function disciplineIdsWorkedBy(actor: ActorContext, projectId: string): Pr
 }
 
 /** A project's headline percentage: the average of its main tasks' own derived progress. */
-function averageProgress(tasks: { progressPct: number }[], completedCount: number): number {
+export function averageProgress(tasks: { progressPct: number }[], completedCount: number): number {
   if (tasks.length === 0) return 0;
   if (completedCount === tasks.length) return 100;
   return Math.round(tasks.reduce((sum, task) => sum + task.progressPct, 0) / tasks.length);

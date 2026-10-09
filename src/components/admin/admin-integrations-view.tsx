@@ -1,5 +1,7 @@
-// Admin → Integrations: one card per chat tool, where an administrator pastes the webhook address
-// their own Slack or Teams channel gave them.
+// Admin → Integrations: Microsoft 365 first (sign-in and files, absent while no Azure app is
+// registered), then one card per chat tool, where an administrator pastes the webhook address their
+// own Teams or Slack channel gave them, then the company noticeboard. The order is fixed here and
+// never follows the database.
 //
 // The saved address is never sent back to this screen — only its scheme and host, followed by an
 // ellipsis. Changing it therefore means pasting the whole thing again, which is exactly what the
@@ -16,8 +18,10 @@ import {
   setEventToggles,
   setIntegrationEnabled,
 } from "@/components/actions";
+import { AdminAiCard } from "@/components/admin/admin-ai-card";
 import { AdminBroadcastCard } from "@/components/admin/admin-broadcast-card";
 import { AdminMicrosoftCard } from "@/components/admin/admin-microsoft-card";
+import { AdminTeamsAppCard } from "@/components/admin/admin-teams-app-card";
 import { fieldError, useAction } from "@/components/hooks/use-action";
 import { Badge, Button, Card, ErrorBanner, Field, Input, Modal, useToast } from "@/components/ui";
 import type {
@@ -26,13 +30,27 @@ import type {
   IntegrationEventToggles,
   IntegrationKindName,
   MicrosoftConnectionDTO,
+  MicrosoftSignInStatusDTO,
   OrgIntegrationDTO,
 } from "@/lib/zod-schemas";
+import type { AiCardData } from "@/server/services/ai-panel";
 
 const KIND_LABEL: Record<IntegrationKindName, string> = {
   SLACK: "Slack",
   TEAMS: "Microsoft Teams",
 };
+
+/**
+ * The card's own title. The Teams chat card says "channel" so it is never confused with another
+ * Microsoft card; toasts and every other sentence keep KIND_LABEL.
+ */
+const CARD_TITLE: Record<IntegrationKindName, string> = {
+  SLACK: "Slack",
+  TEAMS: "Microsoft Teams channel",
+};
+
+/** Fixed on screen whatever order the database answers in: Microsoft first, then Slack. */
+const CHAT_ORDER: IntegrationKindName[] = ["TEAMS", "SLACK"];
 
 const KIND_INTRO: Record<IntegrationKindName, string> = {
   SLACK:
@@ -85,6 +103,11 @@ const EVENT_LABELS: { key: IntegrationEventName; label: string; hint: string }[]
     label: "Daily brief",
     hint: "One message early each morning UTC: every active project with its progress, overdue and blocked counts, and the next gate. Off unless you switch it on.",
   },
+  {
+    key: "weeklyBrief",
+    label: "Weekly brief",
+    hint: "Sent once a week, early Monday morning UTC. A summary of how far each project has come since last week, what became late, which gates opened and which required documents are still missing. Off unless you switch it on.",
+  },
 ];
 
 function StatusBadge({ integration }: { integration: OrgIntegrationDTO }) {
@@ -101,7 +124,7 @@ function StatusBadge({ integration }: { integration: OrgIntegrationDTO }) {
 function SetupSteps({ kind }: { kind: IntegrationKindName }) {
   return (
     <details className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--page-bg)] p-3">
-      <summary className="cursor-pointer text-xs font-semibold text-[var(--brand-primary)]">
+      <summary className="flex min-h-11 cursor-pointer items-center text-xs font-semibold text-[var(--brand-primary)]">
         How to get the {KIND_LABEL[kind]} address
       </summary>
       <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-[var(--brand-text)]">
@@ -174,6 +197,15 @@ function EventToggleList({
   function toggle(key: IntegrationEventName, next: boolean) {
     const eventToggles: IntegrationEventToggles = { ...integration.eventToggles, [key]: next };
     run(() => setEventToggles({ kind: integration.kind, eventToggles }), {
+      // Only the weekly switch says anything: it is the one whose effect (a Monday card) is not
+      // visible on this screen.
+      ...(key === "weeklyBrief"
+        ? {
+            success: next
+              ? "Weekly brief is on. The first one goes out next Monday."
+              : "Weekly brief is off.",
+          }
+        : {}),
       failure: "Couldn't change that. Try again.",
       onSuccess: onChanged,
     });
@@ -185,10 +217,13 @@ function EventToggleList({
         What gets sent
       </legend>
       {EVENT_LABELS.map((event) => (
-        <label key={event.key} className="flex items-start gap-2 text-sm text-[var(--brand-text)]">
+        <label
+          key={event.key}
+          className="flex min-h-11 items-start gap-2 text-sm text-[var(--brand-text)]"
+        >
           <input
             type="checkbox"
-            className="mt-1"
+            className="mt-1 h-5 w-5 shrink-0"
             checked={integration.eventToggles[event.key]}
             onChange={(input) => toggle(event.key, input.target.checked)}
           />
@@ -293,7 +328,7 @@ function IntegrationCard({ integration }: { integration: OrgIntegrationDTO }) {
   const refresh = () => router.refresh();
 
   return (
-    <Card title={KIND_LABEL[integration.kind]} action={<StatusBadge integration={integration} />}>
+    <Card title={CARD_TITLE[integration.kind]} action={<StatusBadge integration={integration} />}>
       <div className="space-y-4">
         <p className="text-sm text-[var(--brand-text)]">{KIND_INTRO[integration.kind]}</p>
         <p className="text-xs text-[var(--brand-gray)]">{AUDIENCE_WARNING}</p>
@@ -325,31 +360,63 @@ export function AdminIntegrationsView({
   integrations,
   microsoft,
   microsoftOutcome,
+  microsoftSignIn,
+  microsoftSignInOutcome,
+  emailAvailable,
   broadcastPolicy,
+  teamsApp = false,
+  ai = null,
 }: {
   integrations: OrgIntegrationDTO[];
   microsoft: MicrosoftConnectionDTO;
   microsoftOutcome?: string;
+  /** The "Sign in with Microsoft" part of the Microsoft 365 card. */
+  microsoftSignIn: MicrosoftSignInStatusDTO;
+  microsoftSignInOutcome?: string;
+  /** Whether this Tielora sends email at all. */
+  emailAvailable: boolean;
   /** The company's noticeboard setting — who may start a post to the whole company. */
   broadcastPolicy: BroadcastPolicyName;
+  /** Whether this Tielora has set the Teams app up (TEAMS_APP_ID etc.). False = the card is absent. */
+  teamsApp?: boolean;
+  /** The AI card's data. Null while this Tielora has no AI key: the card is then absent, not greyed out. */
+  ai?: AiCardData | null;
 }) {
+  const chatCards = CHAT_ORDER.flatMap((kind) =>
+    integrations.filter((integration) => integration.kind === kind),
+  );
+
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-semibold text-[var(--brand-primary)]">Integrations</h1>
         <p className="mt-1 text-sm text-[var(--brand-text)]">
-          Send a copy of your company&rsquo;s notifications to a chat channel, and connect the files
-          your team already keeps in Microsoft 365. Notifications inside Tielora carry on either way
-          — chat is an extra copy, not a replacement.
+          Connect the Microsoft tools your team already uses, and send a copy of your notifications
+          to a chat channel. Notifications inside Tielora carry on either way — these are extra
+          copies, not replacements.
         </p>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        {integrations.map((integration) => (
+      {/* Fixed order: Microsoft 365, Teams channel, Slack, noticeboard. items-start so a short card
+          is never stretched to the height of the tall Microsoft 365 card beside it. */}
+      <div className="grid items-start gap-4 lg:grid-cols-2">
+        {/* Renders nothing at all while no Azure app is registered on this Tielora. */}
+        <AdminMicrosoftCard
+          connection={microsoft}
+          outcome={microsoftOutcome}
+          signIn={microsoftSignIn}
+          signInOutcome={microsoftSignInOutcome}
+          emailAvailable={emailAvailable}
+        />
+        {/* Absent while the Teams app is not set up on this Tielora. Shown even when this company
+            has not yet switched on Sign in with Microsoft — with a notice saying so. */}
+        {teamsApp ? <AdminTeamsAppCard microsoftSignInOn={microsoftSignIn.enabled} /> : null}
+        {chatCards.map((integration) => (
           <IntegrationCard key={integration.kind} integration={integration} />
         ))}
-        {/* Renders nothing at all while no Azure app is registered on this Tielora. */}
-        <AdminMicrosoftCard connection={microsoft} outcome={microsoftOutcome} />
+
+        {/* The AI card: after the chat cards, absent while this Tielora has no AI key. */}
+        {ai ? <AdminAiCard settings={ai.settings} usedUsd={ai.usedUsd} atAllowance={ai.atAllowance} resetsOn={ai.resetsOn} /> : null}
 
         {/* Not a chat tool, but the same shape of thing: one company-wide setting, saved instantly. */}
         <AdminBroadcastCard policy={broadcastPolicy} />

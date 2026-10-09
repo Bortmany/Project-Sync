@@ -9,6 +9,7 @@ import { assertSessionSecret } from "@/lib/boot-guards";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import type { RoleValue } from "@/lib/permissions";
+import { TEAMS_COOKIE } from "@/lib/teams-app";
 
 export const SESSION_COOKIE = "nexus_session";
 const SESSION_DAYS = 7;
@@ -130,12 +131,12 @@ export async function burnPasswordCheck(): Promise<void> {
   }
 }
 
-/** Reads the cookie and returns the signed-in person, or null. Safe to call from any server component or route. */
-export async function getSessionUser(): Promise<SessionUser | null> {
-  const jar = await cookies();
-  const rawToken = jar.get(SESSION_COOKIE)?.value;
-  if (!rawToken) return null;
-
+/**
+ * The person a raw session token belongs to, or null. Shared by `getSessionUser()` and
+ * `getTeamsTabUser()` so both cookies point at the same kind of `Session` row and pass through
+ * exactly the same checks: session not expired, person active, a contractor's access not ended.
+ */
+async function userForToken(rawToken: string): Promise<SessionUser | null> {
   const session = await prisma.session.findUnique({
     where: { tokenHash: hashToken(rawToken) },
     include: { user: true },
@@ -160,6 +161,26 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     disciplineId: session.user.disciplineId,
     jobTitle: session.user.jobTitle,
   };
+}
+
+/** Reads the cookie and returns the signed-in person, or null. Safe to call from any server component or route. */
+export async function getSessionUser(): Promise<SessionUser | null> {
+  const jar = await cookies();
+  const rawToken = jar.get(SESSION_COOKIE)?.value;
+  if (!rawToken) return null;
+  return userForToken(rawToken);
+}
+
+/**
+ * The person signed in to the Teams tab, or null. It reads ONLY the `tielora_teams` cookie (and
+ * `getSessionUser()` reads only `nexus_session`), and it is called from exactly one place — the
+ * /teams/tab page. The cookie is limited to the path /teams, so no API route ever receives it.
+ */
+export async function getTeamsTabUser(): Promise<SessionUser | null> {
+  const jar = await cookies();
+  const rawToken = jar.get(TEAMS_COOKIE)?.value;
+  if (!rawToken) return null;
+  return userForToken(rawToken);
 }
 
 /** Same as getSessionUser but sends anyone signed out to the login page. */

@@ -56,7 +56,8 @@ export function Modal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="rounded p-1 text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
+            // A 44px tap area around the small mark; the negative margins keep the header its size.
+            className="-my-2.5 -mr-2.5 flex h-11 w-11 shrink-0 items-center justify-center rounded text-[var(--brand-text)] hover:bg-[var(--page-bg)]"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
               <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.5" />

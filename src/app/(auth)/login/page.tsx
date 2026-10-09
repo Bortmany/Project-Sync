@@ -5,6 +5,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import { homePathFor } from "@/components/shell/nav-items";
+import { isMicrosoftConfigured } from "@/lib/ms-graph";
 import { AuthLegalLinks, AuthSplit, GoodNews } from "../auth-split";
 import { LoginForm } from "./login-form";
 
@@ -25,13 +26,21 @@ const DONE_MESSAGES: Record<string, string> = {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ done?: string }>;
+  searchParams: Promise<{ done?: string; microsoft?: string }>;
 }) {
   const user = await getSessionUser();
   if (user) redirect(homePathFor(user.role));
 
   const params = await searchParams;
   const done = params.done ? DONE_MESSAGES[params.done] : undefined;
+
+  // "Sign in with Microsoft" exists only once the Azure app is registered on this Tielora. While it
+  // is not, the form is given nothing at all, so the page is byte-for-byte what it always was and a
+  // `?microsoft=failed` in the address is ignored. Every refused Microsoft sign-in lands here with
+  // that one parameter and is answered with the password route's own sentence.
+  const microsoft = isMicrosoftConfigured()
+    ? { refused: params.microsoft === "failed" }
+    : undefined;
 
   return (
     <AuthSplit>
@@ -43,12 +52,12 @@ export default async function LoginPage({
           <GoodNews>{done}</GoodNews>
         </div>
       ) : null}
-      <LoginForm />
+      {microsoft ? <LoginForm microsoft={microsoft} /> : <LoginForm />}
       <p className="mt-6 text-sm text-[var(--brand-text)]">
         Setting up a new company?{" "}
         <Link
           href="/signup"
-          className="font-semibold text-[var(--brand-primary)] underline-offset-2 hover:underline"
+          className="inline-flex min-h-11 items-center font-semibold text-[var(--brand-primary)] underline-offset-2 hover:underline"
         >
           Create a workspace.
         </Link>

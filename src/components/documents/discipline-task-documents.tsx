@@ -11,18 +11,23 @@ import type { DisciplineTaskDTO } from "@/lib/zod-schemas";
 export function DisciplineTaskDocuments({
   task,
   canDelete,
+  canUpload = true,
 }: {
   task: DisciplineTaskDTO;
   canDelete: boolean;
+  /** False when this person may not file documents here: the drop area and Upload buttons go away. */
+  canUpload?: boolean;
 }) {
   const documents = useDisciplineTaskDocuments(task.id);
 
   return (
     <div className="space-y-4">
-      <UploadDropzone
-        target={{ projectId: task.projectId, disciplineTaskId: task.id }}
-        extraKeys={[["task", task.mainTaskId]]}
-      />
+      {canUpload ? (
+        <UploadDropzone
+          target={{ projectId: task.projectId, disciplineTaskId: task.id }}
+          extraKeys={[["task", task.mainTaskId]]}
+        />
+      ) : null}
 
       <DocumentTable
         groups={[{ key: task.id, documents: documents.data ?? [] }]}
@@ -30,16 +35,21 @@ export function DisciplineTaskDocuments({
         isError={documents.isError}
         onRetry={() => void documents.refetch()}
         canDelete={canDelete}
+        canUpload={canUpload}
         empty={
           <EmptyState
-            message="No documents yet. Upload the first one."
+            message={
+              canUpload ? "No documents yet. Upload the first one." : "No documents have been filed yet."
+            }
             action={
-              <UploadDropzone
-                target={{ projectId: task.projectId, disciplineTaskId: task.id }}
-                extraKeys={[["task", task.mainTaskId]]}
-                mode="button"
-                buttonLabel="Upload a document"
-              />
+              canUpload ? (
+                <UploadDropzone
+                  target={{ projectId: task.projectId, disciplineTaskId: task.id }}
+                  extraKeys={[["task", task.mainTaskId]]}
+                  mode="button"
+                  buttonLabel="Upload a document"
+                />
+              ) : undefined
             }
           />
         }

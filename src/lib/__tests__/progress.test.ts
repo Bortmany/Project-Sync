@@ -253,6 +253,10 @@ describe("wouldCreateCycle", () => {
     expect(wouldCreateCycle(edges, ["d", "e"])).toBe(false);
   });
 
+  it("refuses a task that would wait on itself", () => {
+    expect(wouldCreateCycle([], ["a", "a"])).toBe(true);
+  });
+
   it("allows two branches that join without looping", () => {
     const edges: [string, string][] = [
       ["a", "b"],

@@ -61,7 +61,7 @@ export function PublicMobileNav() {
         onClick={() => setOpen(true)}
         aria-label="Open the menu"
         aria-expanded={open}
-        className="flex h-10 w-10 items-center justify-center rounded-[var(--radius)] text-[var(--brand-ink)] hover:bg-[var(--page-bg)]"
+        className="flex h-11 w-11 items-center justify-center rounded-[var(--radius)] text-[var(--brand-ink)] hover:bg-[var(--page-bg)]"
       >
         <MenuIcon />
       </button>
@@ -83,7 +83,7 @@ export function PublicMobileNav() {
                 type="button"
                 onClick={close}
                 aria-label="Close the menu"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius)] text-white/80 hover:bg-[var(--brand-mid)] hover:text-white"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--radius)] text-white/80 hover:bg-[var(--brand-mid)] hover:text-white"
               >
                 <CloseIcon />
               </button>

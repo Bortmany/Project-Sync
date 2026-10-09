@@ -2,7 +2,7 @@
 
 import { NextResponse } from "next/server";
 import { byUser, limit } from "@/lib/rate-limit";
-import type { ActorContext } from "@/server/actor";
+import { isExternal, type ActorContext } from "@/server/actor";
 import { statusFor, toFailure } from "@/server/errors";
 import { SIGNED_OUT_MESSAGE, currentActor } from "@/server/session";
 
@@ -67,10 +67,23 @@ export function tighterLimit(
 
 type Guarded = { actor: ActorContext; response?: undefined } | { actor?: undefined; response: NextResponse };
 
-/** Every read route starts here: signed in, and not hammering the endpoint. */
-export async function guardRead(scope: string): Promise<Guarded> {
+/** The one answer for a path that is not there — also what a contractor gets from any Admin route. */
+export const NOT_FOUND_MESSAGE = "We could not find that.";
+
+/**
+ * Every read route starts here: signed in, and not hammering the endpoint. `hiddenFromContractors`
+ * is for the Admin routes: THE EXTERNAL RULE says a contractor has no Admin area, so they get the
+ * same 404 a path that was never there would give (never a 403, which would confirm it exists).
+ */
+export async function guardRead(
+  scope: string,
+  options: { hiddenFromContractors?: boolean } = {},
+): Promise<Guarded> {
   const actor = await currentActor();
   if (!actor) return { response: fail(SIGNED_OUT_MESSAGE, 401) };
+  if (options.hiddenFromContractors && isExternal(actor)) {
+    return { response: fail(NOT_FOUND_MESSAGE, 404) };
+  }
 
   const throttle = limit(byUser(actor.userId, scope), READ_LIMIT, READ_WINDOW_MS);
   if (!throttle.ok) {

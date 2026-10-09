@@ -238,6 +238,7 @@ export default async function LandingPage() {
             <div className="flex flex-col items-center gap-3 rounded-[var(--radius)] border border-[var(--border)] p-6">
               <p className="text-sm font-semibold text-[var(--brand-ink)]">Pro</p>
               <p className="text-3xl font-semibold text-[var(--brand-ink)]">{PRO_PRICE}</p>
+              <p className="text-sm text-[var(--brand-text)]">Flat price. Contractors are free.</p>
               <LinkButton href="/pricing">See Pro</LinkButton>
             </div>
           </div>

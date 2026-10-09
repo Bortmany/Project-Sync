@@ -10,12 +10,16 @@ import { fieldError, useAction } from "@/components/hooks/use-action";
 import { DISCIPLINE_PALETTE } from "@/lib/discipline-colors";
 import {
   Button,
+  CellText,
+  DesktopTable,
   DisciplineDot,
   EmptyState,
   ErrorBanner,
   Field,
   Input,
   Modal,
+  PhoneCard,
+  PhoneCardList,
 } from "@/components/ui";
 import type { DisciplineDTO } from "@/lib/zod-schemas";
 
@@ -153,7 +157,43 @@ export function AdminDisciplinesView({ disciplines }: { disciplines: DisciplineD
       {disciplines.length === 0 ? (
         <EmptyState message="No disciplines set up yet. Add the disciplines your projects will use, like Mechanical or Electrical." />
       ) : (
-        <div className="overflow-x-auto rounded-[var(--radius)] border border-[var(--border)] bg-white">
+        <>
+        <PhoneCardList label="Disciplines">
+          {disciplines.map((discipline) => (
+            <PhoneCard
+              key={discipline.id}
+              title={discipline.name}
+              meta={
+                <span className="rounded-full bg-[var(--page-bg)] px-2 py-0.5 text-xs text-[var(--brand-text)]">
+                  {discipline.code}
+                </span>
+              }
+              fields={[
+                {
+                  label: "Colour",
+                  value: (
+                    <DisciplineDot
+                      colorHex={discipline.colorHex}
+                      code={
+                        DISCIPLINE_PALETTE.find(
+                          (color) => color.hex.toLowerCase() === discipline.colorHex.toLowerCase(),
+                        )?.label ?? discipline.colorHex
+                      }
+                      showCode
+                    />
+                  ),
+                },
+                { label: "Order", value: <span className="tabular-nums">{discipline.sortOrder}</span> },
+              ]}
+              actions={
+                <Button variant="secondary" className="min-h-11 w-full" onClick={() => setEditing(discipline)}>
+                  Edit
+                </Button>
+              }
+            />
+          ))}
+        </PhoneCardList>
+        <DesktopTable>
           <table className="w-full text-sm">
             <thead className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-[var(--brand-gray)]">
               <tr>
@@ -167,8 +207,12 @@ export function AdminDisciplinesView({ disciplines }: { disciplines: DisciplineD
             <tbody className="divide-y divide-[var(--border)]">
               {disciplines.map((discipline) => (
                 <tr key={discipline.id} className="h-11 hover:bg-[var(--page-bg)]">
-                  <td className="px-3 font-semibold text-[var(--brand-ink)]">{discipline.code}</td>
-                  <td className="px-3 text-[var(--brand-text)]">{discipline.name}</td>
+                  <td className="px-3 font-semibold text-[var(--brand-ink)]">
+                    <CellText>{discipline.code}</CellText>
+                  </td>
+                  <td className="px-3 text-[var(--brand-text)]">
+                    <CellText>{discipline.name}</CellText>
+                  </td>
                   <td className="px-3">
                     <DisciplineDot
                       colorHex={discipline.colorHex}
@@ -187,7 +231,7 @@ export function AdminDisciplinesView({ disciplines }: { disciplines: DisciplineD
                     <button
                       type="button"
                       onClick={() => setEditing(discipline)}
-                      className="text-xs font-semibold text-[var(--brand-primary)] hover:underline"
+                      className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] hover:underline"
                     >
                       Edit
                     </button>
@@ -196,7 +240,8 @@ export function AdminDisciplinesView({ disciplines }: { disciplines: DisciplineD
               ))}
             </tbody>
           </table>
-        </div>
+        </DesktopTable>
+        </>
       )}
 
       {adding ? <DisciplineDialog onClose={() => setAdding(false)} /> : null}

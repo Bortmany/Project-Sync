@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
 const NO_LINK = "That download link no longer works. Ask for a new export from Admin → Data & privacy.";
 
 export async function GET(request: Request) {
-  const guard = await guardRead("admin-export-download");
+  const guard = await guardRead("admin-export-download", { hiddenFromContractors: true });
   if (guard.response) return guard.response;
 
   const parsed = EmailTokenSchema.safeParse(queryRecord(request, ["token"]).token ?? "");

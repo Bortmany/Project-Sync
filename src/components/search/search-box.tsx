@@ -114,7 +114,7 @@ export function SearchBox() {
         aria-controls="search-results"
         role="combobox"
         aria-autocomplete="list"
-        className="w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--page-bg)] py-2 pl-9 pr-14 text-sm text-[var(--brand-text)] placeholder:text-[var(--brand-gray)] focus:border-[var(--brand-primary)] focus:outline-none"
+        className="min-h-11 w-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--page-bg)] py-2 pl-9 pr-14 text-sm text-[var(--brand-text)] placeholder:text-[var(--brand-gray)] focus:border-[var(--brand-primary)] focus:outline-none"
       />
       <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-[var(--border)] px-1 text-[10px] text-[var(--brand-gray)]">
         ⌘K

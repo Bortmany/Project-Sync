@@ -479,7 +479,9 @@ describe("the whole permission matrix", () => {
       ...PERMISSION_MATRIX.ADMIN.always,
       ...PERMISSION_MATRIX.ADMIN.conditional,
     ]);
-    expect([...fromMatrix].sort()).toEqual([...ALL_ACTIONS].sort());
+    // ASK_ASSISTANT is deliberately not in the project-scoped table above (it names no project);
+    // it has its own describe block at the bottom of this file.
+    expect([...fromMatrix].sort()).toEqual([...ALL_ACTIONS, "ASK_ASSISTANT" as Action].sort());
   });
 
   it("keeps the UI hint map inside what the server would actually allow", () => {
@@ -666,5 +668,29 @@ describe("assertCan", () => {
       expect((error as ForbiddenError).action).toBe("DELETE_PROJECT");
       expect((error as ForbiddenError).message).toBe("You do not have permission to do that.");
     }
+  });
+});
+
+describe("Ask Tielora (ASK_ASSISTANT)", () => {
+  it("is open to every internal role with no project named, and to nobody in another company", () => {
+    for (const who of [admin, pm, lead, engineer, outsider]) {
+      expect({ role: who.role, allowed: can(who, "ASK_ASSISTANT") }).toEqual({ role: who.role, allowed: true });
+      expect(can(who, "ASK_ASSISTANT", { orgId: OTHER_ORG })).toBe(false);
+    }
+  });
+
+  it("is refused to a contractor, whatever they are assigned and whatever a project role says", () => {
+    expect(can(contractor, "ASK_ASSISTANT")).toBe(false);
+    expect(can(contractor, "ASK_ASSISTANT", { projectId: PROJECT, orgId: ORG, assigneeId: "u-ext" })).toBe(false);
+    expect(can(escalatedContractor, "ASK_ASSISTANT")).toBe(false);
+    expect(can(escalatedContractor, "ASK_ASSISTANT", { projectId: PROJECT, orgId: ORG })).toBe(false);
+  });
+
+  it("is listed as a hint for every internal role and never for a contractor", () => {
+    for (const role of ["ADMIN", "PROJECT_MANAGER", "DISCIPLINE_LEAD", "ENGINEER"] as const) {
+      expect(PERMISSION_MATRIX[role].always).toContain("ASK_ASSISTANT");
+    }
+    expect(PERMISSION_MATRIX.EXTERNAL.always).not.toContain("ASK_ASSISTANT");
+    expect(PERMISSION_MATRIX.EXTERNAL.conditional).not.toContain("ASK_ASSISTANT");
   });
 });

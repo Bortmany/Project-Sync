@@ -60,7 +60,7 @@ function PersonalRow({ task }: { task: PersonalTaskDTO }) {
             onSuccess: refresh,
           })
         }
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--brand-gray)] transition-colors hover:bg-white hover:text-[var(--status-blocked)] disabled:cursor-not-allowed"
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--radius)] text-[var(--brand-gray)] transition-colors hover:bg-white hover:text-[var(--status-blocked)] disabled:cursor-not-allowed"
       >
         <CloseIcon size={16} />
       </button>
