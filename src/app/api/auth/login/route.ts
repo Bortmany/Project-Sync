@@ -50,12 +50,17 @@ export async function POST(request: Request) {
   // Second limiter keyed on the account, counting FAILURES only — five bad guesses from
   // an attacker must not lock the real owner's next correct sign-in out for the window,
   // and a success forgives the count. Rotating the forwarded IP still buys nothing.
-  const accountKey = `login-account:${email}`;
+  // The tight lockout is keyed on the account AND the caller's address, so a stranger failing
+  // five times from their own address cannot lock the real owner out. A looser account-only
+  // ceiling still stops a distributed guessing run.
+  const accountKey = `login-account:${email}:${clientIp(request) ?? "unknown"}`;
+  const accountCeilingKey = `login-account:${email}`;
   const accountThrottle = checkOnly(accountKey, 5);
-  if (!accountThrottle.ok) {
+  const ceilingThrottle = accountThrottle.ok ? checkOnly(accountCeilingKey, 30) : accountThrottle;
+  if (!ceilingThrottle.ok) {
     return NextResponse.json(
       { ok: false, error: "Too many sign-in attempts. Please wait a few minutes and try again." },
-      { status: 429, headers: { "Retry-After": String(accountThrottle.retryAfterSec) } },
+      { status: 429, headers: { "Retry-After": String(ceilingThrottle.retryAfterSec) } },
     );
   }
 
@@ -69,6 +74,7 @@ export async function POST(request: Request) {
     // Same time cost as a real account, and no address in the log — people mistype passwords into email boxes.
     await burnPasswordCheck();
     recordFailure(accountKey, 15 * 60_000);
+    recordFailure(accountCeilingKey, 15 * 60_000);
     logger.warn("Sign-in refused", {
       reason: !user ? "unknown-email" : user.isActive ? "access-expired" : "inactive",
       userId: user?.id,
@@ -79,10 +85,12 @@ export async function POST(request: Request) {
   const passwordOk = await verifyPassword(user.passwordHash, password);
   if (!passwordOk) {
     recordFailure(accountKey, 15 * 60_000);
+    recordFailure(accountCeilingKey, 15 * 60_000);
     logger.warn("Sign-in refused", { reason: "wrong-password", userId: user.id });
     return NextResponse.json({ ok: false, error: GENERIC_FAILURE }, { status: 401 });
   }
   clearFailures(accountKey);
+  clearFailures(accountCeilingKey);
 
   // THE PASSWORD IS ONLY HALF OF IT for anybody who has switched two-factor on. They get a
   // single-use, five-minute ticket to the second screen and nothing else — no session row, no

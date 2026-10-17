@@ -10,6 +10,7 @@
 
 import { accessSync, constants, mkdirSync } from "node:fs";
 import path from "node:path";
+import { logger } from "@/lib/logger";
 
 export const MIN_SECRET_LENGTH = 32;
 
@@ -18,7 +19,14 @@ export type BootEnv = {
   SESSION_SECRET?: string;
   DATA_DIR?: string;
   NEXT_PHASE?: string;
+  TRUST_PROXY?: string;
 };
+
+/** True for the public example secret from .env.example and anything that looks like a stand-in. */
+export function isPlaceholderSecret(secret: string): boolean {
+  const lower = secret.toLowerCase();
+  return lower.includes("local-dev-only") || lower.includes("change-me") || lower.includes("changeme");
+}
 
 /** Next sets this while `next build` is running — no volume is mounted yet at that point. */
 const BUILD_PHASE = "phase-production-build";
@@ -28,6 +36,11 @@ export function sessionSecretProblems(env: BootEnv): string[] {
   if (env.NODE_ENV !== "production") return [];
 
   const secret = env.SESSION_SECRET ?? "";
+  if (secret.length >= MIN_SECRET_LENGTH && isPlaceholderSecret(secret)) {
+    return [
+      'SESSION_SECRET is still an example value (it contains "local-dev-only" or "change-me"). Generate a private one, for example the output of: node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"',
+    ];
+  }
   if (secret.length >= MIN_SECRET_LENGTH) return [];
 
   return [
@@ -82,6 +95,20 @@ export function uploadsFolderWritable(dataDir: string): boolean {
   }
 }
 
+/**
+ * Things worth a loud warning at server start that must not stop it. TRUST_PROXY is a warning, not
+ * a refusal, because a deployment that faces the internet directly is right to leave it unset.
+ */
+export function bootWarnings(env: BootEnv): string[] {
+  if (env.NODE_ENV !== "production") return [];
+  if (env.NEXT_PHASE === BUILD_PHASE) return [];
+  const v = env.TRUST_PROXY;
+  if (v === "1" || v === "true") return [];
+  return [
+    "TRUST_PROXY is not set. Behind a proxy such as Railway, every visitor without a forwarded address shares one rate-limit bucket. Set TRUST_PROXY=1 (see docs/GO-LIVE.md).",
+  ];
+}
+
 function refuse(problems: string[]): void {
   if (problems.length === 0) return;
   throw new Error(`Tielora cannot start in production:\n- ${problems.join("\n- ")}`);
@@ -102,4 +129,5 @@ export function assertSessionSecret(env: BootEnv = process.env): void {
  */
 export function assertBootEnv(env: BootEnv = process.env): void {
   refuse(bootProblems(env, uploadsFolderWritable));
+  for (const warning of bootWarnings(env)) logger.warn(warning);
 }
