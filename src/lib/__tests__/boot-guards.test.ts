@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import {
   bootProblems,
+  bootWarnings,
   dataDirProblems,
   MIN_SECRET_LENGTH,
   sessionSecretProblems,
@@ -122,5 +123,26 @@ describe("the two halves run at different moments", () => {
 
     expect(sessionSecretProblems({ NODE_ENV: "production", SESSION_SECRET: longEnough })).toEqual([]);
     expect(secretBoxAvailable({ NODE_ENV: "production", SESSION_SECRET: longEnough })).toBe(true);
+  });
+});
+
+describe("placeholder secrets and TRUST_PROXY", () => {
+  it("refuses the public example secret from .env.example in production", () => {
+    const example = "local-dev-only-secret-change-me-0123456789abcdef";
+    expect(sessionSecretProblems({ NODE_ENV: "production", SESSION_SECRET: example })).toHaveLength(1);
+    expect(secretBoxAvailable({ NODE_ENV: "production", SESSION_SECRET: example })).toBe(false);
+    expect(sessionSecretProblems({ NODE_ENV: "production", SESSION_SECRET: "please-change-me-" + "a".repeat(30) })).toHaveLength(1);
+  });
+
+  it("still lets development use the example secret", () => {
+    const example = "local-dev-only-secret-change-me-0123456789abcdef";
+    expect(sessionSecretProblems({ NODE_ENV: "development", SESSION_SECRET: example })).toEqual([]);
+  });
+
+  it("warns, without refusing, when TRUST_PROXY is unset in production", () => {
+    expect(bootWarnings({ NODE_ENV: "production" })).toHaveLength(1);
+    expect(bootWarnings({ NODE_ENV: "production", TRUST_PROXY: "1" })).toEqual([]);
+    expect(bootWarnings({ NODE_ENV: "development" })).toEqual([]);
+    expect(bootProblems({ NODE_ENV: "production", SESSION_SECRET: GOOD_SECRET, DATA_DIR: "/data" }, writable)).toEqual([]);
   });
 });

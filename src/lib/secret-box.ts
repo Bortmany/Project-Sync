@@ -13,7 +13,7 @@
 // Microsoft 365, which is exactly what should happen when a signing secret has leaked.
 
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes, timingSafeEqual } from "node:crypto";
-import { MIN_SECRET_LENGTH } from "@/lib/boot-guards";
+import { isPlaceholderSecret, MIN_SECRET_LENGTH } from "@/lib/boot-guards";
 
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
@@ -39,7 +39,9 @@ export class SecretBoxUnavailableError extends Error {
 
 /** True when SESSION_SECRET is present and long enough to derive a key from. */
 export function secretBoxAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
-  return (env.SESSION_SECRET ?? "").length >= MIN_SECRET_LENGTH;
+  const secret = env.SESSION_SECRET ?? "";
+  if (env.NODE_ENV === "production" && isPlaceholderSecret(secret)) return false;
+  return secret.length >= MIN_SECRET_LENGTH;
 }
 
 /**
