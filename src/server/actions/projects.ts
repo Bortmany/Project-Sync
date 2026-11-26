@@ -76,6 +76,23 @@ export async function setExternalSignoffRequired(
   }
 }
 
+/** "Add a member": someone new only. Somebody already on the project is refused, never changed. */
+export async function addMember(input: UpsertMemberInput): Promise<ActionResult<ProjectMemberDTO>> {
+  const parsed = UpsertMemberInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: CHECK_FIELDS, fieldErrors: toFieldErrors(parsed.error) };
+
+  const guard = await beginMutation("add-member");
+  if (guard.failure) return guard.failure;
+
+  try {
+    const member = await projects.addMember(guard.actor, parsed.data);
+    revalidateProject(member.projectId);
+    return { ok: true, data: member };
+  } catch (error) {
+    return toFailure(error, { action: "addMember" });
+  }
+}
+
 export async function upsertMember(input: UpsertMemberInput): Promise<ActionResult<ProjectMemberDTO>> {
   const parsed = UpsertMemberInput.safeParse(input);
   if (!parsed.success) return { ok: false, error: CHECK_FIELDS, fieldErrors: toFieldErrors(parsed.error) };

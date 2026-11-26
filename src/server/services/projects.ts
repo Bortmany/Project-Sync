@@ -386,7 +386,11 @@ export async function setExternalSignoffRequired(
   return buildProjectDTO(existing.id, actor);
 }
 
-/** Adds someone to a project, or changes the role or discipline they hold on it. */
+/**
+ * Changes the role or discipline someone holds on a project — the Members list's own boxes. (It can
+ * still add a person, as it always could; the Team tab's "Add a member" uses `addMember`, which
+ * refuses anyone already on the project instead of overwriting them.)
+ */
 export async function upsertMember(actor: ActorContext, input: UpsertMemberInput): Promise<ProjectMemberDTO> {
   const project = await prisma.project.findFirst({
     where: { id: input.projectId, orgId: actor.orgId, ...notDeleted },
@@ -431,6 +435,78 @@ export async function upsertMember(actor: ActorContext, input: UpsertMemberInput
 
     return member.id;
   });
+
+  return buildMemberDTO(memberId);
+}
+
+/** What "Add a member" answers for somebody who is already on the project. */
+export const ALREADY_ON_PROJECT = "Already on this project — change their role from the Members list.";
+
+/**
+ * Adds someone new to a project — and only that. Somebody already on it is refused, never
+ * overwritten: their role and discipline change only through the Members list (`upsertMember`),
+ * so "Add a member" can never quietly move an engineer to another discipline or turn a project
+ * manager into an engineer, from the screen or from a crafted request.
+ */
+export async function addMember(actor: ActorContext, input: UpsertMemberInput): Promise<ProjectMemberDTO> {
+  const project = await prisma.project.findFirst({
+    where: { id: input.projectId, orgId: actor.orgId, ...notDeleted },
+  });
+  if (!project) throw new NotFoundError("We could not find that project.");
+  assertCan(actor, "MANAGE_MEMBERS", { projectId: project.id, orgId: project.orgId });
+
+  // Only people in the actor's own company, and still active, are found here at all.
+  const [user] = await assertUsersAreActive(actor, [input.userId]);
+
+  const alreadyOn = () =>
+    new ServiceError(`${user.name} is already on this project. Change their role or discipline in the Members list.`, {
+      userId: [ALREADY_ON_PROJECT],
+    });
+
+  const existing = await prisma.projectMember.findUnique({
+    where: { projectId_userId: { projectId: project.id, userId: input.userId } },
+    select: { id: true },
+  });
+  if (existing) throw alreadyOn();
+
+  assertProjectRoleMatchesPerson([user], input.userId, input.projectRole);
+  if (input.disciplineId) await assertDisciplineEnabled(project.id, input.disciplineId);
+
+  let memberId: string;
+  try {
+    memberId = await prisma.$transaction(async (tx) => {
+      // `create`, never `upsert`: two adds of the same person at once leave the first one standing
+      // and the second refused by the unique (projectId, userId) pair below.
+      const member = await tx.projectMember.create({
+        data: {
+          projectId: project.id,
+          userId: input.userId,
+          projectRole: input.projectRole,
+          disciplineId: input.disciplineId ?? null,
+        },
+      });
+
+      await appendActivity(tx, {
+        actorId: actor.userId,
+        projectId: project.id,
+        entityType: "ProjectMember",
+        entityId: member.id,
+        action: ACTIVITY.MEMBER_ADDED,
+        summary: `${actor.name} added ${user.name} to ${project.name} as ${roleWords(input.projectRole)}`,
+        metadata: {
+          before: null,
+          after: { projectRole: member.projectRole, disciplineId: member.disciplineId },
+        },
+      });
+
+      return member.id;
+    });
+  } catch (error) {
+    if (typeof error === "object" && error !== null && (error as { code?: unknown }).code === "P2002") {
+      throw alreadyOn();
+    }
+    throw error;
+  }
 
   return buildMemberDTO(memberId);
 }
@@ -501,16 +577,25 @@ export async function upsertProjectDiscipline(
   });
   if (!discipline) throw new NotFoundError("We could not find that discipline.");
 
-  if (input.leadId) {
-    const lead = await prisma.projectMember.findUnique({
-      where: { projectId_userId: { projectId: project.id, userId: input.leadId } },
-    });
-    if (!lead) throw new ServiceError("The discipline lead has to be on the project first. Add them as a member.");
-  }
-
   const existing = await prisma.projectDiscipline.findUnique({
     where: { projectId_disciplineId: { projectId: project.id, disciplineId: discipline.id } },
   });
+
+  if (input.leadId) {
+    const lead = await prisma.projectMember.findUnique({
+      where: { projectId_userId: { projectId: project.id, userId: input.leadId } },
+      include: { user: { select: { role: true } } },
+    });
+    if (!lead) throw new ServiceError("The discipline lead has to be on the project first. Add them as a member.");
+    // A lead signs off contractors' work and sees the whole discipline — never a contractor's seat.
+    // Re-saving a lead set before this rule (an unchanged leadId) is left alone.
+    if (lead.user.role === "EXTERNAL" && input.leadId !== existing?.leadId) {
+      throw new ServiceError(
+        "An external contractor can't lead a discipline — a lead signs off contractors' work. Choose a colleague.",
+        { leadId: ["Choose a colleague, not a contractor."] },
+      );
+    }
+  }
 
   const rowId = await prisma.$transaction(async (tx) => {
     const row = await tx.projectDiscipline.upsert({

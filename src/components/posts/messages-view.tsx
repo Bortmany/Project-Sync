@@ -11,7 +11,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   createPost,
@@ -49,6 +49,8 @@ import {
   SkeletonRows,
   Tabs,
   Textarea,
+  neighbourOf,
+  type FocusAfterClose,
   type TabItem,
 } from "@/components/ui";
 import type { BoardPostDTO, PostAudienceDTO, PostDTO } from "@/lib/zod-schemas";
@@ -56,6 +58,16 @@ import type { BoardPostDTO, PostAudienceDTO, PostDTO } from "@/lib/zod-schemas";
 /* ------------------------------------------------------------------ */
 /* The composer                                                        */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Who an announcement reaches, as a sentence starts: "Everyone in the company", "Everyone on PH-1",
+ * "Everyone in Electrical". The Everyone tab's own label is "Everyone", so it is never repeated.
+ */
+export function audienceWords(audience: Pick<PostAudienceDTO, "kind" | "label">): string {
+  if (audience.kind === "EVERYONE") return "Everyone in the company";
+  if (audience.kind === "PROJECT") return `Everyone on ${audience.label}`;
+  return `Everyone in ${audience.label}`;
+}
 
 function Composer({
   audience,
@@ -199,7 +211,7 @@ function Composer({
           <span>
             <span className="font-medium text-[var(--brand-ink)]">Post as an announcement</span>
             <span className="block text-xs text-[var(--brand-gray)]">
-              Everyone in {audience.label} is notified, and it sits on their dashboard until they
+              {audienceWords(audience)} is notified, and it sits on their dashboard until they
               dismiss it.
             </span>
           </span>
@@ -216,7 +228,7 @@ function Composer({
             <span>
               <span className="font-medium text-[var(--brand-ink)]">Require acknowledgement</span>
               <span className="block text-xs text-[var(--brand-gray)]">
-                Everyone in {audience.label} gets an Acknowledge button and stays counted until they
+                {audienceWords(audience)} gets an Acknowledge button and stays counted until they
                 use it. You&apos;ll see who still hasn&apos;t.
               </span>
             </span>
@@ -318,13 +330,35 @@ function ReplyComposer({ parentId, onPosted }: { parentId: string; onPosted: () 
 /* One post and its replies                                            */
 /* ------------------------------------------------------------------ */
 
-function PostMenu({ post, onChanged }: { post: PostDTO; onChanged: () => void }) {
-  const { run, pending, error } = useAction();
+const POST_OPTIONS = 'button[aria-label^="Options for"]';
+
+/**
+ * After a post is deleted its "⋯" button goes, so focus moves on: the next post or reply's "⋯" on
+ * this board, else the one above, else the board's "Write to …" box, else the board's own tab.
+ * Worked out once the "Delete this post?" check has closed (see `focusAfterCloseRef` on Modal).
+ */
+function neighbourOfPost(menu: Element | null | undefined): HTMLElement | null {
+  const panel = menu?.closest('[role="tabpanel"]') ?? document;
+  return (
+    neighbourOf(menu, POST_OPTIONS, panel) ??
+    panel.querySelector<HTMLElement>('textarea[aria-label^="Write to"]') ??
+    document.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+  );
+}
+
+export function PostMenu({ post, onChanged }: { post: PostDTO; onChanged: () => void }) {
+  const { run, pending, error, reset } = useAction();
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [title, setTitle] = useState(post.title ?? "");
   const [body, setBody] = useState(post.body);
+  // The "⋯" button: where focus goes back to once a dialog opened from its menu is closed.
+  const menuButton = useRef<HTMLButtonElement>(null);
+  // The "Delete this post?" check opens on its safe button.
+  const cancelDelete = useRef<HTMLButtonElement>(null);
+  // Set when the post is deleted: its "⋯" goes, so focus moves to a neighbour instead.
+  const afterDelete = useRef<FocusAfterClose | null>(null);
 
   if (!post.canEdit && !post.canDelete) return null;
 
@@ -332,6 +366,7 @@ function PostMenu({ post, onChanged }: { post: PostDTO; onChanged: () => void })
     <>
       <div className="relative">
         <button
+          ref={menuButton}
           type="button"
           aria-label={`Options for ${post.authorName}'s post`}
           aria-expanded={menuOpen}
@@ -347,6 +382,8 @@ function PostMenu({ post, onChanged }: { post: PostDTO; onChanged: () => void })
                 type="button"
                 className="block w-full px-3 py-2 text-left text-sm hover:bg-[var(--page-bg)]"
                 onClick={() => {
+                  // Opening the editor always starts from the saved post, with no old refusal.
+                  reset();
                   setTitle(post.title ?? "");
                   setBody(post.body);
                   setEditing(true);
@@ -374,8 +411,10 @@ function PostMenu({ post, onChanged }: { post: PostDTO; onChanged: () => void })
 
       <Modal
         open={editing}
-        title="Edit your post"
+        // An administrator can edit somebody else's post too, so the title does not say "your".
+        title="Edit post"
         size="sm"
+        returnFocusRef={menuButton}
         onClose={() => setEditing(false)}
         footer={
           <>
@@ -422,7 +461,7 @@ function PostMenu({ post, onChanged }: { post: PostDTO; onChanged: () => void })
           )}
           <Textarea
             value={body}
-            aria-label="Edit your post"
+            aria-label="Post text"
             maxLength={5000}
             onChange={(event) => setBody(event.target.value)}
           />
@@ -433,10 +472,13 @@ function PostMenu({ post, onChanged }: { post: PostDTO; onChanged: () => void })
         open={confirmOpen}
         title="Delete this post?"
         size="sm"
+        returnFocusRef={menuButton}
+        initialFocusRef={cancelDelete}
+        focusAfterCloseRef={afterDelete}
         onClose={() => setConfirmOpen(false)}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setConfirmOpen(false)}>
+            <Button ref={cancelDelete} variant="ghost" onClick={() => setConfirmOpen(false)}>
               Cancel
             </Button>
             <Button
@@ -447,6 +489,9 @@ function PostMenu({ post, onChanged }: { post: PostDTO; onChanged: () => void })
                   success: "Post removed.",
                   failure: "Couldn't remove that post. Try again.",
                   onSuccess: () => {
+                    // The "⋯" (and its whole menu) goes once the post shows as removed.
+                    const menu = menuButton.current?.parentElement;
+                    afterDelete.current = () => neighbourOfPost(menu);
                     setConfirmOpen(false);
                     onChanged();
                   },

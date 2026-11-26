@@ -4,7 +4,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { deleteComment, editComment } from "@/components/actions";
 import { useAction } from "@/components/hooks/use-action";
@@ -33,6 +33,8 @@ import {
   Modal,
   Skeleton,
   Textarea,
+  neighbourOf,
+  type FocusAfterClose,
 } from "@/components/ui";
 
 function escapeForRegExp(value: string): string {
@@ -73,7 +75,23 @@ function renderBody(body: string, names: string[], departmentNames: string[]) {
   });
 }
 
-function CommentRow({
+const OPTIONS_BUTTON = 'button[aria-label^="Options for"]';
+
+/**
+ * After a comment is deleted: the next comment that still has a "⋯" button, else the nearest one
+ * above it, else the "Add a comment" box at the top of the thread. Worked out once the "Delete this
+ * comment?" check has closed (see `focusAfterCloseRef` on Modal) — the thread is inert until then.
+ */
+function neighbourOfComment(row: Element | null | undefined): HTMLElement | null {
+  const thread = row?.closest("[data-comment-thread]");
+  if (!row || !thread) return null;
+  return (
+    neighbourOf(row, OPTIONS_BUTTON, thread) ??
+    thread.querySelector<HTMLElement>('textarea[aria-label="Add a comment"]')
+  );
+}
+
+export function CommentRow({
   comment,
   me,
   memberNames,
@@ -91,6 +109,30 @@ function CommentRow({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(comment.body);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // The "⋯" button: where focus goes back to once a dialog or edit opened from its menu is closed.
+  const menuButton = useRef<HTMLButtonElement>(null);
+  // The "Delete this comment?" check opens on its safe button, Cancel.
+  const cancelDelete = useRef<HTMLButtonElement>(null);
+  // Set when the comment is deleted: this row's "⋯" goes, so focus moves to a neighbour instead.
+  const afterDelete = useRef<FocusAfterClose | null>(null);
+  // The edit box, focused once when editing starts (cursor at the end, ready to carry on typing).
+  const editBox = useRef<HTMLTextAreaElement>(null);
+
+  // Keyed on `editing` only, so it runs once per edit and never while someone types.
+  useEffect(() => {
+    if (!editing) return;
+    const box = editBox.current;
+    if (!box) return;
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+  }, [editing]);
+
+  /** Leaves the edit without saving, and puts focus back on this row's "⋯" button. */
+  function cancelEdit() {
+    setEditing(false);
+    setDraft(comment.body);
+    menuButton.current?.focus();
+  }
 
   const isMine = me?.id === comment.authorId;
   const canModerate = me?.role === "ADMIN" || me?.role === "PROJECT_MANAGER";
@@ -128,6 +170,7 @@ function CommentRow({
           {canEdit || canRemove ? (
             <div className="relative">
               <button
+                ref={menuButton}
                 type="button"
                 aria-label={`Options for ${comment.authorName}'s comment`}
                 aria-expanded={menuOpen}
@@ -174,9 +217,16 @@ function CommentRow({
         {editing ? (
           <div className="space-y-2">
             <Textarea
+              ref={editBox}
               value={draft}
               aria-label="Edit your comment"
               onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                // Handled here: a dialog this thread sits in must not close on the same key.
+                event.preventDefault();
+                cancelEdit();
+              }}
             />
             <CounterLine length={draft.length} />
             <div className="flex gap-2">
@@ -189,6 +239,7 @@ function CommentRow({
                     failure: "Couldn't save this comment. Try again.",
                     onSuccess: () => {
                       setEditing(false);
+                      menuButton.current?.focus();
                       onChanged();
                     },
                   })
@@ -196,7 +247,10 @@ function CommentRow({
               >
                 Save
               </Button>
-              <Button variant="ghost" onClick={() => setEditing(false)}>
+              <Button
+                variant="ghost"
+                onClick={cancelEdit}
+              >
                 Cancel
               </Button>
             </div>
@@ -212,10 +266,13 @@ function CommentRow({
         open={confirmOpen}
         title="Delete this comment?"
         size="sm"
+        returnFocusRef={menuButton}
+        initialFocusRef={cancelDelete}
+        focusAfterCloseRef={afterDelete}
         onClose={() => setConfirmOpen(false)}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setConfirmOpen(false)}>
+            <Button ref={cancelDelete} variant="ghost" onClick={() => setConfirmOpen(false)}>
               Cancel
             </Button>
             <Button
@@ -226,6 +283,10 @@ function CommentRow({
                   success: "Comment removed.",
                   failure: "Couldn't remove this comment. Try again.",
                   onSuccess: () => {
+                    // This row's "⋯" button goes once the comment shows as removed, so once the
+                    // dialog has closed focus moves to a neighbour rather than back to it.
+                    const row = menuButton.current?.closest("li");
+                    afterDelete.current = () => neighbourOfComment(row);
                     setConfirmOpen(false);
                     onChanged();
                   },
@@ -272,7 +333,7 @@ function Thread({
   const departmentNames = departments.map((department) => department.name);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-comment-thread>
       <CommentComposer
         mainTaskId={mainTaskId}
         disciplineTaskId={disciplineTaskId}

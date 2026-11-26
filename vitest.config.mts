@@ -1,4 +1,5 @@
-// Vitest setup: library tests run in plain Node, no browser environment needed yet.
+// Vitest setup: tests run in plain Node by default. A test that needs a simulated browser opts in
+// with a `// @vitest-environment jsdom` line at its top (src/components/__tests__/dialog-typing-focus.test.tsx).
 // The setup file only points DATABASE_URL at DATABASE_URL_TEST, so the service tests never
 // touch development data. The library tests do not use the database and are unaffected.
 import { defineConfig } from "vitest/config";

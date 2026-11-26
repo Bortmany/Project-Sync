@@ -42,7 +42,7 @@ import {
   notDeleted,
   prisma,
 } from "@/lib/db";
-import { ForbiddenError, assertCan, can } from "@/lib/permissions";
+import { assertCan, can, forbidden } from "@/lib/permissions";
 import type {
   AcknowledgePostInput,
   BoardPostDTO,
@@ -679,7 +679,8 @@ export async function createPost(actor: ActorContext, input: CreatePostInput): P
     throw new ServiceError("Only an announcement can ask people to acknowledge it.");
   }
   if (requiresAck && actor.role !== "ADMIN" && actor.role !== "PROJECT_MANAGER") {
-    throw new ForbiddenError(
+    throw forbidden(
+      actor,
       "POST_ANNOUNCEMENT",
       "Only an administrator or a project manager can ask people to acknowledge an announcement.",
     );
@@ -867,7 +868,7 @@ export async function editPost(actor: ActorContext, input: EditPostInput): Promi
 
   if (existing.deletedAt) throw new ServiceError("That post was removed, so it cannot be edited.");
   if (existing.authorId !== actor.userId && actor.role !== "ADMIN") {
-    throw new ForbiddenError("POST_BOARD", "You can only edit your own posts.");
+    throw forbidden(actor, "POST_BOARD", "You can only edit your own posts.");
   }
 
   const body = cleanBody(input.body);
@@ -908,7 +909,8 @@ export async function deletePost(
 
   const isMine = existing.authorId === actor.userId;
   if (!isMine && !mayModerate(actor, audience, scope.policy)) {
-    throw new ForbiddenError(
+    throw forbidden(
+      actor,
       "POST_BOARD",
       "You can only remove your own posts. Whoever looks after this board can remove anyone's.",
     );
@@ -1058,7 +1060,8 @@ export async function setBroadcastPolicy(
   input: SetBroadcastPolicyInput,
 ): Promise<BroadcastSettingDTO> {
   if (actor.role !== "ADMIN") {
-    throw new ForbiddenError(
+    throw forbidden(
+      actor,
       "POST_ANNOUNCEMENT",
       "Only an administrator can change who may post to everyone.",
     );

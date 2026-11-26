@@ -13,7 +13,7 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   beginTwoFactorEnrollment,
@@ -23,7 +23,20 @@ import {
 } from "@/components/actions";
 import { formatDate } from "@/components/format";
 import { useAction } from "@/components/hooks/use-action";
-import { Badge, Button, Card, ErrorBanner, Field, Input, Modal, Spinner, useToast } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  ErrorBanner,
+  Field,
+  Input,
+  Modal,
+  OneTimeCodeInput,
+  Spinner,
+  firstStopOnceRedrawn,
+  useToast,
+  type FocusAfterClose,
+} from "@/components/ui";
 import type { TwoFactorEnrollmentDTO } from "@/lib/zod-schemas";
 
 /** Below this many unused recovery codes the card asks somebody to make fresh ones. */
@@ -257,17 +270,7 @@ function TwoFactorEnrollModal({ onClose }: { onClose: () => void }) {
                 Enter the current 6-digit code shown in your authenticator app.
               </p>
               <Refusal message={confirm.error} />
-              <Field label="Verification code">
-                <Input
-                  value={code}
-                  onChange={(event) => setCode(event.target.value)}
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={6}
-                  placeholder="123456"
-                  className="text-center font-mono text-lg tracking-widest"
-                />
-              </Field>
+              <OneTimeCodeInput value={code} onChange={setCode} />
               <Button
                 loading={confirm.pending}
                 onClick={() =>
@@ -434,6 +437,8 @@ function DisableTwoFactorModal({ onClose }: { onClose: () => void }) {
   const router = useRouter();
   const { run, pending, error } = useAction();
   const [proof, setProof] = useState<Proof>({ kind: "code", value: "" });
+  // Once it is off the card is redrawn with "Turn on two-factor": focus goes there, not to the top.
+  const afterOff = useRef<FocusAfterClose | null>(null);
 
   const waiting = isWaitAWhile(error);
 
@@ -442,6 +447,7 @@ function DisableTwoFactorModal({ onClose }: { onClose: () => void }) {
       open
       size="sm"
       title="Turn off two-factor?"
+      focusAfterCloseRef={afterOff}
       onClose={onClose}
       footer={
         <>
@@ -457,6 +463,7 @@ function DisableTwoFactorModal({ onClose }: { onClose: () => void }) {
                   success: "Two-factor is off.",
                   failure: WRONG_CODE,
                   onSuccess: () => {
+                    afterOff.current = firstStopOnceRedrawn("section");
                     onClose();
                     router.refresh();
                   },
@@ -495,17 +502,10 @@ function ProofFields({ proof, onChange }: { proof: Proof; onChange: (next: Proof
   return (
     <div className="space-y-2">
       {usingCode ? (
-        <Field label="Verification code">
-          <Input
-            value={proof.value}
-            onChange={(event) => onChange({ kind: "code", value: event.target.value })}
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            maxLength={6}
-            placeholder="123456"
-            className="text-center font-mono text-lg tracking-widest"
-          />
-        </Field>
+        <OneTimeCodeInput
+          value={proof.value}
+          onChange={(value) => onChange({ kind: "code", value })}
+        />
       ) : (
         <Field label="Recovery code">
           <Input

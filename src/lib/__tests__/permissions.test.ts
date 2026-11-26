@@ -3,9 +3,11 @@
 import { describe, expect, it } from "vitest";
 import {
   ForbiddenError,
+  HIDDEN_REFUSAL_MESSAGE,
   PERMISSION_MATRIX,
   assertCan,
   can,
+  forbidden,
   type Action,
   type Actor,
   type PermissionContext,
@@ -692,5 +694,66 @@ describe("Ask Tielora (ASK_ASSISTANT)", () => {
     }
     expect(PERMISSION_MATRIX.EXTERNAL.always).not.toContain("ASK_ASSISTANT");
     expect(PERMISSION_MATRIX.EXTERNAL.conditional).not.toContain("ASK_ASSISTANT");
+  });
+});
+
+describe("a contractor's refusal always reads as not found (THE EXTERNAL RULE)", () => {
+  it("assertCan refuses a contractor with the not-found sentence, flagged hidden", () => {
+    // The reported case: a contractor uploading to the shared register of a main task on their own
+    // project — no assignee of theirs on it, so the rules say no.
+    const attempt = () =>
+      assertCan(contractor, "UPLOAD_DOCUMENT", { projectId: PROJECT, orgId: ORG, assigneeId: null });
+    expect(attempt).toThrow(ForbiddenError);
+    try {
+      attempt();
+    } catch (error) {
+      expect((error as ForbiddenError).hidden).toBe(true);
+      expect((error as ForbiddenError).message).toBe(HIDDEN_REFUSAL_MESSAGE);
+      expect((error as ForbiddenError).message).not.toMatch(/permission/i);
+    }
+  });
+
+  it("every action a contractor is refused is hidden, on every project, escalated row or not", () => {
+    for (const who of [contractor, escalatedContractor]) {
+      for (const action of ALL_ACTIONS) {
+        for (const ctx of [
+          { projectId: PROJECT, orgId: ORG, assigneeId: "someone-else" },
+          { projectId: OTHER_PROJECT, orgId: ORG },
+          {},
+        ] as PermissionContext[]) {
+          if (can(who, action, ctx)) continue;
+          const error = (() => {
+            try {
+              assertCan(who, action, ctx);
+            } catch (caught) {
+              return caught as ForbiddenError;
+            }
+            return null;
+          })();
+          expect({ action, hidden: error?.hidden, message: error?.message }).toEqual({
+            action,
+            hidden: true,
+            message: HIDDEN_REFUSAL_MESSAGE,
+          });
+        }
+      }
+    }
+  });
+
+  it("forbidden() keeps the colleague wording for staff and hides it for a contractor", () => {
+    expect(forbidden(engineer, "COMMENT", "You can only edit your own comments.").message).toBe(
+      "You can only edit your own comments.",
+    );
+    expect(forbidden(engineer, "COMMENT").hidden).toBe(false);
+    expect(forbidden(contractor, "COMMENT", "You can only edit your own comments.").message).toBe(
+      HIDDEN_REFUSAL_MESSAGE,
+    );
+    expect(forbidden(contractor, "COMMENT").hidden).toBe(true);
+  });
+
+  it("a colleague is still told plainly that they lack permission", () => {
+    expect(() => assertCan(engineer, "DELETE_PROJECT", { projectId: PROJECT, orgId: ORG })).toThrow(
+      "You do not have permission to do that.",
+    );
   });
 });

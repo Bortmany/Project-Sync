@@ -770,8 +770,20 @@ export const UploadMeta = z.object({
   title: shortText.optional(),
   category: z.string().trim().max(60).optional(),
   note: z.string().trim().max(500).optional(),
+  /**
+   * The uploader has been told this file is byte-for-byte the current revision and chose to file it
+   * anyway. Without it, such an upload is answered with `IDENTICAL_REVISION_CODE` and nothing saved.
+   */
+  allowIdentical: z.boolean().optional(),
 });
 export type UploadMeta = z.infer<typeof UploadMeta>;
+
+/**
+ * The answer an upload gets when its file is identical to the document's current revision and the
+ * uploader has not yet said "upload anyway". Nothing is saved; the dialog asks, then sends again with
+ * `allowIdentical`. Revisions are never silently dropped — and never silently duplicated either.
+ */
+export const IDENTICAL_REVISION_CODE = "IDENTICAL_REVISION";
 
 /* ------------------------------------------------------------------ */
 /* Comments, notifications, activity                                   */
@@ -1599,7 +1611,12 @@ export type MicrosoftListingDTO = z.infer<typeof MicrosoftListingDTO>;
  * Where an attachment would go. Exactly the fields the upload dialog already sends, because the
  * browse endpoints check the SAME permission an upload does before they show a single file name.
  */
-export const MicrosoftTargetInput = UploadMeta.omit({ title: true, category: true, note: true });
+export const MicrosoftTargetInput = UploadMeta.omit({
+  title: true,
+  category: true,
+  note: true,
+  allowIdentical: true,
+});
 export type MicrosoftTargetInput = z.infer<typeof MicrosoftTargetInput>;
 
 export const MicrosoftBrowseInput = MicrosoftTargetInput.extend({

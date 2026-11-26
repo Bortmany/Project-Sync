@@ -68,6 +68,8 @@ async function makeContractor(accessExpiresAt: Date | null, email = nextEmail())
     name: "Sami al-Harthy",
     password: PASSWORD,
     role: "EXTERNAL",
+    // A contractor carries their own discipline (src/lib/discipline-rules.ts).
+    disciplineId: (await prisma.discipline.findFirstOrThrow({ where: { orgId: admin.orgId } })).id,
     companyName: CONTRACTOR_COMPANY,
     accessExpiresAt,
   });

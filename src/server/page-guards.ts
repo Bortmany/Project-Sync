@@ -34,6 +34,17 @@ export const requireDisciplineTaskVisible = (id: string) =>
  * page is the ordinary not-found page for them — the same one a path that was never there gives.
  */
 export async function hideAdminFromContractors(): Promise<void> {
+  await hideFromContractors();
+}
+
+/**
+ * The same gate for any whole section a contractor does not have (Admin, Messages). Call it from the
+ * section's LAYOUT, never only from its page: a page under a `loading.tsx` is streamed, so the
+ * response has already gone out as 200 by the time the page says "not found". A layout sits outside
+ * that loading boundary, so its not-found is a real 404 — the same status as a path that was never
+ * there.
+ */
+export async function hideFromContractors(): Promise<void> {
   const actor = await currentActor();
   if (actor && isExternal(actor)) notFound();
 }

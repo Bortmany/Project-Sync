@@ -18,7 +18,7 @@ import {
 import { useMicrosoftStatus } from "@/components/hooks/use-api";
 import { Button, ErrorBanner, Field, Input, Modal, Tabs, Textarea, useToast } from "@/components/ui";
 import { ACCEPTED_FILES_HINT, mandatoryDocumentProblem } from "@/lib/upload-rules";
-import { DocumentVersionDTO } from "@/lib/zod-schemas";
+import { DocumentVersionDTO, IDENTICAL_REVISION_CODE } from "@/lib/zod-schemas";
 
 /** Where the file is going. The server checks all of this again before it writes anything. */
 export type UploadTarget = {
@@ -38,6 +38,7 @@ const ACCEPT = ".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.docx,.pptx,.zip,.csv,.txt,.dwg
 export const UPLOAD_LIMITS_LINE = `Drop a file here or browse — ${ACCEPTED_FILES_HINT}`;
 
 const GENERIC_FAILURE = "Couldn't upload this file. Try again or use a different file.";
+const IDENTICAL_FALLBACK = "This file is identical to the current revision. Upload it anyway?";
 
 /** "vendor-datasheet.pdf" → "vendor-datasheet", so the title field starts somewhere sensible. */
 function titleFromFilename(filename: string): string {
@@ -45,11 +46,18 @@ function titleFromFilename(filename: string): string {
   return (dot > 0 ? filename.slice(0, dot) : filename).slice(0, 200);
 }
 
+/**
+ * The server's "this file is identical to the current revision" answer. Nothing was saved; the
+ * dialog asks the uploader and, if they say so, sends the same file again with `allowIdentical`.
+ */
+class IdenticalRevisionError extends Error {}
+
 /** Posts the multipart body and unwraps the { ok, data } envelope the routes all return. */
 async function postUpload(
   file: File,
   target: UploadTarget,
   details: { title: string; category: string; note: string },
+  allowIdentical = false,
 ): Promise<DocumentVersionDTO> {
   const form = new FormData();
   form.set("file", file);
@@ -61,6 +69,7 @@ async function postUpload(
   if (details.title.trim()) form.set("title", details.title.trim());
   if (details.category.trim()) form.set("category", details.category.trim());
   if (details.note.trim()) form.set("note", details.note.trim());
+  if (allowIdentical) form.set("allowIdentical", "1");
 
   let payload: unknown;
   try {
@@ -74,7 +83,10 @@ async function postUpload(
     throw new Error(GENERIC_FAILURE);
   }
 
-  const envelope = payload as { ok?: boolean; error?: string; data?: unknown };
+  const envelope = payload as { ok?: boolean; error?: string; code?: string; data?: unknown };
+  if (!envelope?.ok && envelope?.code === IDENTICAL_REVISION_CODE) {
+    throw new IdenticalRevisionError(envelope.error || IDENTICAL_FALLBACK);
+  }
   // The server writes its refusals in plain English, so they are shown exactly as they arrive.
   if (!envelope?.ok) throw new Error(envelope?.error || GENERIC_FAILURE);
 
@@ -158,6 +170,8 @@ export function UploadDropzone({
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set when the server said the chosen file repeats the current revision; the next press files it. */
+  const [identical, setIdentical] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("");
   const [note, setNote] = useState("");
@@ -180,6 +194,7 @@ export function UploadDropzone({
     setPicked(null);
     setTitle(titleFromFilename(next.name));
     setError(null);
+    setIdentical(null);
     setOpen(true);
   }
 
@@ -187,6 +202,7 @@ export function UploadDropzone({
   function pick(next: PickedFile | null) {
     setPicked(next);
     setError(null);
+    setIdentical(null);
     if (next) setTitle(titleFromFilename(next.name));
   }
 
@@ -206,6 +222,7 @@ export function UploadDropzone({
     setFile(null);
     setPicked(null);
     setError(null);
+    setIdentical(null);
     setTitle("");
     setCategory("");
     setNote("");
@@ -230,6 +247,8 @@ export function UploadDropzone({
         return;
       }
     }
+    // Pressing again after the "identical" warning is the uploader's deliberate "upload anyway".
+    const allowIdentical = identical !== null;
     setUploading(true);
     setError(null);
     try {
@@ -239,7 +258,7 @@ export function UploadDropzone({
         note,
       };
       const version = file
-        ? await postUpload(file, target, details)
+        ? await postUpload(file, target, details, allowIdentical)
         : await postAttach(picked as PickedFile, target, details);
 
       void queryClient.invalidateQueries({ queryKey: ["project", target.projectId] });
@@ -261,6 +280,7 @@ export function UploadDropzone({
       );
       onUploaded?.(version);
       setUploading(false);
+      setIdentical(null);
       setOpen(false);
       setFile(null);
       setPicked(null);
@@ -270,6 +290,10 @@ export function UploadDropzone({
     } catch (caught) {
       // The file stays selected so the same one can be sent again after a fix.
       setUploading(false);
+      if (caught instanceof IdenticalRevisionError) {
+        setIdentical(caught.message);
+        return;
+      }
       setError(caught instanceof Error ? caught.message : GENERIC_FAILURE);
     }
   }
@@ -348,13 +372,35 @@ export function UploadDropzone({
               disabled={(!file && !picked) || uploading}
               onClick={() => void submit()}
             >
-              {uploading ? (file ? "Uploading…" : "Attaching…") : file ? "Upload" : picked ? "Attach" : "Upload"}
+              {uploading
+                ? file
+                  ? "Uploading…"
+                  : "Attaching…"
+                : identical
+                  ? "Upload anyway"
+                  : file
+                    ? "Upload"
+                    : picked
+                      ? "Attach"
+                      : "Upload"}
             </Button>
           </>
         }
       >
         <div className="space-y-3">
           {error ? <ErrorBanner message={error} /> : null}
+          {identical ? (
+            <div
+              role="alert"
+              className="space-y-1 rounded-[var(--radius)] border border-[var(--status-blocked)] bg-[var(--page-bg)] p-3 text-sm text-[var(--brand-ink)]"
+            >
+              <p className="font-semibold">{identical}</p>
+              <p className="text-xs text-[var(--brand-text)]">
+                Nothing has been saved yet. Press Upload anyway to file it as a new revision, or choose
+                a different file.
+              </p>
+            </div>
+          ) : null}
 
           {canAttachFromMicrosoft ? (
             <Tabs

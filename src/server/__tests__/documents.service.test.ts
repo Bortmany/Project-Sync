@@ -1,24 +1,36 @@
 // Service-level tests for the document half of the golden rule: no revision is ever altered or lost,
 // revision numbers only ever go up, a mandatory document really does open the completion gate, and a
-// document can never be removed out from under a completed task.
+// document can never be removed out from under a completed task. The last block drives the upload
+// route itself: an identical file is asked about before it becomes a revision, never dropped.
 
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Test uploads go to a throwaway folder, never the development data directory.
 process.env.DATA_DIR = path.join(os.tmpdir(), "nexus-test-data");
+process.env.SWEEP_DISABLED = "1";
+
+// The upload route reads who is signed in; the service tests never ask.
+const session = vi.hoisted(() => ({ actor: null as unknown }));
+vi.mock("@/server/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/session")>()),
+  currentActor: async () => session.actor,
+}));
+
+import { POST as uploadRoute } from "@/app/api/uploads/route";
 
 import { prisma } from "@/lib/db";
 import { ForbiddenError } from "@/lib/permissions";
-import { storeFile, storedFilePath, validateUpload } from "@/lib/upload";
-import type { UploadMeta } from "@/lib/zod-schemas";
+import { checksumOf, storeFile, storedFilePath, validateUpload } from "@/lib/upload";
+import { IDENTICAL_REVISION_CODE, type UploadMeta } from "@/lib/zod-schemas";
 import type { ActorContext } from "@/server/actor";
 import { ServiceError } from "@/server/errors";
 import {
   assertFileSuitsRequirement,
   getVersionForDownload,
+  identicalCurrentRevision,
   listDocumentsForDisciplineTask,
   listDocumentsForMainTask,
   listVersions,
@@ -490,5 +502,68 @@ describe("a mandatory document needs a real deliverable, not a plain text file",
         "txt",
       ),
     ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+});
+
+describe("an identical file is asked about before it becomes a new revision, never silently dropped", () => {
+  /** The upload route exactly as the browser calls it. */
+  function postFile(body: string, fields: Record<string, string>): Request {
+    const form = new FormData();
+    form.set("file", new File([Buffer.from(body, "utf8")], PDF.filename));
+    for (const [key, value] of Object.entries(fields)) form.set(key, value);
+    return new Request("http://localhost/api/uploads", { method: "POST", body: form });
+  }
+
+  it("answers the identical file with a question, saves nothing, and files it once the uploader says so", async () => {
+    const work = await makeWork();
+    const first = await upload(fixture.engineerActor, { disciplineTaskId: work.civilId }, PDF);
+    session.actor = fixture.engineerActor;
+    const fields = { projectId: fixture.projectId, documentId: first.documentId };
+    const filesOnRecord = () => prisma.documentVersion.count({ where: { documentId: first.documentId } });
+
+    // Same bytes as Rev 0: the route asks instead of saving.
+    const asked = await uploadRoute(postFile(PDF.body, fields));
+    const askedBody = (await asked.json()) as { ok: boolean; code?: string; error: string };
+    expect(asked.status).toBe(409);
+    expect(askedBody).toMatchObject({ ok: false, code: IDENTICAL_REVISION_CODE });
+    expect(askedBody.error).toMatch(/identical to the current revision \(Rev 0\)\. Upload it anyway\?/);
+    expect(await filesOnRecord()).toBe(1);
+
+    // "Upload anyway": the same bytes are filed as the next revision, and Rev 0 is untouched.
+    const anyway = await uploadRoute(postFile(PDF.body, { ...fields, allowIdentical: "1" }));
+    expect(anyway.status).toBe(200);
+    const versions = await listVersions(fixture.engineerActor, first.documentId);
+    expect(versions.map((version) => version.revisionNumber).sort()).toEqual([0, 1]);
+    expect(await filesOnRecord()).toBe(2);
+
+    // A genuinely different file is never asked about.
+    const changed = await uploadRoute(postFile(`${PDF.body}% changed\n`, fields));
+    expect(changed.status).toBe(200);
+    expect(await filesOnRecord()).toBe(3);
+  });
+
+  it("compares against the CURRENT revision only, and never for a brand-new document", async () => {
+    const work = await makeWork();
+    const first = await upload(fixture.engineerActor, { disciplineTaskId: work.civilId }, PDF);
+    const meta = { projectId: fixture.projectId, documentId: first.documentId };
+    const original = checksumOf(Buffer.from(PDF.body, "utf8"));
+
+    expect(await identicalCurrentRevision(fixture.engineerActor, meta, original)).toBe(0);
+    expect(await identicalCurrentRevision(fixture.engineerActor, { ...meta, allowIdentical: true }, original)).toBeNull();
+    // A first upload has nothing to repeat.
+    expect(
+      await identicalCurrentRevision(
+        fixture.engineerActor,
+        { projectId: fixture.projectId, disciplineTaskId: work.civilId },
+        original,
+      ),
+    ).toBeNull();
+
+    // Once a different Rev 1 is on top, the old Rev 0 bytes are a real change again.
+    await upload(fixture.engineerActor, { documentId: first.documentId }, {
+      filename: PDF.filename,
+      body: `${PDF.body}% rev 1\n`,
+    });
+    expect(await identicalCurrentRevision(fixture.engineerActor, meta, original)).toBeNull();
   });
 });

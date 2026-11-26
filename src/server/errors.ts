@@ -42,7 +42,8 @@ export function toFailure(error: unknown, context: Record<string, unknown> = {})
 
 /** The HTTP status that matches a thrown error, for route handlers. */
 export function statusFor(error: unknown): number {
-  if (error instanceof ForbiddenError) return 403;
+  // A contractor's refusal is "not found" in its status as well as its words (THE EXTERNAL RULE).
+  if (error instanceof ForbiddenError) return error.hidden ? 404 : 403;
   if (error instanceof NotFoundError) return 404;
   if (error instanceof ServiceError) return 400;
   return 500;

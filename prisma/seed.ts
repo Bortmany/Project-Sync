@@ -139,7 +139,8 @@ const CONTRACTOR_HANDOVERS: { task: string; to: string; by: string }[] = [
 /**
  * The one piece of contractor work that is handed in and waiting for a colleague to accept it, so
  * the dashboard really does say "Needs your sign-off (1)". It goes through the ordinary completion
- * path as the contractor: the service itself turns that into AWAITING_REVIEW.
+ * path as the contractor: the service itself turns that into AWAITING_REVIEW. Its main task sits in
+ * the open FEED phase, so the reviewer's Confirm and Send back work without a gate override.
  */
 const CONTRACTOR_SUBMISSION = {
   task: "Mechanical datasheets compiled",
@@ -245,7 +246,11 @@ const WORK: SeedMainTask[] = [
     startDate: "2026-06-01",
     deadline: "2026-11-15",
     owner: "omar.alhabsi@tielora.example",
-    phase: "Detail design",
+    // In FEED, the phase the team is working in, and NOT behind a shut gate: this is where the
+    // contractor's hand-in lives, and a reviewer opening the demo must be able to Confirm or Send
+    // it back straight away. In Detail design (locked until FEED is complete) both were refused
+    // until somebody overrode the gate, so the demo's one sign-off looked broken.
+    phase: "FEED",
     subtasks: [
       { discipline: "MECH", title: "Mechanical datasheets compiled", assignee: "john.carter@tielora.example", deadline: "2026-10-20", end: "IN_PROGRESS" },
       { discipline: "ELEC", title: "Electrical load list finalised", assignee: "fatma.alzadjali@tielora.example", deadline: "2026-10-22", end: "IN_PROGRESS" },
@@ -504,8 +509,9 @@ async function seedMeridian(passwordHash: string): Promise<void> {
   // The stage gates. createProject already made the five OIL_AND_GAS phases; the work is put behind
   // them LAST, once every completion above has happened, because a locked phase refuses exactly
   // those transitions. The result is a realistic mid-project picture: FEED is still open (the civil
-  // load check is unfinished), so Detail design, Procurement, Construction and Commissioning are all
-  // locked, and the inspection close-out sits outside the gates entirely.
+  // load check is unfinished, and Package A is under way in it), so Detail design, Procurement,
+  // Construction and Commissioning are all locked, and the inspection close-out sits outside the
+  // gates entirely. The hand-in waiting for a sign-off is in FEED, so it can be acted on.
   const phaseIdByName = new Map(
     (await prisma.projectPhase.findMany({ where: { projectId: project.id } })).map((phase) => [
       phase.name,

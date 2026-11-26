@@ -7,7 +7,7 @@
 
 import type { Prisma } from "@/generated/prisma/client";
 import { activeMainTasks, notDeleted, prisma } from "@/lib/db";
-import { ForbiddenError, assertCan } from "@/lib/permissions";
+import { assertCan, forbidden } from "@/lib/permissions";
 import { phaseLockMessage } from "@/lib/phase-lock";
 import {
   canCompleteDisciplineTask,
@@ -428,7 +428,12 @@ export async function createMainTask(actor: ActorContext, input: CreateMainTaskI
 export async function updateMainTask(actor: ActorContext, input: UpdateMainTaskInput): Promise<MainTaskDTO> {
   const existing = await loadMainTask(actor, input.id);
   assertCan(actor, "EDIT_MAIN_TASK", { projectId: existing.projectId, orgId: existing.project.orgId });
-  if (input.ownerId) await assertOnProject(existing.projectId, input.ownerId, "owner");
+  // An owner set before contractors were refused (an unchanged ownerId) is left alone on a re-save.
+  if (input.ownerId) {
+    await assertOnProject(existing.projectId, input.ownerId, "owner", {
+      keepingContractor: input.ownerId === existing.ownerId,
+    });
+  }
   const nextStart = utcMidnightOrNull(input.startDate);
   const nextDeadline = input.deadline === undefined ? undefined : utcMidnight(input.deadline);
   assertDatesOrdered(nextStart ?? existing.startDate, nextDeadline ?? existing.deadline);
@@ -1122,7 +1127,7 @@ export async function rejectDisciplineTaskReview(
  * whole point of the setting.
  */
 function assertNotExternalReviewer(actor: ActorContext): void {
-  if (isExternal(actor)) throw new ForbiddenError("COMPLETE_DISCIPLINE_TASK");
+  if (isExternal(actor)) throw forbidden(actor, "COMPLETE_DISCIPLINE_TASK");
 }
 
 /** Who signs a contractor's work off: the discipline's lead on that project, and its managers. */
@@ -1841,10 +1846,18 @@ async function assertPhaseOnProject(
   return phase;
 }
 
-async function assertOnProject(projectId: string, userId: string, what: "owner" | "assignee"): Promise<void> {
+export const CONTRACTOR_OWNER_MESSAGE =
+  "An external contractor can't own a main task — they only see the discipline tasks assigned to them. Choose a colleague as owner, and assign the contractor a discipline task instead.";
+
+async function assertOnProject(
+  projectId: string,
+  userId: string,
+  what: "owner" | "assignee",
+  options: { keepingContractor?: boolean } = {},
+): Promise<void> {
   const member = await prisma.projectMember.findUnique({
     where: { projectId_userId: { projectId, userId } },
-    include: { user: { select: { isActive: true } } },
+    include: { user: { select: { isActive: true, role: true } } },
   });
   if (!member) {
     throw new ServiceError(
@@ -1857,6 +1870,11 @@ async function assertOnProject(projectId: string, userId: string, what: "owner" 
     throw new ServiceError(
       "That person's account is deactivated — work given to them would sit unseen. Pick someone active.",
     );
+  }
+  // THE EXTERNAL RULE: a contractor sees their own discipline tasks and the smallest parent context,
+  // so the main task they "owned" would answer them "not found". They are never its owner.
+  if (what === "owner" && member.user.role === "EXTERNAL" && !options.keepingContractor) {
+    throw new ServiceError(CONTRACTOR_OWNER_MESSAGE, { ownerId: [CONTRACTOR_OWNER_MESSAGE] });
   }
 }
 

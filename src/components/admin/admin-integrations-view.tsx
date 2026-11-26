@@ -9,7 +9,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
   deleteIntegration,
@@ -23,7 +23,17 @@ import { AdminBroadcastCard } from "@/components/admin/admin-broadcast-card";
 import { AdminMicrosoftCard } from "@/components/admin/admin-microsoft-card";
 import { AdminTeamsAppCard } from "@/components/admin/admin-teams-app-card";
 import { fieldError, useAction } from "@/components/hooks/use-action";
-import { Badge, Button, Card, ErrorBanner, Field, Input, Modal, useToast } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  ErrorBanner,
+  Field,
+  Input,
+  Modal,
+  useToast,
+  type FocusAfterClose,
+} from "@/components/ui";
 import type {
   BroadcastPolicyName,
   IntegrationEventName,
@@ -140,6 +150,15 @@ function SetupSteps({ kind }: { kind: IntegrationKindName }) {
   );
 }
 
+/**
+ * Where focus goes once a connection is removed: the address box in the card around `inside`. The
+ * card is looked up now, while the buttons are still on the page; the card itself stays.
+ */
+function addressBoxIn(inside: Element | null): FocusAfterClose {
+  const card = inside?.closest("section") ?? null;
+  return () => card?.querySelector<HTMLElement>("input[data-webhook-address]") ?? null;
+}
+
 function AddressForm({
   integration,
   onSaved,
@@ -147,22 +166,33 @@ function AddressForm({
   integration: OrgIntegrationDTO;
   onSaved: () => void;
 }) {
-  const { run, pending, error, fieldErrors } = useAction();
+  const { run, pending, error, fieldErrors, clearFieldError } = useAction();
   const [webhookUrl, setWebhookUrl] = useState("");
+  // Once saved, the box empties and the Save button greys out, so the button that had focus is no
+  // longer a place to be: the next Tab skipped the box and landed on the first switch below. Focus
+  // goes back to the address box — the same box a removal lands on, and one that is there before
+  // and after the card redraws.
+  const addressBox = useRef<HTMLInputElement>(null);
 
-  function submit() {
+  function submit(event?: FormEvent) {
+    event?.preventDefault();
+    // Enter in the box and the button both come here; one save is on its way at a time, and an
+    // empty box sends nothing.
+    if (pending || !webhookUrl.trim()) return;
     run(() => saveIntegration({ kind: integration.kind, webhookUrl: webhookUrl.trim() }), {
       success: `${KIND_LABEL[integration.kind]} address saved.`,
       failure: "Couldn't save that address. Try again.",
+      shownOnFields: ["webhookUrl"],
       onSuccess: () => {
         setWebhookUrl("");
+        addressBox.current?.focus();
         onSaved();
       },
     });
   }
 
   return (
-    <div className="space-y-3">
+    <form className="space-y-3" noValidate onSubmit={submit}>
       {error ? <ErrorBanner message={error} /> : null}
       <Field
         label={integration.configured ? "Replace the address" : "Webhook address"}
@@ -170,18 +200,23 @@ function AddressForm({
         error={fieldError(fieldErrors, "webhookUrl")}
       >
         <Input
+          ref={addressBox}
           type="url"
+          data-webhook-address=""
           value={webhookUrl}
           placeholder="https://"
           autoComplete="off"
           spellCheck={false}
-          onChange={(event) => setWebhookUrl(event.target.value)}
+          onChange={(event) => {
+            clearFieldError("webhookUrl");
+            setWebhookUrl(event.target.value);
+          }}
         />
       </Field>
-      <Button loading={pending} disabled={!webhookUrl.trim()} onClick={submit}>
+      <Button type="submit" loading={pending} disabled={!webhookUrl.trim()}>
         {integration.configured ? "Replace address" : "Save address"}
       </Button>
-    </div>
+    </form>
   );
 }
 
@@ -247,6 +282,13 @@ function ConnectedControls({
   const { run, pending } = useAction();
   const { show } = useToast();
   const [confirmingRemove, setConfirmingRemove] = useState(false);
+  // Once removed, these buttons go and the card asks for an address again. Focus goes to the
+  // card's address box — the one box that is there both before and after the card redraws, so it
+  // does not matter how long the redraw takes. (Waiting for the redraw used to give up after two
+  // seconds: a removal made just after saving an address, while that save's own refresh was still
+  // on its way, left focus on a Remove button that then vanished, at the top of the page.)
+  const afterRemove = useRef<FocusAfterClose | null>(null);
+  const controls = useRef<HTMLDivElement>(null);
 
   function switchTo(enabled: boolean) {
     run(() => setIntegrationEnabled({ kind: integration.kind, enabled }), {
@@ -275,6 +317,7 @@ function ConnectedControls({
       success: `${KIND_LABEL[integration.kind]} connection removed.`,
       failure: "Couldn't remove that connection. Try again.",
       onSuccess: () => {
+        afterRemove.current = addressBoxIn(controls.current);
         setConfirmingRemove(false);
         onChanged();
       },
@@ -283,7 +326,7 @@ function ConnectedControls({
 
   return (
     <>
-      <div className="flex flex-wrap gap-2">
+      <div ref={controls} className="flex flex-wrap gap-2">
         <Button variant="ghost" loading={pending} onClick={() => switchTo(!integration.enabled)}>
           {integration.enabled ? "Switch off" : "Switch on"}
         </Button>
@@ -300,6 +343,7 @@ function ConnectedControls({
           open
           size="sm"
           title={`Remove ${KIND_LABEL[integration.kind]}?`}
+          focusAfterCloseRef={afterRemove}
           onClose={() => setConfirmingRemove(false)}
           footer={
             <>

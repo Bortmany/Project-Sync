@@ -8,15 +8,20 @@ import { byUser, limit } from "@/lib/rate-limit";
 import {
   MAX_UPLOAD_BYTES,
   assertUploadSize,
+  checksumOf,
   safeOriginalName,
   storeFile,
   validateUpload,
 } from "@/lib/upload";
-import { UploadMeta, toFieldErrors } from "@/lib/zod-schemas";
+import { IDENTICAL_REVISION_CODE, UploadMeta, toFieldErrors } from "@/lib/zod-schemas";
 import { fail, failFrom, failWithFields, ok } from "@/server/http";
 import { SIGNED_OUT_MESSAGE, currentActor } from "@/server/session";
 import { assertStorageRoom } from "@/server/services/billing";
-import { assertFileSuitsRequirement, uploadDocumentVersion } from "@/server/services/documents";
+import {
+  assertFileSuitsRequirement,
+  identicalCurrentRevision,
+  uploadDocumentVersion,
+} from "@/server/services/documents";
 
 // Route handlers stream their own body, so Next applies no size limit here — the 25 MB ceiling is
 // enforced below from file.size before the bytes are ever pulled into memory.
@@ -70,6 +75,8 @@ export async function POST(request: Request) {
     title: text(form, "title"),
     category: text(form, "category"),
     note: text(form, "note"),
+    // Sent only after the uploader was told the file is identical and pressed "Upload anyway".
+    allowIdentical: text(form, "allowIdentical") === "1" ? true : undefined,
   });
   if (!parsed.success) {
     return failWithFields("Please check the highlighted fields.", toFieldErrors(parsed.error));
@@ -96,6 +103,25 @@ export async function POST(request: Request) {
   // here, before storeFile(), so the refusal never leaves an orphan file or a green tick behind.
   try {
     await assertFileSuitsRequirement(actor, parsed.data, checked.ext);
+  } catch (error) {
+    return failFrom(error, { route: "POST /api/uploads", projectId: parsed.data.projectId });
+  }
+
+  // A new revision identical to the current one is asked about, not saved: the answer carries a code
+  // the dialog recognises, it asks "upload anyway?", and only then sends the file again with
+  // allowIdentical. Checked before storeFile(), so asking leaves no orphan file behind.
+  try {
+    const repeats = await identicalCurrentRevision(actor, parsed.data, checksumOf(buffer));
+    if (repeats !== null) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: IDENTICAL_REVISION_CODE,
+          error: `This file is identical to the current revision (Rev ${repeats}). Upload it anyway?`,
+        },
+        { status: 409 },
+      );
+    }
   } catch (error) {
     return failFrom(error, { route: "POST /api/uploads", projectId: parsed.data.projectId });
   }

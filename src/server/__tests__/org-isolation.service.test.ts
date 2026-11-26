@@ -676,6 +676,7 @@ describe("a contractor's access end date is one company's business", () => {
       name: "Sami al-Harthy",
       password: "coordination-2026",
       role: "EXTERNAL",
+      disciplineId: (await prisma.discipline.findFirstOrThrow({ where: { orgId: company.admin.orgId } })).id,
       companyName: "Al Hassan Engineering",
       accessExpiresAt: IN_THREE_DAYS,
     });
@@ -1377,12 +1378,13 @@ describe("office staff and contractors are counted per company, never across the
     });
   }
 
-  function addContractor(actor: ActorContext) {
+  async function addContractor(actor: ActorContext) {
     return createUser(actor, {
       email: `iso.contractor.${Date.now()}.${Math.random()}@test.example`,
       name: "Sami al-Harthy",
       password: "A-strong-test-password-1",
       role: "EXTERNAL",
+      disciplineId: (await prisma.discipline.findFirstOrThrow({ where: { orgId: actor.orgId } })).id,
       companyName: "Gulf Inspection Services",
     });
   }

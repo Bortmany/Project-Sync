@@ -9,6 +9,7 @@ import { useDocumentVersions } from "@/components/hooks/use-api";
 import { formatDate } from "@/components/format";
 import { formatFileSize } from "@/components/documents/file-icon";
 import { Badge, ErrorBanner, Skeleton } from "@/components/ui";
+import { rememberOpener, returnFocusTo, trapFocus } from "@/components/ui/modal";
 
 export function VersionHistoryPanel({
   documentId,
@@ -23,16 +24,32 @@ export function VersionHistoryPanel({
 }) {
   const versions = useDocumentVersions(documentId, open);
   const panel = useRef<HTMLDivElement>(null);
+  // The latest close handler, kept to one side so a fresh one from the parent never re-runs the
+  // effect below — that would pull focus back onto the panel (the same fault the Modal had).
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
 
+  // Runs when the panel opens and only then: focus moves onto it once, and Escape closes it. On
+  // closing, focus goes back to the button that opened it, the same way the Modal does.
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") onCloseRef.current();
     };
+    const opener = rememberOpener();
+    const node = panel.current;
     document.addEventListener("keydown", onKey);
-    panel.current?.focus();
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    // Tab stays inside the panel, and the page behind is switched off, the same way the Modal does.
+    const release = node ? trapFocus(node) : () => undefined;
+    node?.focus();
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      release();
+      returnFocusTo(opener, node);
+    };
+  }, [open]);
 
   if (!open) return null;
 

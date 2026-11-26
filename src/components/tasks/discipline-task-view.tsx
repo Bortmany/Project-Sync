@@ -29,7 +29,7 @@ import {
 } from "@/components/hooks/use-api";
 import { FavoriteStar } from "@/components/shell/favorite-star";
 import { DependenciesCard } from "@/components/tasks/dependencies-card";
-import { formatDate } from "@/components/format";
+import { formatDate, formatDateRange } from "@/components/format";
 import {
   Avatar,
   Breadcrumb,
@@ -109,6 +109,17 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
   const [reopenOpen, setReopenOpen] = useState(false);
   const [reopenReason, setReopenReason] = useState("");
 
+  // A cancelled dialog forgets what was typed in it: opening it again starts from an empty box.
+  function cancelBlock() {
+    setBlockNote("");
+    setBlockOpen(false);
+  }
+
+  function cancelReopen() {
+    setReopenReason("");
+    setReopenOpen(false);
+  }
+
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: ["discipline-task", taskId] });
     void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
@@ -160,10 +171,14 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
   const teammates = (project.data?.members ?? []).filter(
     (member) => member.disciplineId === data.disciplineId,
   );
-  const mentionable = (project.data?.members ?? []).map((member) => ({
-    userId: member.userId,
-    userName: member.userName,
-  }));
+  // The one contractor a comment here can reach is the one this task is assigned to
+  // (notifiableRecipients() in comments.ts); any other contractor would be a mention nobody hears.
+  const mentionable = (project.data?.members ?? [])
+    .filter((member) => member.projectRole !== "EXTERNAL" || member.userId === data.assigneeId)
+    .map((member) => ({
+      userId: member.userId,
+      userName: member.userName,
+    }));
   // The departments on this project, for "@Mechanical". Already loaded with the project — no
   // second fetch for the composer.
   const mentionableDepartments = (project.data?.disciplines ?? []).map((discipline) => ({
@@ -467,7 +482,7 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
               <div>
                 <dt className="text-xs text-[var(--brand-gray)]">Dates</dt>
                 <dd className="mt-1">
-                  {formatDate(data.startDate)} — {formatDate(data.deadline)}
+                  {formatDateRange(data.startDate, data.deadline)}
                 </dd>
               </div>
               <div>
@@ -501,10 +516,10 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
         open={blockOpen}
         size="sm"
         title="Mark as blocked"
-        onClose={() => setBlockOpen(false)}
+        onClose={cancelBlock}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setBlockOpen(false)}>
+            <Button variant="ghost" onClick={cancelBlock}>
               Cancel
             </Button>
             <Button
@@ -535,10 +550,10 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
         open={reopenOpen}
         size="sm"
         title="Reopen this task"
-        onClose={() => setReopenOpen(false)}
+        onClose={cancelReopen}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setReopenOpen(false)}>
+            <Button variant="ghost" onClick={cancelReopen}>
               Cancel
             </Button>
             <Button
@@ -579,7 +594,7 @@ export function DisciplineTaskView({ taskId }: { taskId: string }) {
  * and the stage gate are all still judged, so this button can be refused in plain English exactly
  * as "Mark complete" can. Sending it back always carries a note saying what needs changing.
  */
-function SignOffPanel({
+export function SignOffPanel({
   taskId,
   title,
   onDone,
@@ -588,10 +603,23 @@ function SignOffPanel({
   title: string;
   onDone: () => void;
 }) {
-  const { run, pending, error } = useAction();
+  const { run, pending, error, reset } = useAction();
   const [rejectOpen, setRejectOpen] = useState(false);
   const [note, setNote] = useState("");
   const noteTooShort = note.trim().length < 5;
+
+  // A refusal is shown where the person is looking: inside the Send back dialog while it is open,
+  // in this panel otherwise — never behind an open dialog where nobody can read it.
+  function openReject() {
+    reset();
+    setRejectOpen(true);
+  }
+
+  function cancelReject() {
+    reset();
+    setNote("");
+    setRejectOpen(false);
+  }
 
   return (
     <div className="space-y-3 rounded-[var(--radius)] border border-[var(--status-awaiting-review)] bg-white p-4">
@@ -603,7 +631,7 @@ function SignOffPanel({
         </p>
       </div>
 
-      {error ? <ErrorBanner message={error} /> : null}
+      {error && !rejectOpen ? <ErrorBanner message={error} /> : null}
 
       <div className="flex flex-wrap gap-3">
         <Button
@@ -624,7 +652,7 @@ function SignOffPanel({
           variant="secondary"
           className="min-h-11"
           disabled={pending}
-          onClick={() => setRejectOpen(true)}
+          onClick={openReject}
         >
           Send back
         </Button>
@@ -633,10 +661,10 @@ function SignOffPanel({
       <Modal
         open={rejectOpen}
         title={`Send back "${title}"`}
-        onClose={() => setRejectOpen(false)}
+        onClose={cancelReject}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setRejectOpen(false)}>
+            <Button variant="ghost" onClick={cancelReject}>
               Cancel
             </Button>
             <Button
@@ -659,6 +687,11 @@ function SignOffPanel({
           </>
         }
       >
+        {error ? (
+          <div className="mb-3">
+            <ErrorBanner message={error} />
+          </div>
+        ) : null}
         <Field
           label="What needs changing?"
           hint="The contractor sees this, so be specific. At least 5 characters."

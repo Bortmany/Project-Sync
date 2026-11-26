@@ -6,7 +6,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   createPhase,
@@ -28,6 +28,8 @@ import {
   ProgressBar,
   Skeleton,
   Textarea,
+  neighbourOf,
+  type FocusAfterClose,
 } from "@/components/ui";
 import type { PhaseDTO } from "@/lib/zod-schemas";
 
@@ -50,7 +52,7 @@ function OverridePhaseDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
-  const { run, pending, error, fieldErrors } = useAction();
+  const { run, pending, error, fieldErrors, clearFieldError } = useAction();
   const [reason, setReason] = useState("");
 
   return (
@@ -95,7 +97,10 @@ function OverridePhaseDialog({
           <Textarea
             value={reason}
             placeholder="Why is this phase starting before the previous one is finished?"
-            onChange={(event) => setReason(event.target.value)}
+            onChange={(event) => {
+              clearFieldError("reason");
+              setReason(event.target.value);
+            }}
           />
         </Field>
       </div>
@@ -114,18 +119,25 @@ function AddPhaseDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
-  const { run, pending, error, fieldErrors } = useAction();
+  const { run, pending, error, fieldErrors, reset, clearFieldError } = useAction();
   const [name, setName] = useState("");
+
+  // A cancelled dialog forgets what was typed in it, and any refusal it was showing.
+  function cancel() {
+    setName("");
+    reset();
+    onClose();
+  }
 
   return (
     <Modal
       open={open}
       size="sm"
       title="Add a phase"
-      onClose={onClose}
+      onClose={cancel}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={cancel}>
             Cancel
           </Button>
           <Button
@@ -157,7 +169,10 @@ function AddPhaseDialog({
           <Input
             value={name}
             placeholder="e.g. Pre-commissioning"
-            onChange={(event) => setName(event.target.value)}
+            onChange={(event) => {
+              clearFieldError("name");
+              setName(event.target.value);
+            }}
           />
         </Field>
       </div>
@@ -176,7 +191,7 @@ function RenamePhaseDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
-  const { run, pending, error, fieldErrors } = useAction();
+  const { run, pending, error, fieldErrors, clearFieldError } = useAction();
   const [name, setName] = useState(phase.name);
 
   return (
@@ -212,7 +227,13 @@ function RenamePhaseDialog({
       <div className="space-y-3">
         {error ? <ErrorBanner message={error} /> : null}
         <Field label="Name" error={fieldError(fieldErrors, "name")}>
-          <Input value={name} onChange={(event) => setName(event.target.value)} />
+          <Input
+            value={name}
+            onChange={(event) => {
+              clearFieldError("name");
+              setName(event.target.value);
+            }}
+          />
         </Field>
       </div>
     </Modal>
@@ -241,6 +262,11 @@ export function PhaseRail({
   const [overriding, setOverriding] = useState<PhaseDTO | null>(null);
   /** Deleting is destructive and sits next to the reorder arrows, so it always asks first. */
   const [confirmDelete, setConfirmDelete] = useState<PhaseDTO | null>(null);
+  // Once a phase is deleted its card (and the × that opened the check) goes: focus moves to the
+  // next phase, else the one before, else "+ Add phase" — after the check has closed.
+  const rail = useRef<HTMLOListElement>(null);
+  const addPhaseButton = useRef<HTMLButtonElement>(null);
+  const afterDelete = useRef<FocusAfterClose | null>(null);
 
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: ["project", projectId, "phases"] });
@@ -298,6 +324,12 @@ export function PhaseRail({
       failure: "Couldn't delete this phase. Try again.",
       onSuccess: () => {
         if (selected === phase.id) onSelect(null);
+        const card = Array.from(rail.current?.querySelectorAll("[data-phase-id]") ?? []).find(
+          (element) => element.getAttribute("data-phase-id") === phase.id,
+        );
+        afterDelete.current = () =>
+          (rail.current && neighbourOf(card, "button[aria-pressed]", rail.current)) ??
+          addPhaseButton.current;
         setConfirmDelete(null);
         refresh();
       },
@@ -321,92 +353,54 @@ export function PhaseRail({
             </button>
           ) : null}
           {canManage ? (
-            <Button variant="ghost" onClick={() => setAddOpen(true)}>
+            <Button ref={addPhaseButton} variant="ghost" onClick={() => setAddOpen(true)}>
               + Add phase
             </Button>
           ) : null}
         </div>
       </div>
 
-      <ol className="flex flex-wrap gap-2">
+      <ol ref={rail} className="flex flex-wrap gap-2">
         {rows.map((phase, index) => {
           const isSelected = selected === phase.id;
           return (
             <li
               key={phase.id}
-              className={`min-w-52 flex-1 rounded-[var(--radius)] border p-3 ${
+              data-phase-id={phase.id}
+              className={`flex min-w-52 flex-1 flex-col rounded-[var(--radius)] border p-3 ${
                 isSelected ? "border-[var(--brand-primary)]" : "border-[var(--border)]"
               } ${phase.locked ? "bg-[var(--page-bg)]" : "bg-white"}`}
             >
-              <div className="flex items-start justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={() => onSelect(isSelected ? null : phase.id)}
-                  aria-pressed={isSelected}
-                  className="min-w-0 flex-1 text-left"
+              {/* The name owns the whole width of the card and wraps onto a second line when it
+                  is long. The manage buttons live on their own row at the foot of the card, so
+                  they can never squeeze the name out (they used to sit beside it and left only
+                  the number visible on a laptop). */}
+              <button
+                type="button"
+                onClick={() => onSelect(isSelected ? null : phase.id)}
+                aria-pressed={isSelected}
+                className="block w-full min-w-0 text-left"
+              >
+                <span
+                  className="flex items-start gap-1.5 text-sm font-semibold"
+                  style={{
+                    color: phase.locked ? "var(--brand-gray)" : "var(--brand-ink)",
+                  }}
                 >
-                  <span
-                    className="flex items-center gap-1.5 text-sm font-semibold"
-                    style={{
-                      color: phase.locked ? "var(--brand-gray)" : "var(--brand-ink)",
-                    }}
-                    title={phase.name}
-                  >
-                    <span className="shrink-0 text-[10px] text-[var(--brand-gray)]">
-                      {index + 1}
-                    </span>
-                    {/* Truncate rather than let a long name ("Commissioning") push into the Rename
-                        control on a narrow card — the full name stays on the hover title. */}
-                    <span className="min-w-0 truncate">{phase.name}</span>
-                    {phase.locked ? (
-                      <LockIcon className="shrink-0 text-[var(--brand-gray)]" />
-                    ) : null}
+                  <span className="shrink-0 pt-0.5 text-[10px] text-[var(--brand-gray)]">
+                    {index + 1}
                   </span>
-                  <span className="mt-0.5 block text-xs text-[var(--brand-text)]">
-                    {phase.completedCount}/{phase.taskCount} main tasks complete
+                  <span data-phase-name className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">
+                    {phase.name}
                   </span>
-                </button>
-
-                {canManage ? (
-                  <div className="flex shrink-0 items-center gap-0.5">
-                    <button
-                      type="button"
-                      aria-label={`Move ${phase.name} earlier`}
-                      disabled={index === 0 || pending}
-                      onClick={() => move(phase, -1)}
-                      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1 text-xs text-[var(--brand-gray)] hover:text-[var(--brand-ink)] disabled:opacity-40"
-                    >
-                      ←
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Move ${phase.name} later`}
-                      disabled={index === rows.length - 1 || pending}
-                      onClick={() => move(phase, 1)}
-                      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1 text-xs text-[var(--brand-gray)] hover:text-[var(--brand-ink)] disabled:opacity-40"
-                    >
-                      →
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Rename ${phase.name}`}
-                      onClick={() => setRenaming(phase)}
-                      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1 text-xs font-semibold text-[var(--brand-primary)] hover:underline"
-                    >
-                      Rename
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Delete ${phase.name}`}
-                      disabled={pending}
-                      onClick={() => setConfirmDelete(phase)}
-                      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1 text-xs text-[var(--brand-gray)] hover:text-[var(--status-blocked)] disabled:opacity-40"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ) : null}
-              </div>
+                  {phase.locked ? (
+                    <LockIcon className="mt-0.5 shrink-0 text-[var(--brand-gray)]" />
+                  ) : null}
+                </span>
+                <span className="mt-0.5 block text-xs text-[var(--brand-text)]">
+                  {phase.completedCount}/{phase.taskCount} main tasks complete
+                </span>
+              </button>
 
               <div className="mt-2">
                 <ProgressBar pct={pct(phase)} />
@@ -444,6 +438,61 @@ export function PhaseRail({
                   {phase.overriddenByName ? ` — ${phase.overriddenByName}` : ""}
                   {phase.overriddenAt ? `, ${formatDate(phase.overriddenAt)}` : ""}
                 </p>
+              ) : null}
+
+              {canManage ? (
+                // Pinned to the foot of the card, so the rows line up across a rail of cards whose
+                // names wrap to different heights.
+                <div className="mt-auto pt-2">
+                  <div
+                    data-phase-actions
+                    className="flex flex-wrap items-center justify-between gap-1 border-t border-[var(--border)] pt-1"
+                  >
+                    <div className="flex items-center">
+                      <button
+                        type="button"
+                        aria-label={`Move ${phase.name} earlier`}
+                        title="Move earlier"
+                        disabled={index === 0 || pending}
+                        onClick={() => move(phase, -1)}
+                        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-sm text-[var(--brand-gray)] hover:text-[var(--brand-ink)] disabled:opacity-40"
+                      >
+                        ←
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Move ${phase.name} later`}
+                        title="Move later"
+                        disabled={index === rows.length - 1 || pending}
+                        onClick={() => move(phase, 1)}
+                        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-sm text-[var(--brand-gray)] hover:text-[var(--brand-ink)] disabled:opacity-40"
+                      >
+                        →
+                      </button>
+                    </div>
+                    <div className="flex items-center">
+                      <button
+                        type="button"
+                        aria-label={`Rename ${phase.name}`}
+                        disabled={pending}
+                        onClick={() => setRenaming(phase)}
+                        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded px-2 text-xs font-semibold text-[var(--brand-primary)] hover:underline disabled:opacity-40"
+                      >
+                        Rename
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Delete ${phase.name}`}
+                        title="Delete phase"
+                        disabled={pending}
+                        onClick={() => setConfirmDelete(phase)}
+                        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-base text-[var(--brand-gray)] hover:text-[var(--status-blocked)] disabled:opacity-40"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                </div>
               ) : null}
             </li>
           );
@@ -502,6 +551,7 @@ export function PhaseRail({
             open={confirmDelete !== null}
             size="sm"
             title="Delete phase"
+            focusAfterCloseRef={afterDelete}
             onClose={() => setConfirmDelete(null)}
             footer={
               <>
