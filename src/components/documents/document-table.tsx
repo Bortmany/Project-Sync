@@ -4,7 +4,7 @@
 
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode, type RefObject } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { softDeleteDocument } from "@/components/actions";
 import { useAction } from "@/components/hooks/use-action";
@@ -23,6 +23,8 @@ import {
   PhoneCard,
   PhoneCardList,
   SkeletonRows,
+  neighbourOf,
+  type FocusAfterClose,
 } from "@/components/ui";
 import type { DocumentDTO } from "@/lib/zod-schemas";
 
@@ -35,24 +37,33 @@ export type DocumentGroup = {
   emptyNote?: string;
 };
 
+const DELETE_BUTTON = "[data-delete-document]";
+
 function DeleteDialog({
   document,
   open,
+  opener,
   onClose,
   onDeleted,
 }: {
   document: DocumentDTO;
   open: boolean;
+  /** The Delete button that opened this check: the row it sits in goes once the delete lands. */
+  opener: RefObject<HTMLElement | null>;
   onClose: () => void;
   onDeleted: () => void;
 }) {
   const { run, pending, error } = useAction();
+  // Once deleted, the row and its Delete go: focus moves to the next document's Delete, else the
+  // one above — worked out after this check has closed and the page is live again.
+  const afterDelete = useRef<FocusAfterClose | null>(null);
 
   return (
     <Modal
       open={open}
       size="sm"
       title="Delete this document?"
+      focusAfterCloseRef={afterDelete}
       onClose={onClose}
       footer={
         <>
@@ -67,6 +78,9 @@ function DeleteDialog({
                 success: "Document deleted.",
                 failure: "Couldn't delete this document. Try again.",
                 onSuccess: () => {
+                  const from = opener.current;
+                  afterDelete.current = () =>
+                    neighbourOf(from, DELETE_BUTTON, from?.closest("[data-document-table]") ?? undefined);
                   onDeleted();
                   onClose();
                 },
@@ -110,6 +124,7 @@ function DocumentRow({
   onDeleted: () => void;
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const deleteButton = useRef<HTMLButtonElement>(null);
   const revision = document.currentRevision;
 
   return (
@@ -194,7 +209,9 @@ function DocumentRow({
           ) : null}
           {canDelete ? (
             <button
+              ref={deleteButton}
               type="button"
+              data-delete-document
               onClick={() => setConfirmOpen(true)}
               className="inline-flex min-h-11 items-center font-semibold text-[var(--status-blocked)] hover:underline"
             >
@@ -207,6 +224,7 @@ function DocumentRow({
           <DeleteDialog
             document={document}
             open={confirmOpen}
+            opener={deleteButton}
             onClose={() => setConfirmOpen(false)}
             onDeleted={onDeleted}
           />
@@ -233,6 +251,7 @@ function DocumentCard({
   onDeleted: () => void;
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const deleteButton = useRef<HTMLButtonElement>(null);
   const revision = document.currentRevision;
 
   return (
@@ -296,7 +315,9 @@ function DocumentCard({
             ) : null}
             {canDelete ? (
               <Button
+                ref={deleteButton}
                 variant="ghost"
+                data-delete-document
                 className="min-h-11 w-full text-[var(--status-blocked)]"
                 onClick={() => setConfirmOpen(true)}
               >
@@ -307,6 +328,7 @@ function DocumentCard({
               <DeleteDialog
                 document={document}
                 open={confirmOpen}
+                opener={deleteButton}
                 onClose={() => setConfirmOpen(false)}
                 onDeleted={onDeleted}
               />
@@ -372,7 +394,7 @@ export function DocumentTable({
   if (total === 0) return <>{empty}</>;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" data-document-table>
       {groups.map((group) => (
         <section key={group.key} className="space-y-2">
           {group.label ? (

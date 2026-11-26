@@ -8,7 +8,7 @@
 // exactly one activity row inside the same transaction as the change itself.
 
 import { notDeleted, prisma } from "@/lib/db";
-import { ForbiddenError, assertCan } from "@/lib/permissions";
+import { assertCan, forbidden } from "@/lib/permissions";
 import type { ActivityItemDTO, CommentDTO, CreateCommentInput } from "@/lib/zod-schemas";
 import {
   ActivityItemDTO as ActivityItemSchema,
@@ -254,7 +254,7 @@ export async function editComment(
 
   if (existing.deletedAt) throw new ServiceError("That comment was removed, so it cannot be edited.");
   if (existing.authorId !== actor.userId && actor.role !== "ADMIN") {
-    throw new ForbiddenError("COMMENT", "You can only edit your own comments.");
+    throw forbidden(actor, "COMMENT", "You can only edit your own comments.");
   }
 
   const body = input.body.trim();
@@ -303,7 +303,8 @@ export async function deleteComment(
   };
 
   if (existing.authorId !== actor.userId && !canModerate(actor, target.projectId)) {
-    throw new ForbiddenError(
+    throw forbidden(
+      actor,
       "COMMENT",
       "You can only remove your own comments. A project manager can remove anyone's.",
     );

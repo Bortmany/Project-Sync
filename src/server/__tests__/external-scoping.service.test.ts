@@ -80,7 +80,8 @@ import {
   listComments,
 } from "@/server/services/comments";
 import { getDashboardForActor, listTileWork } from "@/server/services/dashboard";
-import { listAllUsers, updateUser } from "@/server/services/admin";
+import { createUser, listAllUsers, updateUser } from "@/server/services/admin";
+import { CONTRACTOR_DISCIPLINE_MESSAGE } from "@/lib/discipline-rules";
 import { listUsers } from "@/server/services/directory";
 import {
   getVersionForDownload,
@@ -108,8 +109,10 @@ import {
   listProjectsForActor,
   setExternalSignoffRequired,
   upsertMember,
+  upsertProjectDiscipline,
 } from "@/server/services/projects";
 import {
+  CONTRACTOR_OWNER_MESSAGE,
   addDependency,
   removeDependency,
   completeDisciplineTask,
@@ -124,6 +127,7 @@ import {
   overrideMainTaskStatus,
   rejectDisciplineTaskReview,
   updateDisciplineTaskStatus,
+  updateMainTask,
 } from "@/server/services/tasks";
 import {
   inThirtyDays,
@@ -2159,5 +2163,292 @@ describe("submitting for sign-off twice", () => {
     expect(await prisma.activityLog.count({ where: { action: "SUBMITTED_FOR_REVIEW", entityId: myTaskId } })).toBe(rowsBefore);
     expect(await prisma.notification.count({ where: { linkUrl: `/discipline-tasks/${myTaskId}` } })).toBe(toldBefore);
     expect((await getDisciplineTaskForActor(contractor, myTaskId)).status).toBe("AWAITING_REVIEW");
+  });
+});
+
+describe("every refusal a contractor meets is 'not found', never 'you do not have permission'", () => {
+  async function signInAs(userId: string): Promise<void> {
+    const minted = mintSession();
+    await prisma.session.create({ data: { tokenHash: minted.tokenHash, userId, expiresAt: minted.expiresAt } });
+    jar.set(SESSION_COOKIE, { value: minted.rawToken });
+  }
+
+  const NOT_FOUND_WORDS = /could not find/i;
+
+  function pdfUpload(target: Record<string, string>): Request {
+    const form = new FormData();
+    form.set("file", new File([Buffer.from("%PDF-1.4\n% contractor\n%%EOF\n", "utf8")], "Report.pdf"));
+    for (const [key, value] of Object.entries(target)) form.set(key, value);
+    return new Request("http://localhost/api/uploads", { method: "POST", body: form });
+  }
+
+  it("walks every action a contractor may not take on their own project and gets not-found from each", async () => {
+    const mainTasks = await import("@/server/actions/main-tasks");
+    const phaseActions = await import("@/server/actions/phases");
+    const projectActions = await import("@/server/actions/projects");
+    const commentActions = await import("@/server/actions/comments");
+    const disciplineActions = await import("@/server/actions/discipline-tasks");
+    const documentActions = await import("@/server/actions/documents");
+    const adminActions = await import("@/server/actions/admin");
+    const { createPhase } = await import("@/server/services/phases");
+
+    // Real rows for every action to aim at, all on the contractor's OWN project.
+    const phase = await createPhase(fixture.adminActor, { projectId: fixture.projectId, name: "Detail design" });
+    const colleagueComment = await createComment(fixture.pmActor, {
+      disciplineTaskId: myTaskId,
+      body: "Looks good so far.",
+      mentions: [],
+    });
+    const sharedDoc = await uploadTo(fixture.pmActor, { projectId: fixture.projectId, mainTaskId: sharedMainTaskId }, "Register.pdf");
+    await completeDisciplineTask(contractor, { id: myTaskId }).catch(() => undefined);
+
+    await signInAs(contractor.userId);
+    const attempts: Record<string, Promise<{ ok: boolean; error?: string }>> = {
+      createMainTask: mainTasks.createMainTask({
+        projectId: fixture.projectId,
+        title: "Contractor's own main task",
+        description: "Should never be created.",
+        priority: "LOW",
+        deadline: inThirtyDays(),
+        disciplineTasks: [],
+      }),
+      updateMainTask: mainTasks.updateMainTask({ id: sharedMainTaskId, title: "Renamed by contractor" }),
+      overrideMainTaskStatus: mainTasks.overrideMainTaskStatus({
+        id: sharedMainTaskId,
+        status: "COMPLETED",
+        reason: "Contractor says so",
+      }),
+      clearOverride: mainTasks.clearOverride({ id: sharedMainTaskId }),
+      createPhase: phaseActions.createPhase({ projectId: fixture.projectId, name: "Contractor phase" }),
+      renamePhase: phaseActions.renamePhase({ id: phase.id, name: "Renamed" }),
+      reorderPhases: phaseActions.reorderPhases({ projectId: fixture.projectId, phaseIds: [phase.id] }),
+      deletePhase: phaseActions.deletePhase({ id: phase.id }),
+      overridePhaseLock: phaseActions.overridePhaseLock({ id: phase.id, reason: "Contractor wants in" }),
+      setMainTaskPhase: phaseActions.setMainTaskPhase({ id: sharedMainTaskId, phaseId: phase.id }),
+      createProject: projectActions.createProject({
+        name: "Contractor project",
+        code: "CTR-1",
+        description: "Never.",
+        disciplineIds: [],
+        members: [],
+      }),
+      updateProject: projectActions.updateProject({ id: fixture.projectId, name: "Renamed project" }),
+      setExternalSignoffRequired: projectActions.setExternalSignoffRequired({
+        projectId: fixture.projectId,
+        required: false,
+      }),
+      upsertMember: projectActions.upsertMember({
+        projectId: fixture.projectId,
+        userId: contractor.userId,
+        projectRole: "EXTERNAL",
+        disciplineId: fixture.disciplineId,
+      }),
+      removeMember: projectActions.removeMember({ projectId: fixture.projectId, userId: fixture.engineerActor.userId }),
+      upsertProjectDiscipline: projectActions.upsertProjectDiscipline({
+        projectId: fixture.projectId,
+        disciplineId: fixture.disciplineId,
+        leadId: contractor.userId,
+      }),
+      removeProjectDiscipline: projectActions.removeProjectDiscipline({
+        projectId: fixture.projectId,
+        disciplineId: fixture.otherDisciplineId,
+      }),
+      commentOnMainTask: commentActions.createComment({
+        mainTaskId: sharedMainTaskId,
+        body: "Hello from outside.",
+        mentions: [],
+      }),
+      editColleaguesComment: commentActions.editComment({ id: colleagueComment.id, body: "Changed by contractor" }),
+      deleteColleaguesComment: commentActions.deleteComment({ id: colleagueComment.id }),
+      createDisciplineTask: disciplineActions.createDisciplineTask({
+        mainTaskId: sharedMainTaskId,
+        disciplineId: fixture.disciplineId,
+        title: "Contractor-made task",
+        deadline: inThirtyDays(),
+        priority: "MEDIUM",
+        isMandatory: true,
+        requiredDocuments: [],
+      }),
+      confirmOwnReview: disciplineActions.confirmDisciplineTaskReview({ id: myTaskId }),
+      deleteSharedDocument: documentActions.softDeleteDocument({ id: sharedDoc.documentId }),
+      createUser: adminActions.createUser({
+        email: "smuggled@example.com",
+        name: "Smuggled In",
+        password: "a-long-enough-password",
+        role: "ENGINEER",
+        disciplineId: fixture.disciplineId,
+      }),
+    };
+
+    type Answer = { ok: boolean; notFound: boolean; error?: string };
+    const answers: Record<string, Answer> = Object.fromEntries(
+      await Promise.all(
+        Object.entries(attempts).map(async ([name, attempt]) => {
+          const result = await attempt;
+          return [name, { ok: result.ok, notFound: NOT_FOUND_WORDS.test(result.error ?? ""), error: result.error }];
+        }),
+      ),
+    );
+    for (const [name, answer] of Object.entries(answers)) {
+      expect({ name, ok: answer.ok, notFound: answer.notFound }, `${name}: ${answer.error}`).toEqual({
+        name,
+        ok: false,
+        notFound: true,
+      });
+      expect(answer.error ?? "").not.toMatch(/permission/i);
+    }
+
+    // And nothing moved: the shared task kept its title, the phase is still there.
+    expect((await prisma.mainTask.findUniqueOrThrow({ where: { id: sharedMainTaskId } })).title).toBe("Flare tip replacement");
+    expect(await prisma.projectPhase.count({ where: { id: phase.id } })).toBe(1);
+  });
+
+  it("answers a contractor's upload to a main task's shared register on their own project with a real 404", async () => {
+    const { POST: uploadRoute } = await import("@/app/api/uploads/route");
+    await signInAs(contractor.userId);
+
+    const targets: Record<string, string>[] = [
+      { projectId: fixture.projectId, mainTaskId: sharedMainTaskId },
+      { projectId: fixture.projectId, disciplineTaskId: theirTaskId },
+      { projectId: fixture.projectId, documentId: internalDocumentId },
+    ];
+    for (const target of targets) {
+      const response = await uploadRoute(pdfUpload(target));
+      const body = (await response.json()) as { ok: boolean; error: string };
+      expect({ status: response.status, ok: body.ok }).toEqual({ status: 404, ok: false });
+      expect(body.error).toMatch(NOT_FOUND_WORDS);
+      expect(body.error).not.toMatch(/permission/i);
+    }
+
+    // Their own task still takes the file.
+    const own = await uploadRoute(pdfUpload({ projectId: fixture.projectId, disciplineTaskId: myTaskId }));
+    expect(own.status).toBe(200);
+  });
+
+  it("a colleague's refusal still says plainly that they lack permission", async () => {
+    const { editComment: editAction } = await import("@/server/actions/comments");
+    const created = await createComment(fixture.pmActor, {
+      disciplineTaskId: theirTaskId,
+      body: "Manager note.",
+      mentions: [],
+    });
+    await signInAs(fixture.engineerActor.userId);
+    const refused = await editAction({ id: created.id, body: "Not mine to change" });
+    expect(refused).toMatchObject({ ok: false, error: "You can only edit your own comments." });
+  });
+
+  it("sends a real not-found for /messages from its layout, exactly like /admin, and lets staff through", async () => {
+    const { default: MessagesLayout } = await import("@/app/(app)/messages/layout");
+    const { default: AdminLayout } = await import("@/app/(app)/admin/layout");
+    const NOT_FOUND = { digest: expect.stringContaining("404") };
+
+    await signInAs(contractor.userId);
+    // Raised by the layout — above the page's loading.tsx boundary — so the status is 404, not 200.
+    await expect(MessagesLayout({ children: null })).rejects.toMatchObject(NOT_FOUND);
+    await expect(AdminLayout({ children: null })).rejects.toMatchObject(NOT_FOUND);
+
+    await signInAs(fixture.engineerActor.userId);
+    await expect(MessagesLayout({ children: "board" })).resolves.toBe("board");
+  });
+});
+
+describe("a contractor's account carries their discipline, because they join projects in it", () => {
+  const base = {
+    name: "Sami al-Harthy",
+    password: "A-strong-test-password-1",
+    role: "EXTERNAL" as const,
+    companyName: "Gulf Inspection Services",
+  };
+  const email = () => `contractor.${Math.random().toString(36).slice(2)}@partner.example`;
+
+  it("refuses a new contractor without one, naming the field, and accepts one with it", async () => {
+    const refused = createUser(fixture.adminActor, { ...base, email: email() });
+    await expect(refused).rejects.toBeInstanceOf(ServiceError);
+    await expect(refused).rejects.toMatchObject({
+      message: CONTRACTOR_DISCIPLINE_MESSAGE,
+      fieldErrors: { disciplineId: [CONTRACTOR_DISCIPLINE_MESSAGE] },
+    });
+
+    const made = await createUser(fixture.adminActor, { ...base, email: email(), disciplineId: fixture.disciplineId });
+    expect(made.disciplineId).toBe(fixture.disciplineId);
+  });
+
+  it("never lets a contractor's discipline be cleared, nor anyone become a contractor without one", async () => {
+    const made = await createUser(fixture.adminActor, { ...base, email: email(), disciplineId: fixture.disciplineId });
+    await expect(updateUser(fixture.adminActor, { id: made.id, disciplineId: null })).rejects.toThrow(
+      CONTRACTOR_DISCIPLINE_MESSAGE,
+    );
+
+    const colleague = await makeUser({ name: "Office Admin Two", role: "PROJECT_MANAGER", orgId: fixture.orgId });
+    await expect(
+      updateUser(fixture.adminActor, { id: colleague.id, role: "EXTERNAL", companyName: "Partner Co" }),
+    ).rejects.toThrow(CONTRACTOR_DISCIPLINE_MESSAGE);
+  });
+
+  it("keeps a contractor saved before the rule working exactly as before", async () => {
+    // The file's own contractor was made with no discipline — the shape older accounts have.
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: contractor.userId } })).disciplineId).toBeNull();
+    const extended = await updateUser(fixture.adminActor, {
+      id: contractor.userId,
+      name: "Yusuf Contractor",
+      role: "EXTERNAL",
+      disciplineId: null,
+      companyName: "Al Hassan Engineering",
+      accessExpiresAt: inThirtyDays(),
+    });
+    expect(extended.disciplineId).toBeNull();
+    // Their work is still theirs.
+    expect((await getDisciplineTaskForActor(contractor, myTaskId)).id).toBe(myTaskId);
+    // And giving them one later is the fix the Team tab points at.
+    const fixed = await updateUser(fixture.adminActor, { id: contractor.userId, disciplineId: fixture.disciplineId });
+    expect(fixed.disciplineId).toBe(fixture.disciplineId);
+  });
+});
+
+describe("a contractor is never a main task's owner or a discipline's lead", () => {
+  it("refuses a contractor as owner when a main task is created or its owner changed", async () => {
+    const refused = createMainTask(fixture.adminActor, {
+      projectId: fixture.projectId,
+      title: "Owned by a contractor",
+      description: "Should be refused.",
+      priority: "LOW",
+      deadline: inThirtyDays(),
+      ownerId: contractor.userId,
+      disciplineTasks: [],
+    });
+    await expect(refused).rejects.toThrow(CONTRACTOR_OWNER_MESSAGE);
+
+    await expect(
+      updateMainTask(fixture.adminActor, { id: otherMainTaskId, ownerId: contractor.userId }),
+    ).rejects.toThrow(CONTRACTOR_OWNER_MESSAGE);
+    expect((await prisma.mainTask.findUniqueOrThrow({ where: { id: otherMainTaskId } })).ownerId).toBeNull();
+
+    // A colleague is still fine, and the contractor can still be given discipline work.
+    const owned = await updateMainTask(fixture.adminActor, { id: otherMainTaskId, ownerId: fixture.pmActor.userId });
+    expect(owned.ownerId).toBe(fixture.pmActor.userId);
+  });
+
+  it("leaves an owner set before the rule alone when the task is saved again", async () => {
+    await prisma.mainTask.update({ where: { id: sharedMainTaskId }, data: { ownerId: contractor.userId } });
+    const saved = await updateMainTask(fixture.adminActor, {
+      id: sharedMainTaskId,
+      title: "Flare tip replacement (rev)",
+      ownerId: contractor.userId,
+    });
+    expect(saved.ownerId).toBe(contractor.userId);
+  });
+
+  it("refuses a contractor as a discipline's lead on the project", async () => {
+    await prisma.projectMember.update({
+      where: { projectId_userId: { projectId: fixture.projectId, userId: contractor.userId } },
+      data: { disciplineId: fixture.disciplineId },
+    });
+    await expect(
+      upsertProjectDiscipline(fixture.adminActor, {
+        projectId: fixture.projectId,
+        disciplineId: fixture.disciplineId,
+        leadId: contractor.userId,
+      }),
+    ).rejects.toThrow(/can't lead a discipline/);
   });
 });

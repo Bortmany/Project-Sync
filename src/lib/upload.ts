@@ -154,6 +154,11 @@ export function storedFilePath(storedFilename: string): string {
   return path.join(uploadsDir(), path.basename(storedFilename));
 }
 
+/** The file's SHA-256 fingerprint, the same one stored on every revision (`checksumSha256`). */
+export function checksumOf(buf: Buffer): string {
+  return createHash("sha256").update(buf).digest("hex");
+}
+
 /** Writes the bytes under a random filename inside DATA_DIR/uploads and returns what the DB needs. */
 export async function storeFile(buf: Buffer, ext: string): Promise<StoredFile> {
   const dir = uploadsDir();
@@ -163,7 +168,7 @@ export async function storeFile(buf: Buffer, ext: string): Promise<StoredFile> {
   await writeFile(path.join(dir, storedFilename), buf, { flag: "wx" });
   return {
     storedFilename,
-    checksumSha256: createHash("sha256").update(buf).digest("hex"),
+    checksumSha256: checksumOf(buf),
     sizeBytes: buf.length,
   };
 }

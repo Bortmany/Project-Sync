@@ -5,6 +5,7 @@ export {
   createProject,
   updateProject,
   setExternalSignoffRequired,
+  addMember,
   upsertMember,
   removeMember,
   upsertProjectDiscipline,

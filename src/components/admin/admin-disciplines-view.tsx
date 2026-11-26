@@ -63,7 +63,7 @@ function DisciplineDialog({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const { run, pending, error, fieldErrors } = useAction();
+  const { run, pending, error, fieldErrors, clearFieldError } = useAction();
   const [code, setCode] = useState(discipline?.code ?? "");
   const [name, setName] = useState(discipline?.name ?? "");
   const [colorHex, setColorHex] = useState(discipline?.colorHex ?? DISCIPLINE_PALETTE[0].hex);
@@ -84,6 +84,8 @@ function DisciplineDialog({
       {
         success: `Discipline “${name.trim()}” saved.`,
         failure: "Couldn't save this discipline. Try again.",
+        // A taken code or name is said once, under its field.
+        shownOnFields: ["code", "name", "colorHex"],
         onSuccess: () => {
           router.refresh();
           onClose();
@@ -91,6 +93,8 @@ function DisciplineDialog({
       },
     );
   }
+
+  const canSave = Boolean(name.trim()) && (Boolean(discipline) || Boolean(code.trim()));
 
   return (
     <Modal
@@ -103,13 +107,21 @@ function DisciplineDialog({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={pending} disabled={!name.trim() || (!discipline && !code.trim())} onClick={submit}>
+          <Button loading={pending} disabled={!canSave} onClick={submit}>
             Save
           </Button>
         </>
       }
     >
-      <div className="space-y-3">
+      <div
+        className="space-y-3"
+        // Enter in a box saves, the way it does in any form — Save sits in the footer, outside them.
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || !(event.target instanceof HTMLInputElement)) return;
+          event.preventDefault();
+          if (canSave && !pending) submit();
+        }}
+      >
         {error ? <ErrorBanner message={error} /> : null}
         <Field
           label="Code"
@@ -120,14 +132,29 @@ function DisciplineDialog({
             value={discipline?.code ?? code}
             disabled={Boolean(discipline)}
             readOnly={Boolean(discipline)}
-            onChange={(event) => setCode(event.target.value.toUpperCase())}
+            onChange={(event) => {
+              clearFieldError("code");
+              setCode(event.target.value.toUpperCase());
+            }}
           />
         </Field>
         <Field label="Name" error={fieldError(fieldErrors, "name")}>
-          <Input value={name} onChange={(event) => setName(event.target.value)} />
+          <Input
+            value={name}
+            onChange={(event) => {
+              clearFieldError("name");
+              setName(event.target.value);
+            }}
+          />
         </Field>
         <Field label="Colour" error={fieldError(fieldErrors, "colorHex")}>
-          <ColorPicker value={colorHex} onChange={setColorHex} />
+          <ColorPicker
+            value={colorHex}
+            onChange={(hex) => {
+              clearFieldError("colorHex");
+              setColorHex(hex);
+            }}
+          />
         </Field>
         <Field label="Order" hint="Where it sits in every discipline list. Lower shows first.">
           <Input
@@ -186,7 +213,12 @@ export function AdminDisciplinesView({ disciplines }: { disciplines: DisciplineD
                 { label: "Order", value: <span className="tabular-nums">{discipline.sortOrder}</span> },
               ]}
               actions={
-                <Button variant="secondary" className="min-h-11 w-full" onClick={() => setEditing(discipline)}>
+                <Button
+                  variant="secondary"
+                  className="min-h-11 w-full"
+                  aria-label={`Edit ${discipline.name}`}
+                  onClick={() => setEditing(discipline)}
+                >
                   Edit
                 </Button>
               }
@@ -230,6 +262,7 @@ export function AdminDisciplinesView({ disciplines }: { disciplines: DisciplineD
                   <td className="px-3">
                     <button
                       type="button"
+                      aria-label={`Edit ${discipline.name}`}
                       onClick={() => setEditing(discipline)}
                       className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--brand-primary)] hover:underline"
                     >

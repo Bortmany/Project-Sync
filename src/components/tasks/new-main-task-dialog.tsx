@@ -54,7 +54,7 @@ export function NewMainTaskDialog({
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { run, pending, error, fieldErrors } = useAction();
+  const { run, pending, error, fieldErrors, reset: resetAction, clearFieldError } = useAction();
   const phases = usePhases(project.id);
 
   // New work lands where the team is actually working — NOT simply in the first unlocked phase,
@@ -168,10 +168,18 @@ export function NewMainTaskDialog({
     );
   }
 
+  // Closing without creating forgets the half-filled form, and any refusal it was showing, so the
+  // next "New main task" starts clean rather than with somebody's abandoned text.
+  function cancel() {
+    reset();
+    resetAction();
+    onClose();
+  }
+
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={cancel}
       size="lg"
       title={`New main task — ${project.name}`}
       footer={
@@ -200,7 +208,13 @@ export function NewMainTaskDialog({
             Details
           </h3>
           <Field label="Title" error={fieldError(fieldErrors, "title")}>
-            <Input value={title} onChange={(event) => setTitle(event.target.value)} required />
+            <Input
+              value={title}
+              onChange={(event) => {
+                clearFieldError("title");
+                setTitle(event.target.value);
+              }}
+              required />
           </Field>
           <Field label="Description">
             <Textarea
@@ -233,6 +247,7 @@ export function NewMainTaskDialog({
                 value={deadline}
                 min={startDate || undefined}
                 onChange={(event) => {
+                  clearFieldError("deadline");
                   const value = event.target.value;
                   setDeadline(value);
                   setRows((current) => {
@@ -268,11 +283,15 @@ export function NewMainTaskDialog({
           <Field label="Owner">
             <Select value={ownerId} onChange={(event) => setOwnerId(event.target.value)}>
               <option value="">No owner yet</option>
-              {project.members.map((member) => (
-                <option key={member.userId} value={member.userId}>
-                  {member.userName}
-                </option>
-              ))}
+              {/* Never a contractor: they only see their own discipline tasks, so a main task they
+                  owned would be "not found" for them. The server refuses it too. */}
+              {project.members
+                .filter((member) => member.projectRole !== "EXTERNAL")
+                .map((member) => (
+                  <option key={member.userId} value={member.userId}>
+                    {member.userName}
+                  </option>
+                ))}
             </Select>
           </Field>
         </section>

@@ -8,7 +8,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState, type RefObject } from "react";
 import { addDependency, removeDependency } from "@/components/actions";
 import { useAction } from "@/components/hooks/use-action";
 import { useMainTask } from "@/components/hooks/use-api";
@@ -21,6 +21,8 @@ import {
   Modal,
   SkeletonRows,
   StatusBadge,
+  neighbourOf,
+  type FocusAfterClose,
 } from "@/components/ui";
 import type { DisciplineTaskDTO } from "@/lib/zod-schemas";
 
@@ -39,13 +41,32 @@ export function DependenciesCard({
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [removing, setRemoving] = useState<Dependency | null>(null);
+  // Once a wait is removed its row (and the Remove button that opened the check) goes: focus moves
+  // to the next row's Remove, else the one above, else "Add dependency" — after the check closes.
+  const list = useRef<HTMLUListElement>(null);
+  const addButton = useRef<HTMLButtonElement>(null);
+  const afterRemove = useRef<FocusAfterClose | null>(null);
+
+  function removed(dependencyId: string) {
+    const row = Array.from(list.current?.querySelectorAll("[data-dependency-id]") ?? []).find(
+      (element) => element.getAttribute("data-dependency-id") === dependencyId,
+    );
+    afterRemove.current = () =>
+      (list.current && neighbourOf(row, 'button[aria-label^="Remove the wait on"]', list.current)) ??
+      addButton.current;
+  }
 
   return (
     <Card
       title="Depends on"
       action={
         canEdit ? (
-          <Button variant="secondary" className="min-h-11" onClick={() => setPickerOpen(true)}>
+          <Button
+            ref={addButton}
+            variant="secondary"
+            className="min-h-11"
+            onClick={() => setPickerOpen(true)}
+          >
             Add dependency
           </Button>
         ) : undefined
@@ -61,10 +82,11 @@ export function DependenciesCard({
           Nothing else has to finish before this task.
         </p>
       ) : (
-        <ul className="divide-y divide-[var(--border)]">
+        <ul ref={list} className="divide-y divide-[var(--border)]">
           {task.dependencies.map((dependency) => (
             <li
               key={dependency.id}
+              data-dependency-id={dependency.id}
               className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm"
             >
               <Link
@@ -103,6 +125,8 @@ export function DependenciesCard({
           <RemoveDependencyDialog
             task={task}
             dependency={removing}
+            focusAfterCloseRef={afterRemove}
+            onRemoved={removed}
             onClose={() => setRemoving(null)}
             onChanged={onChanged}
           />
@@ -253,11 +277,16 @@ function AddDependencyDialog({
 function RemoveDependencyDialog({
   task,
   dependency,
+  focusAfterCloseRef,
+  onRemoved,
   onClose,
   onChanged,
 }: {
   task: DisciplineTaskDTO;
   dependency: Dependency | null;
+  focusAfterCloseRef: RefObject<FocusAfterClose | null>;
+  /** Told which wait went, just before the check closes, so it can say where focus goes next. */
+  onRemoved: (dependencyId: string) => void;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -274,6 +303,7 @@ function RemoveDependencyDialog({
       open={dependency !== null}
       size="sm"
       title="Remove this dependency?"
+      focusAfterCloseRef={focusAfterCloseRef}
       onClose={close}
       footer={
         <>
@@ -291,6 +321,7 @@ function RemoveDependencyDialog({
                 success: "Dependency removed.",
                 failure: "Couldn't remove this dependency. Try again.",
                 onSuccess: () => {
+                  onRemoved(dependency.id);
                   onChanged();
                   onClose();
                 },

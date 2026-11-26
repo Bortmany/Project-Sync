@@ -15,7 +15,7 @@
 import Image from "next/image";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { loadTeams, openInBrowser } from "@/components/teams/teams-host";
-import { Button, Field, Input, Spinner } from "@/components/ui";
+import { Button, Field, Input, OneTimeCodeInput, Spinner } from "@/components/ui";
 import { SkeletonRows } from "@/components/ui/skeleton";
 import { TEAMS_SIGN_IN_FAILED_MESSAGE } from "@/lib/teams-messages";
 
@@ -311,19 +311,7 @@ export function TeamsSignIn({ cookiesBlocked }: { cookiesBlocked: boolean }) {
                     />
                   </Field>
                 ) : (
-                  <Field label="Verification code">
-                    <Input
-                      name="code"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      maxLength={6}
-                      required
-                      value={code}
-                      onChange={(event) => setCode(event.target.value)}
-                      placeholder="123456"
-                      className="text-center font-mono text-lg tracking-widest"
-                    />
-                  </Field>
+                  <OneTimeCodeInput name="code" required value={code} onChange={setCode} />
                 )}
                 <p className="text-sm">
                   <button

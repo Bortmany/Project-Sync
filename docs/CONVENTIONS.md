@@ -652,7 +652,8 @@ Server actions live in `src/server/actions`. Each takes its `*Input` type and re
 | `createProject` (refused in plain English once the company's plan has no room for another live project — see "Plans and limits") | `CreateProjectInput` | `ActionResult<ProjectDTO>` |
 | `updateProject` | `UpdateProjectInput` | `ActionResult<ProjectDTO>` |
 | `setExternalSignoffRequired` (EDIT_PROJECT; audited like any other project setting) | `SetExternalSignoffInput` | `ActionResult<ProjectDTO>` |
-| `upsertMember` | `UpsertMemberInput` | `ActionResult<ProjectMemberDTO>` |
+| `addMember` (Team → Add a member; MANAGE_MEMBERS; someone new only — a person already on the project is refused with `fieldErrors.userId`, never overwritten) | `UpsertMemberInput` | `ActionResult<ProjectMemberDTO>` |
+| `upsertMember` (the Members list's role and discipline boxes — the one place a member's seat is changed) | `UpsertMemberInput` | `ActionResult<ProjectMemberDTO>` |
 | `removeMember` | `{ projectId, userId }` | `ActionResult<{ removed: true }>` |
 | `upsertProjectDiscipline` | `UpsertProjectDisciplineInput` | `ActionResult<ProjectDisciplineDTO>` |
 | `removeProjectDiscipline` | `{ projectId, disciplineId }` | `ActionResult<{ removed: true }>` |
@@ -2617,3 +2618,123 @@ About the two seed steps:
   the cover date, footer and file name read in it; deadlines stay UTC days.
 - **A second "Submit for sign-off" is refused** in plain words, and the screen shows only the
   reviewer's actions (Confirm and complete / Send back) while a task is AWAITING_REVIEW.
+
+### Round-two fixes after browser testing (November 2026)
+
+- **A contractor's refusal is "not found" by construction.** `assertCan` builds its refusal with
+  `forbidden(actor, action)` in `src/lib/permissions.ts`: for an EXTERNAL it is a `ForbiddenError`
+  flagged `hidden`, worded "We could not find that." and answered **404** by `statusFor()`. Any
+  service that refuses a person by hand calls `forbidden(actor, …)`, never `new ForbiddenError`.
+  Colleagues keep their plain "You do not have permission" wording and 403.
+- **A section a contractor does not have is gated in its LAYOUT** (`hideFromContractors()` in
+  `page-guards.ts`): Admin and Messages. A not-found raised by a page under `loading.tsx` arrives
+  after the stream has started and is sent as 200.
+- **Contractors carry a discipline.** `src/lib/discipline-rules.ts` is the one rule for the form and
+  `createUser`/`updateUser`: leads, engineers and contractors need one. A contractor saved before
+  the rule may still be saved without one; nobody new, nobody becoming a contractor and nobody
+  having theirs cleared may. Team → Add member links an administrator to `/admin/users?edit=<id>`.
+- **A contractor is never a main task's owner or a discipline's lead** (`assertOnProject` in
+  tasks.ts, `upsertProjectDiscipline`). One set before the rule survives a re-save unchanged. The
+  pickers leave them out, and @-mentions offer a contractor only on the discipline task assigned to
+  them (the only place `notifiableRecipients()` would tell them).
+- **An identical file is asked about, never dropped.** The upload route compares the file's SHA-256
+  with the document's current revision before `storeFile()`; a match answers 409 with
+  `IDENTICAL_REVISION_CODE` and saves nothing, and the dialog's "Upload anyway" sends it again with
+  `allowIdentical`, which files it as the next revision as always.
+- **A dialog takes focus once, when it opens — never again.** `Modal` (and the version history
+  slide-over) keep the latest `onClose` in a ref and move focus only in an effect keyed on `open`.
+  Listing `onClose` in that effect re-ran it on every keystroke, because most dialogs hand in a fresh
+  close handler each render, and typing lost the cursor after the first letter. Any new dialog or
+  panel that moves focus follows the same shape; `src/components/__tests__/dialog-typing-focus.test.tsx`
+  renders the real New project dialog, the Send back note and the version history panel in jsdom
+  (that file only — it opts in with `// @vitest-environment jsdom`; the rest of the suite stays in
+  plain Node), types key by key with user-event, and refuses a focus-moving effect that depends on an
+  `on…` callback.
+- **Closing a dialog hands focus back to what opened it.** `Modal` and the version history panel note
+  the focused element when they open (`rememberOpener()`) and return focus to it when they close
+  (`returnFocusTo()`, both in `modal.tsx`) — unless it has left the page or focus was already moved
+  somewhere on purpose. This lives in the same open-keyed effect, so it cannot bring the typing fault
+  back.
+- **A cancelled dialog forgets what was typed.** Send back, Mark as blocked, Reopen, Add phase and
+  New main task clear their text (and any refusal shown) on Cancel, Escape or the close button. New
+  project keeps its deliberate "Discard this new project?" check when something has been typed, and
+  starts empty again after Discard.
+  So do Override status, Add a discipline task, Add a member (Team tab) and New user; Edit project
+  and Edit task details go back to the saved values. A dialog whose state lives in its parent gets a
+  `cancel()` that resets it, wired to both `onClose` and the Cancel button.
+- **A dialog opened from a "⋯" menu returns focus to that menu's button.** The pressed menu item is
+  gone before the dialog opens, so there is no opener to remember; the row passes its "Options for…"
+  button as `returnFocusRef` to `Modal` (comments: Delete; noticeboard posts: Edit, Delete).
+- **Escape inside a box that uses it is not the dialog's.** The people search (`UserPicker`) closes
+  and clears its list on the first Escape and marks the key handled; `Modal` ignores an Escape whose
+  default was prevented, so only the second Escape closes (or asks to discard) the dialog.
+- **New project's people step:** one × per row (the picker's own × is switched off with
+  `clearable={false}`), named "Remove <name> from this project". "A project needs at least one
+  project manager." is grey help text until the team list is changed, red after.
+- **A sign-off refusal is shown inside the open Send back dialog**, not on the panel behind it.
+- **Authenticator codes are digits only** (`OneTimeCodeInput` in `src/components/ui`): sign-in, the
+  Teams sign-in and the two-factor card. Letters are refused as typed with a plain note; spaces and
+  dashes in a pasted "123 456" are dropped quietly.
+- **The demo's one sign-off sits in the open FEED phase** ("Prepare Package A for Final Approval"
+  moved there from Detail design), so Confirm and Send back work without a gate override. A database
+  seeded before this keeps the old placement until its next `SEED_RESET=1 npm run seed`.
+  The real-browser check types one key at a time (Playwright `keyboard.type` with a delay, never
+  `fill`, which hides this fault) into every box in every dialog, on a laptop and a phone size.
+- **Keyboard focus cannot leave an open dialog.** `trapFocus()` in `modal.tsx` (used by `Modal` and
+  the version history panel, from the same open-keyed effect) makes every sibling of the dialog and
+  of each element it sits in `inert` + `aria-hidden` until it closes — live regions (the toasts) are
+  left audible — and turns Tab on the last stop into the first, Shift+Tab on the first into the
+  last, and a Tab pressed while focus sits on the page into the dialog. It acts on Tab only, so it
+  can never take the cursor out of a box while someone types. A dialog opened from inside another
+  hands the page back to the outer one when it closes. A dialog that swaps its content (New
+  project's steps) moves focus to the new step's heading itself; `initialFocusRef` on `Modal` starts
+  a "Delete …?" check on its Cancel button.
+- **A refusal shown only under a field is heard.** `Field` ties its help or error line to the box
+  (`aria-describedby`), marks the box `aria-invalid` on an error, announces the error
+  (`role="alert"`), and keeps the line outside the label so it is not read twice. `useAction` moves
+  focus to the first invalid box in the dialog, form or card the request was sent from.
+- **Focus after a destructive check is moved by the Modal, after it has closed.** While a dialog is
+  open the page behind is inert and refuses focus, so a "move to the neighbour" made from the
+  dialog's own button lands on nothing (focus fell to the top of the page after deleting a
+  comment). A check whose row is about to go sets `focusAfterCloseRef` on `Modal` just before
+  closing; the Modal runs it once the page is live again, keeps the element it found while it is on
+  the page, and retries for up to two seconds while it is still greyed out (`focusWhenReady`).
+  `neighbourOf()` finds the next match after the row, else the one before; `firstStopOnceRedrawn()`
+  waits for a card that is redrawn (a removed connection, two-factor turned off). Used by Delete
+  comment, Delete post, Remove member, Remove dependency, Delete phase, Delete document, Deactivate
+  user, Turn off their two-factor, Remove chat connection, the two Microsoft switch-offs and Turn off
+  two-factor. A refusal under a field goes as soon as that field changes (`clearFieldError` from
+  `useAction`, called in the box's change handler). "+ Add person" puts the cursor in the new row's
+  search, and the people list closes once focus leaves it.
+- **Picking a person keeps focus in the flow.** `UserPicker` swaps its search for the picked person
+  (and back again when they are cleared), so the element that had focus is gone either way. It moves
+  focus to the picked person (a `tabIndex={-1}` group named "<label>: <name>", so the next Tab goes
+  on to the next box) or back into the search, from an effect keyed on that choice alone.
+- **A refusal goes to the step that shows its field.** `useAction`'s `onRefused` hears the fields a
+  refusal names before the screen redraws with them; New project uses it to go back to step 1 when a
+  taken code (or name) is refused from step 3, says it once under the box (`shownOnFields`), and the
+  usual first-invalid-box focus lands on Code. Editing the code clears that line and any banner that
+  came with it (`clearError`).
+- **Removing a chat connection lands on the card's address box** — the one box there both before
+  and after the card redraws — instead of waiting for the redraw, which gave up after two seconds
+  when a removal came just after a save.
+- **Saving a chat address lands on the same address box.** The box empties and its button greys out
+  on success, so `AddressForm` moves focus back to the box (the next Tab is the first switch). The
+  box and its button are one `<form>`: Enter in the box saves, and `submit()` sends nothing while a
+  save is on its way or the box is empty, so Enter pressed twice is still one save.
+- **A dialog with a first box opens in it.** `initialFocusRef` on `Modal` points at New project's
+  Name box and Add a member's Person search (`UserPicker` takes `searchRef` for this), so the first
+  Tab goes on to the next box instead of Close. A dialog with no box keeps focus on itself.
+- **A greyed-out Next says what it is waiting for.** New project's step 1 marks both dates
+  `required` and lists what is missing beside Next ("Add a start date and a deadline to continue."),
+  tied to the button with `aria-describedby`, the way Create project does on step 3.
+- **A row's action button names its row.** Admin → Disciplines' Edit is "Edit <discipline>" to a
+  screen reader, on the phone cards and the desktop table.
+- **"Add a member" adds someone new, never changes somebody already there.** The Team tab's dialog
+  calls `addMember`, which refuses a person already on the project ("Already on this project —
+  change their role from the Members list.", under the Person box) and leaves their row untouched —
+  so neither the screen nor a crafted request can move an engineer to another discipline or turn a
+  project manager into an engineer. It writes with `create`, so two adds at once leave one row. A
+  role or discipline changes only from the Members list (`upsertMember`). The people search still
+  finds current members, marked "Already on this project" and greyed out (`UserPicker`'s
+  `unavailable`), so a search for them never says "No one matches".

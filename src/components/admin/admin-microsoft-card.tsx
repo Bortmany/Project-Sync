@@ -14,12 +14,20 @@
 
 "use client";
 
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { disableMicrosoftSignIn, disconnectMicrosoft } from "@/components/actions";
 import { formatDate } from "@/components/format";
 import { useAction } from "@/components/hooks/use-action";
-import { Badge, Button, Card, ErrorBanner, Modal } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  ErrorBanner,
+  Modal,
+  firstStopOnceRedrawn,
+  type FocusAfterClose,
+} from "@/components/ui";
 import type { MicrosoftConnectionDTO, MicrosoftSignInStatusDTO } from "@/lib/zod-schemas";
 
 /** What the files callback puts in the address bar, in plain English. */
@@ -126,6 +134,9 @@ function SignInPart({
   const router = useRouter();
   const { run, pending, error } = useAction();
   const [confirming, setConfirming] = useState(false);
+  // Once it lands, this part is redrawn without the button that opened the check: focus goes to
+  // the first control of the redrawn part instead of dropping to the top of the page.
+  const afterConfirm = useRef<FocusAfterClose | null>(null);
   const [opening, setOpening] = useState(false);
   // Kept from the first render: the address parameter is removed below, and a refresh after
   // switching off must not bring an old banner back.
@@ -159,6 +170,7 @@ function SignInPart({
       success: "Sign in with Microsoft is off. Everyone signs in with their password again.",
       failure: "Couldn't switch that off. Try again.",
       onSuccess: () => {
+        afterConfirm.current = firstStopOnceRedrawn("section");
         setConfirming(false);
         setShownOutcome(undefined);
         router.refresh();
@@ -257,6 +269,7 @@ function SignInPart({
           open
           size="sm"
           title="Switch off Sign in with Microsoft?"
+          focusAfterCloseRef={afterConfirm}
           onClose={() => setConfirming(false)}
           footer={
             <>
@@ -315,6 +328,9 @@ function FilesPart({
   const router = useRouter();
   const { run, pending, error } = useAction();
   const [confirming, setConfirming] = useState(false);
+  // Once it lands, this part is redrawn without the button that opened the check: focus goes to
+  // the first control of the redrawn part instead of dropping to the top of the page.
+  const afterConfirm = useRef<FocusAfterClose | null>(null);
 
   const message = outcome ? OUTCOME_MESSAGES[outcome] : undefined;
 
@@ -323,6 +339,7 @@ function FilesPart({
       success: "Microsoft 365 disconnected.",
       failure: "Couldn't disconnect. Try again.",
       onSuccess: () => {
+        afterConfirm.current = firstStopOnceRedrawn("section");
         setConfirming(false);
         router.refresh();
       },
@@ -405,6 +422,7 @@ function FilesPart({
           open
           size="sm"
           title="Disconnect Microsoft 365?"
+          focusAfterCloseRef={afterConfirm}
           onClose={() => setConfirming(false)}
           footer={
             <>

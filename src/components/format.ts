@@ -18,6 +18,21 @@ export function formatDate(value: Date | null | undefined): string {
   return FULL_DATE.format(value);
 }
 
+/**
+ * A task's or project's dates as one line, never a lone dash standing in for a missing half:
+ * "1 Jan 2027 — 31 Jan 2027", "Due 31 Jan 2027" (no start), "Starts 1 Jan 2027" (no end) or
+ * "No dates set".
+ */
+export function formatDateRange(
+  start: Date | null | undefined,
+  deadline: Date | null | undefined,
+): string {
+  if (start && deadline) return `${formatDate(start)} — ${formatDate(deadline)}`;
+  if (deadline) return `Due ${formatDate(deadline)}`;
+  if (start) return `Starts ${formatDate(start)}`;
+  return "No dates set";
+}
+
 /** "22 Aug" — used where the year is obvious from context. */
 export function formatShortDate(value: Date): string {
   return SHORT_DATE.format(value);

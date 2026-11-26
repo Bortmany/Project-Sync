@@ -8,6 +8,7 @@
 import { hashPassword } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { DISCIPLINE_PALETTE, isPaletteColor } from "@/lib/discipline-colors";
+import { disciplineProblem, type DisciplineBefore } from "@/lib/discipline-rules";
 import { assertCan } from "@/lib/permissions";
 import type {
   AdminResetTwoFactorInput,
@@ -35,9 +36,6 @@ import { emailAvailable } from "@/server/services/email";
 import { retireSignInTickets } from "@/server/services/email-tokens";
 import { notify } from "@/server/services/notify";
 import { clearTwoFactor } from "@/server/services/two-factor";
-
-/** The roles whose work always belongs to one discipline. */
-const DISCIPLINE_ROLES: RoleName[] = ["DISCIPLINE_LEAD", "ENGINEER"];
 
 const USER_SELECT = {
   id: true,
@@ -130,16 +128,19 @@ export async function listDisciplinesForAdmin(actor: ActorContext): Promise<Disc
 /* People                                                              */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Leads, engineers and external contractors carry a discipline (src/lib/discipline-rules.ts says
+ * why). `before` is the account as it stands, on an edit: a contractor saved before the rule with no
+ * discipline may still be saved as they are.
+ */
 async function assertDisciplineChoice(
   actor: ActorContext,
   role: RoleName,
   disciplineId: string | null | undefined,
+  before?: DisciplineBefore,
 ): Promise<void> {
-  if (DISCIPLINE_ROLES.includes(role) && !disciplineId) {
-    throw new ServiceError("Choose a discipline for a discipline lead or an engineer.", {
-      disciplineId: ["Choose a discipline for a discipline lead or an engineer."],
-    });
-  }
+  const problem = disciplineProblem(role, disciplineId, before);
+  if (problem) throw new ServiceError(problem, { disciplineId: [problem] });
   if (!disciplineId) return;
 
   const discipline = await prisma.discipline.findFirst({
@@ -307,7 +308,10 @@ export async function updateUser(actor: ActorContext, input: UpdateUserInput): P
   const nextRole = input.role ?? existing.role;
   const nextDisciplineId =
     input.disciplineId === undefined ? existing.disciplineId : input.disciplineId;
-  await assertDisciplineChoice(actor, nextRole, nextDisciplineId);
+  await assertDisciplineChoice(actor, nextRole, nextDisciplineId, {
+    role: existing.role,
+    disciplineId: existing.disciplineId,
+  });
   const nextCompanyName = companyNameFor(
     nextRole,
     input.companyName === undefined ? existing.companyName : input.companyName,

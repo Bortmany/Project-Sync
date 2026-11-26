@@ -24,7 +24,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { homePathFor } from "@/components/shell/nav-items";
-import { Button, Field, Input } from "@/components/ui";
+import { Button, Field, Input, OneTimeCodeInput } from "@/components/ui";
 import { SIGN_IN_REFUSED_MESSAGE } from "@/lib/sign-in-messages";
 import type { RoleName } from "@/lib/zod-schemas";
 
@@ -294,19 +294,7 @@ export function LoginForm({ microsoft }: { microsoft?: MicrosoftProps } = {}) {
                   />
                 </Field>
               ) : (
-                <Field label="Verification code">
-                  <Input
-                    name="code"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={6}
-                    required
-                    value={code}
-                    onChange={(event) => setCode(event.target.value)}
-                    placeholder="123456"
-                    className="text-center font-mono text-lg tracking-widest"
-                  />
-                </Field>
+                <OneTimeCodeInput name="code" required value={code} onChange={setCode} />
               )}
 
               <p className="text-sm">

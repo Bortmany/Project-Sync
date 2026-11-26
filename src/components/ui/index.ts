@@ -17,7 +17,9 @@ export {
 export { EmptyState } from "@/components/ui/empty-state";
 export { Tabs } from "@/components/ui/tabs";
 export type { TabItem } from "@/components/ui/tabs";
-export { Modal } from "@/components/ui/modal";
+export { Modal, firstStopOnceRedrawn, focusWhenReady, neighbourOf } from "@/components/ui/modal";
+export type { FocusAfterClose } from "@/components/ui/modal";
+export { OneTimeCodeInput, cleanOneTimeCode } from "@/components/ui/one-time-code-input";
 export { ToastProvider, useToast } from "@/components/ui/toast";
 export { Skeleton, SkeletonRows } from "@/components/ui/skeleton";
 export { Breadcrumb } from "@/components/ui/breadcrumb";

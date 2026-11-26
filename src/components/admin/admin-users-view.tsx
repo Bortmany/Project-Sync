@@ -3,7 +3,7 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   adminResetTwoFactor,
@@ -34,9 +34,11 @@ import {
   Select,
   hasActiveFilters,
   type ActiveFilters,
+  type FocusAfterClose,
   type FilterDimension,
 } from "@/components/ui";
 import { isAccessExpired } from "@/lib/access-expiry";
+import { disciplineHint, disciplineProblem, type DisciplineBefore } from "@/lib/discipline-rules";
 import type { CreateUserModeName, DisciplineDTO, RoleName, UserDTO } from "@/lib/zod-schemas";
 
 const ROLE_OPTIONS: { value: RoleName; label: string }[] = [
@@ -55,8 +57,6 @@ const ROLE_LABEL: Record<RoleName, string> = {
   EXTERNAL: "External",
 };
 
-/** The roles whose work always sits inside one discipline. */
-const DISCIPLINE_ROLES: RoleName[] = ["DISCIPLINE_LEAD", "ENGINEER"];
 
 /** The one hint the access-end field carries, in both dialogs. */
 const ACCESS_ENDS_HINT =
@@ -112,7 +112,7 @@ function NewUserDialog({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const { run, pending, error, fieldErrors } = useAction();
+  const { run, pending, error, fieldErrors, reset, clearFieldError } = useAction();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<RoleName>("ENGINEER");
@@ -127,15 +127,18 @@ function NewUserDialog({
   const [created, setCreated] = useState<UserDTO | null>(null);
   const [createdMode, setCreatedMode] = useState<CreateUserModeName>("PASSWORD");
 
-  const needsDiscipline = DISCIPLINE_ROLES.includes(role);
+  // The same rule the server applies (src/lib/discipline-rules.ts): leads, engineers and contractors.
+  const disciplineMissing = disciplineProblem(role, disciplineId) !== null;
   const needsCompany = role === "EXTERNAL";
   const inviting = inviteAvailable && mode === "INVITE";
 
   function close() {
+    reset();
     setCreated(null);
     setName("");
     setEmail("");
     setRole("ENGINEER");
+    setCompanyName("");
     setAccessEnds("");
     setDisciplineId("");
     setJobTitle("");
@@ -196,7 +199,7 @@ function NewUserDialog({
             disabled={
               !name.trim() ||
               !email.trim() ||
-              (needsDiscipline && !disciplineId) ||
+              disciplineMissing ||
               (needsCompany && !companyName.trim())
             }
             onClick={() =>
@@ -219,6 +222,13 @@ function NewUserDialog({
                   failure: inviting
                     ? "Couldn't send this invite. Try again."
                     : "Couldn't create this user. Try again.",
+                  // A duplicate email (and the like) is said once, under its field.
+                  shownOnFields: [
+                    "name",
+                    "email",
+                    "disciplineId",
+                    ...(needsCompany ? ["companyName", "accessExpiresAt"] : []),
+                  ],
                   onSuccess: (user) => {
                     setCreatedMode(inviting ? "INVITE" : "PASSWORD");
                     setCreated(user);
@@ -254,14 +264,23 @@ function NewUserDialog({
           </div>
         ) : null}
         <Field label="Name" error={fieldError(fieldErrors, "name")}>
-          <Input value={name} onChange={(event) => setName(event.target.value)} />
+          <Input
+            value={name}
+            onChange={(event) => {
+              clearFieldError("name");
+              setName(event.target.value);
+            }}
+          />
         </Field>
         <Field label="Email" error={fieldError(fieldErrors, "email")}>
           <Input
             type="email"
             value={email}
             placeholder="name@company.com"
-            onChange={(event) => setEmail(event.target.value)}
+            onChange={(event) => {
+              clearFieldError("email");
+              setEmail(event.target.value);
+            }}
           />
         </Field>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -276,12 +295,15 @@ function NewUserDialog({
           </Field>
           <Field
             label="Discipline"
-            hint={needsDiscipline ? "Required for leads and engineers." : "Not needed for this role."}
+            hint={disciplineHint(role)}
             error={fieldError(fieldErrors, "disciplineId")}
           >
             <Select
               value={disciplineId}
-              onChange={(event) => setDisciplineId(event.target.value)}
+              onChange={(event) => {
+                clearFieldError("disciplineId");
+                setDisciplineId(event.target.value);
+              }}
             >
               <option value="">No discipline</option>
               {disciplines.map((discipline) => (
@@ -301,7 +323,10 @@ function NewUserDialog({
             <Input
               value={companyName}
               placeholder="e.g. Al Hassan Engineering"
-              onChange={(event) => setCompanyName(event.target.value)}
+              onChange={(event) => {
+                clearFieldError("companyName");
+                setCompanyName(event.target.value);
+              }}
             />
           </Field>
         ) : null}
@@ -311,7 +336,13 @@ function NewUserDialog({
             hint={ACCESS_ENDS_HINT}
             error={fieldError(fieldErrors, "accessExpiresAt")}
           >
-            <DateInput value={accessEnds} onChange={(event) => setAccessEnds(event.target.value)} />
+            <DateInput
+              value={accessEnds}
+              onChange={(event) => {
+                clearFieldError("accessExpiresAt");
+                setAccessEnds(event.target.value);
+              }}
+            />
           </Field>
         ) : null}
         <Field label="Job title" hint="Optional — how the role reads on their profile.">
@@ -372,7 +403,7 @@ function EditUserDialog({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const { run, pending, error, fieldErrors } = useAction();
+  const { run, pending, error, fieldErrors, clearFieldError } = useAction();
   const [name, setName] = useState(user.name);
   const [role, setRole] = useState<RoleName>(user.role);
   const [companyName, setCompanyName] = useState(user.companyName ?? "");
@@ -384,7 +415,10 @@ function EditUserDialog({
   const [jobTitle, setJobTitle] = useState(user.jobTitle ?? "");
   const [password, setPassword] = useState("");
 
-  const needsDiscipline = DISCIPLINE_ROLES.includes(role);
+  // The account as it stands: a contractor saved before contractors needed a discipline may still be
+  // saved without one, exactly as the server allows (src/lib/discipline-rules.ts).
+  const before: DisciplineBefore = { role: user.role, disciplineId: user.disciplineId };
+  const disciplineMissing = disciplineProblem(role, disciplineId, before) !== null;
   const needsCompany = role === "EXTERNAL";
 
   return (
@@ -400,7 +434,7 @@ function EditUserDialog({
           <Button
             loading={pending}
             disabled={
-              !name.trim() || (needsDiscipline && !disciplineId) || (needsCompany && !companyName.trim())
+              !name.trim() || disciplineMissing || (needsCompany && !companyName.trim())
             }
             onClick={() =>
               run(
@@ -418,6 +452,12 @@ function EditUserDialog({
                 {
                   success: "Changes saved.",
                   failure: "Couldn't save these changes. Try again.",
+                  shownOnFields: [
+                    "name",
+                    "disciplineId",
+                    "password",
+                    ...(needsCompany ? ["companyName", "accessExpiresAt"] : []),
+                  ],
                   onSuccess: () => {
                     router.refresh();
                     onClose();
@@ -434,7 +474,13 @@ function EditUserDialog({
       <div className="space-y-3">
         {error ? <ErrorBanner message={error} /> : null}
         <Field label="Name" error={fieldError(fieldErrors, "name")}>
-          <Input value={name} onChange={(event) => setName(event.target.value)} />
+          <Input
+            value={name}
+            onChange={(event) => {
+              clearFieldError("name");
+              setName(event.target.value);
+            }}
+          />
         </Field>
         <Field label="Email" hint="Email addresses can't be changed here.">
           <Input value={user.email} disabled readOnly />
@@ -451,10 +497,16 @@ function EditUserDialog({
           </Field>
           <Field
             label="Discipline"
-            hint={needsDiscipline ? "Required for leads and engineers." : "Not needed for this role."}
+            hint={disciplineHint(role, before)}
             error={fieldError(fieldErrors, "disciplineId")}
           >
-            <Select value={disciplineId} onChange={(event) => setDisciplineId(event.target.value)}>
+            <Select
+              value={disciplineId}
+              onChange={(event) => {
+                clearFieldError("disciplineId");
+                setDisciplineId(event.target.value);
+              }}
+            >
               <option value="">No discipline</option>
               {disciplines.map((discipline) => (
                 <option key={discipline.id} value={discipline.id}>
@@ -473,7 +525,10 @@ function EditUserDialog({
             <Input
               value={companyName}
               placeholder="e.g. Al Hassan Engineering"
-              onChange={(event) => setCompanyName(event.target.value)}
+              onChange={(event) => {
+                clearFieldError("companyName");
+                setCompanyName(event.target.value);
+              }}
             />
           </Field>
         ) : null}
@@ -483,7 +538,13 @@ function EditUserDialog({
             hint={ACCESS_ENDS_HINT}
             error={fieldError(fieldErrors, "accessExpiresAt")}
           >
-            <DateInput value={accessEnds} onChange={(event) => setAccessEnds(event.target.value)} />
+            <DateInput
+              value={accessEnds}
+              onChange={(event) => {
+                clearFieldError("accessExpiresAt");
+                setAccessEnds(event.target.value);
+              }}
+            />
           </Field>
         ) : null}
         <Field label="Job title">
@@ -501,7 +562,13 @@ function EditUserDialog({
               placeholder="Not changing"
               className="font-mono"
             />
-            <Button variant="secondary" onClick={() => setPassword(generatePassword())}>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                clearFieldError("password");
+                setPassword(generatePassword());
+              }}
+            >
               Generate
             </Button>
           </div>
@@ -521,15 +588,32 @@ function EditUserDialog({
   );
 }
 
+/**
+ * The Edit button on the same row (or phone card) as `opener`. Deactivating someone, or turning off
+ * their two-factor, swaps the button that opened the check for another once the list refreshes, so
+ * focus goes to the row's Edit — which stays put — rather than to a button about to vanish.
+ */
+const editOnRowOf: FocusAfterClose = (opener) => {
+  for (let element = opener?.parentElement; element; element = element.parentElement) {
+    const edit = Array.from(element.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Edit",
+    );
+    if (edit) return edit;
+  }
+  return null;
+};
+
 function DeactivateDialog({ user, onClose }: { user: UserDTO; onClose: () => void }) {
   const router = useRouter();
   const { run, pending, error } = useAction();
+  const afterDone = useRef<FocusAfterClose | null>(null);
 
   return (
     <Modal
       open
       size="sm"
       title="Deactivate user"
+      focusAfterCloseRef={afterDone}
       onClose={onClose}
       footer={
         <>
@@ -544,6 +628,7 @@ function DeactivateDialog({ user, onClose }: { user: UserDTO; onClose: () => voi
                 success: `${user.name} can no longer sign in.`,
                 failure: "Couldn't deactivate this user. Try again.",
                 onSuccess: () => {
+                  afterDone.current = editOnRowOf;
                   router.refresh();
                   onClose();
                 },
@@ -584,6 +669,7 @@ function TurnOffTwoFactorDialog({
 }) {
   const router = useRouter();
   const { run, pending, error } = useAction();
+  const afterDone = useRef<FocusAfterClose | null>(null);
 
   if (isSelf) {
     return (
@@ -616,6 +702,7 @@ function TurnOffTwoFactorDialog({
       open
       size="sm"
       title={`Turn off two-factor for ${user.name}?`}
+      focusAfterCloseRef={afterDone}
       onClose={onClose}
       footer={
         <>
@@ -630,6 +717,7 @@ function TurnOffTwoFactorDialog({
                 success: `Two-factor turned off for ${user.name}.`,
                 failure: "Couldn't turn off two-factor for this person. Try again.",
                 onSuccess: () => {
+                  afterDone.current = editOnRowOf;
                   router.refresh();
                   onClose();
                 },
@@ -690,6 +778,7 @@ export function AdminUsersView({
   disciplines,
   inviteAvailable = false,
   currentUserId,
+  editUserId,
 }: {
   users: UserDTO[];
   disciplines: DisciplineDTO[];
@@ -697,10 +786,17 @@ export function AdminUsersView({
   inviteAvailable?: boolean;
   /** The signed-in administrator, so their own row explains the one thing they may not do here. */
   currentUserId?: string;
+  /**
+   * `/admin/users?edit=<id>` opens that person's Edit dialog straight away — the Team tab links here
+   * to fix a contractor with no discipline. An id that is not in this company's list opens nothing.
+   */
+  editUserId?: string;
 }) {
   const [search, setSearch] = useState("");
   const [newOpen, setNewOpen] = useState(false);
-  const [editing, setEditing] = useState<UserDTO | null>(null);
+  const [editing, setEditing] = useState<UserDTO | null>(
+    () => users.find((user) => user.id === editUserId) ?? null,
+  );
   const [deactivating, setDeactivating] = useState<UserDTO | null>(null);
   const [resettingTwoFactor, setResettingTwoFactor] = useState<UserDTO | null>(null);
   const [filters, setFilters] = useState<ActiveFilters>({ role: [], discipline: [], status: [] });

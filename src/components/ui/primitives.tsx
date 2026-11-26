@@ -2,12 +2,16 @@
 
 "use client";
 
-import type {
-  ButtonHTMLAttributes,
-  ComponentProps,
-  InputHTMLAttributes,
-  ReactNode,
-  SelectHTMLAttributes,
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  useId,
+  type ComponentProps,
+  type InputHTMLAttributes,
+  type ReactElement,
+  type ReactNode,
+  type SelectHTMLAttributes,
 } from "react";
 
 export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
@@ -22,7 +26,8 @@ const BUTTON_STYLES: Record<ButtonVariant, string> = {
     "bg-transparent text-[var(--brand-text)] hover:bg-[var(--page-bg)] disabled:text-[var(--brand-gray)]",
 };
 
-type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+// ComponentProps so a screen can hold a ref to a button and move focus to it.
+type ButtonProps = ComponentProps<"button"> & {
   variant?: ButtonVariant;
   loading?: boolean;
 };
@@ -52,21 +57,48 @@ const FIELD_CLASS =
 
 type FieldWrapProps = { label?: string; hint?: string; error?: string; children: ReactNode };
 
+/**
+ * A labelled box with its help line or its error underneath. The box itself is told about the line
+ * (aria-describedby), an error marks it invalid (aria-invalid), and an error is announced the moment
+ * it appears (role="alert"), so a screen reader hears a refusal that is shown only under the field.
+ * The line sits outside the label, so it is not read a second time as part of the box's name.
+ */
 export function Field({ label, hint, error, children }: FieldWrapProps) {
+  const id = useId();
+  const messageId = error || hint ? `${id}-message` : undefined;
+  const only = Children.count(children) === 1 && isValidElement(children) ? children : null;
+  const box = only
+    ? (() => {
+        const element = only as ReactElement<Record<string, unknown>>;
+        const own = element.props["aria-describedby"];
+        const describedBy = [typeof own === "string" ? own : null, messageId].filter(Boolean).join(" ");
+        return cloneElement(element, {
+          ...(describedBy ? { "aria-describedby": describedBy } : {}),
+          ...(error ? { "aria-invalid": true } : {}),
+        });
+      })()
+    : children;
   return (
-    <label className="block space-y-1">
-      {label ? <span className="block text-sm font-semibold text-[var(--brand-ink)]">{label}</span> : null}
-      {children}
+    <div className="block space-y-1">
+      <label className="block space-y-1">
+        {label ? <span className="block text-sm font-semibold text-[var(--brand-ink)]">{label}</span> : null}
+        {box}
+      </label>
       {error ? (
-        <span className="block text-xs text-[var(--status-blocked)]">{error}</span>
+        <span id={messageId} role="alert" className="block text-xs text-[var(--status-blocked)]">
+          {error}
+        </span>
       ) : hint ? (
-        <span className="block text-xs text-[var(--brand-gray)]">{hint}</span>
+        <span id={messageId} className="block text-xs text-[var(--brand-gray)]">
+          {hint}
+        </span>
       ) : null}
-    </label>
+    </div>
   );
 }
 
-export function Input({ className = "", ...rest }: InputHTMLAttributes<HTMLInputElement>) {
+// ComponentProps (not just the HTML attributes) so a screen can hold a ref to focus the box.
+export function Input({ className = "", ...rest }: ComponentProps<"input">) {
   return <input {...rest} className={`${FIELD_CLASS} ${className}`} />;
 }
 

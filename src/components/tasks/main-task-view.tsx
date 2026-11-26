@@ -26,7 +26,7 @@ import {
   useProject,
 } from "@/components/hooks/use-api";
 import { FavoriteStar } from "@/components/shell/favorite-star";
-import { formatDate, toDateInputValue } from "@/components/format";
+import { formatDate, formatDateRange, toDateInputValue } from "@/components/format";
 import { ChevronRightIcon } from "@/components/shell/icons";
 import {
   Avatar,
@@ -59,7 +59,7 @@ const PRIORITIES: { value: PriorityName; label: string }[] = [
   { value: "CRITICAL", label: "Critical" },
 ];
 
-function EditDetailsDialog({
+export function EditDetailsDialog({
   task,
   project,
   open,
@@ -71,7 +71,7 @@ function EditDetailsDialog({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
-  const { run, pending, error, fieldErrors } = useAction();
+  const { run, pending, error, fieldErrors, reset, clearFieldError } = useAction();
   const phases = usePhases(task.projectId);
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
@@ -80,6 +80,19 @@ function EditDetailsDialog({
   const [deadline, setDeadline] = useState(toDateInputValue(task.deadline));
   const [ownerId, setOwnerId] = useState(task.ownerId ?? "");
   const [phaseId, setPhaseId] = useState(task.phaseId ?? "NONE");
+
+  // A cancelled edit forgets what was typed: opening the dialog again shows the saved task.
+  function cancel() {
+    reset();
+    setTitle(task.title);
+    setDescription(task.description);
+    setPriority(task.priority);
+    setStartDate(toDateInputValue(task.startDate));
+    setDeadline(toDateInputValue(task.deadline));
+    setOwnerId(task.ownerId ?? "");
+    setPhaseId(task.phaseId ?? "NONE");
+    onClose();
+  }
 
   const dateOrderError =
     startDate && deadline && deadline < startDate
@@ -90,10 +103,10 @@ function EditDetailsDialog({
     <Modal
       open={open}
       title="Edit task details"
-      onClose={onClose}
+      onClose={cancel}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={cancel}>
             Cancel
           </Button>
           <Button
@@ -155,7 +168,13 @@ function EditDetailsDialog({
       <div className="space-y-3">
         {error ? <ErrorBanner message="Couldn't save these changes. Try again." /> : null}
         <Field label="Title" error={fieldError(fieldErrors, "title")}>
-          <Input value={title} onChange={(event) => setTitle(event.target.value)} />
+          <Input
+            value={title}
+            onChange={(event) => {
+              clearFieldError("title");
+              setTitle(event.target.value);
+            }}
+          />
         </Field>
         <Field label="Description">
           <Textarea value={description} onChange={(event) => setDescription(event.target.value)} />
@@ -203,11 +222,15 @@ function EditDetailsDialog({
         <Field label="Owner">
           <Select value={ownerId} onChange={(event) => setOwnerId(event.target.value)}>
             <option value="">No owner</option>
-            {(project?.members ?? []).map((member) => (
-              <option key={member.userId} value={member.userId}>
-                {member.userName}
-              </option>
-            ))}
+            {/* Never a contractor (the server refuses it). One set before that rule stays listed so
+                the box still says who it is until somebody changes it. */}
+            {(project?.members ?? [])
+              .filter((member) => member.projectRole !== "EXTERNAL" || member.userId === task.ownerId)
+              .map((member) => (
+                <option key={member.userId} value={member.userId}>
+                  {member.userName}
+                </option>
+              ))}
           </Select>
         </Field>
       </div>
@@ -215,7 +238,7 @@ function EditDetailsDialog({
   );
 }
 
-function OverrideDialog({
+export function OverrideDialog({
   task,
   open,
   onClose,
@@ -225,9 +248,17 @@ function OverrideDialog({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
-  const { run, pending, error, fieldErrors } = useAction();
+  const { run, pending, error, fieldErrors, reset, clearFieldError } = useAction();
   const [status, setStatus] = useState<TaskStatusName>("COMPLETED");
   const [reason, setReason] = useState("");
+
+  // A cancelled override forgets what was typed: opening it again starts blank.
+  function cancel() {
+    reset();
+    setStatus("COMPLETED");
+    setReason("");
+    onClose();
+  }
 
   const remaining = task.counts.disciplineTasks - task.counts.completed;
 
@@ -241,11 +272,11 @@ function OverrideDialog({
     <Modal
       open={open}
       title="Override task status"
-      onClose={onClose}
+      onClose={cancel}
       size="sm"
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={cancel}>
             Cancel
           </Button>
           <Button
@@ -256,8 +287,7 @@ function OverrideDialog({
                 failure: "Couldn't apply the override. Try again.",
                 onSuccess: () => {
                   refresh();
-                  setReason("");
-                  onClose();
+                  cancel();
                 },
               })
             }
@@ -287,7 +317,10 @@ function OverrideDialog({
           <Textarea
             value={reason}
             placeholder="Why are you overriding the normal completion rules?"
-            onChange={(event) => setReason(event.target.value)}
+            onChange={(event) => {
+              clearFieldError("reason");
+              setReason(event.target.value);
+            }}
           />
         </Field>
         {task.statusOverride ? (
@@ -300,7 +333,7 @@ function OverrideDialog({
                 failure: "Couldn't clear the override. Try again.",
                 onSuccess: () => {
                   refresh();
-                  onClose();
+                  cancel();
                 },
               })
             }
@@ -313,7 +346,7 @@ function OverrideDialog({
   );
 }
 
-function AddDisciplineTaskDialog({
+export function AddDisciplineTaskDialog({
   task,
   project,
   open,
@@ -325,12 +358,23 @@ function AddDisciplineTaskDialog({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
-  const { run, pending, error, fieldErrors } = useAction();
+  const { run, pending, error, fieldErrors, reset, clearFieldError } = useAction();
   const [disciplineId, setDisciplineId] = useState("");
   const [title, setTitle] = useState("");
   const [assigneeId, setAssigneeId] = useState("");
   const [deadline, setDeadline] = useState(toDateInputValue(task.deadline));
   const [isMandatory, setIsMandatory] = useState(true);
+
+  // A cancelled add forgets what was typed: opening it again starts from a blank task.
+  function cancel() {
+    reset();
+    setDisciplineId("");
+    setTitle("");
+    setAssigneeId("");
+    setDeadline(toDateInputValue(task.deadline));
+    setIsMandatory(true);
+    onClose();
+  }
 
   const members = (project?.members ?? []).filter(
     (member) => member.disciplineId === disciplineId,
@@ -340,10 +384,10 @@ function AddDisciplineTaskDialog({
     <Modal
       open={open}
       title="Add a discipline task"
-      onClose={onClose}
+      onClose={cancel}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={cancel}>
             Cancel
           </Button>
           <Button
@@ -368,10 +412,7 @@ function AddDisciplineTaskDialog({
                   onSuccess: () => {
                     void queryClient.invalidateQueries({ queryKey: ["task", task.id] });
                     void queryClient.invalidateQueries({ queryKey: ["project", task.projectId] });
-                    setTitle("");
-                    setAssigneeId("");
-                    setDisciplineId("");
-                    onClose();
+                    cancel();
                   },
                 },
               )
@@ -404,7 +445,13 @@ function AddDisciplineTaskDialog({
           </Select>
         </Field>
         <Field label="Title" error={fieldError(fieldErrors, "title")}>
-          <Input value={title} onChange={(event) => setTitle(event.target.value)} />
+          <Input
+            value={title}
+            onChange={(event) => {
+              clearFieldError("title");
+              setTitle(event.target.value);
+            }}
+          />
         </Field>
         <Field label="Assignee">
           <Select value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)}>
@@ -463,10 +510,14 @@ export function MainTaskView({ taskId }: { taskId: string }) {
   // Managing follows this project's team list, not the org-wide role — a project manager elsewhere
   // is an ordinary member here. The server enforces the same rule.
   const canManage = isManagerOn(me.data, project.data);
-  const mentionable = (project.data?.members ?? []).map((member) => ({
-    userId: member.userId,
-    userName: member.userName,
-  }));
+  // Contractors are left out: a mention on a main task never reaches one (notifiableRecipients() in
+  // comments.ts), so offering them would promise a message that is never sent.
+  const mentionable = (project.data?.members ?? [])
+    .filter((member) => member.projectRole !== "EXTERNAL")
+    .map((member) => ({
+      userId: member.userId,
+      userName: member.userName,
+    }));
   // The departments on this project, for "@Mechanical". Already loaded with the project — no
   // second fetch for the composer.
   const mentionableDepartments = (project.data?.disciplines ?? []).map((discipline) => ({
@@ -684,7 +735,7 @@ export function MainTaskView({ taskId }: { taskId: string }) {
               <div>
                 <dt className="text-xs text-[var(--brand-gray)]">Dates</dt>
                 <dd className="mt-1">
-                  {formatDate(data.startDate)} — {formatDate(data.deadline)}
+                  {formatDateRange(data.startDate, data.deadline)}
                 </dd>
               </div>
               <div>

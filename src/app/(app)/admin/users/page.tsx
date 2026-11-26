@@ -13,12 +13,19 @@ import { emailAvailable } from "@/server/services/email";
 export const metadata = { title: "Users — Tielora" };
 export const dynamic = "force-dynamic";
 
-export default async function AdminUsersPage() {
+export default async function AdminUsersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ edit?: string | string[] }>;
+}) {
   const actor = await currentActor();
   if (!actor) redirect("/login");
   if (!can(actor, "MANAGE_USERS")) return <NoAccess />;
 
   const [users, disciplines] = await Promise.all([listAllUsers(actor), listDisciplines(actor)]);
+  // Only ever matched against the list just read for this company, so a foreign id opens nothing.
+  const { edit } = await searchParams;
+  const editUserId = typeof edit === "string" && edit.length <= 40 ? edit : undefined;
 
   // A plain yes/no, read on the server. The screen never learns anything about the mail provider
   // beyond whether invitations are on offer at all — no key, no address, no setting name.
@@ -30,6 +37,7 @@ export default async function AdminUsersPage() {
       // Who is looking, so the screen can explain — rather than hide — the one row an administrator
       // may not reset two-factor on: their own.
       currentUserId={actor.userId}
+      editUserId={editUserId}
     />
   );
 }

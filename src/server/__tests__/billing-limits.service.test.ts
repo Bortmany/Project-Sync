@@ -689,12 +689,13 @@ async function fillContractorsTo(target: number): Promise<void> {
   if (have < target) await bulkUsers(fixture.orgId, target - have, "EXTERNAL");
 }
 
-function addContractor(actor: ActorContext, extra: { mode?: "INVITE"; accessExpiresAt?: Date } = {}) {
+async function addContractor(actor: ActorContext, extra: { mode?: "INVITE"; accessExpiresAt?: Date } = {}) {
   return createUser(actor, {
     email: nextEmail(),
     name: "Sami al-Harthy",
     ...(extra.mode === "INVITE" ? { mode: "INVITE" as const } : { password: "A-strong-test-password-1" }),
     role: "EXTERNAL",
+    disciplineId: (await prisma.discipline.findFirstOrThrow({ where: { orgId: actor.orgId } })).id,
     companyName: "Gulf Inspection Services",
     ...(extra.accessExpiresAt ? { accessExpiresAt: extra.accessExpiresAt } : {}),
   });
@@ -889,7 +890,12 @@ describe("every way in is asked for room", () => {
     const [engineer] = await bulkUsers(fixture.orgId, 1, "ENGINEER", { disciplineId: fixture.disciplineId });
     expect(
       await refusalOf(
-        updateUser(fixture.adminActor, { id: engineer, role: "EXTERNAL", companyName: "Gulf Inspection Services" }),
+        updateUser(fixture.adminActor, {
+          id: engineer,
+          role: "EXTERNAL",
+          companyName: "Gulf Inspection Services",
+          disciplineId: fixture.disciplineId,
+        }),
       ),
     ).toBe(CONTRACTORS_FREE_ADMIN);
   });

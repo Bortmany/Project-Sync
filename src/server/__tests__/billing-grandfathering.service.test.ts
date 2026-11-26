@@ -72,12 +72,13 @@ function addStaff(actor: ActorContext) {
   });
 }
 
-function addContractor(actor: ActorContext) {
+async function addContractor(actor: ActorContext) {
   return createUser(actor, {
     email: nextEmail(),
     name: "Sami al-Harthy",
     password: "A-strong-test-password-1",
     role: "EXTERNAL",
+    disciplineId: (await prisma.discipline.findFirstOrThrow({ where: { orgId: actor.orgId } })).id,
     companyName: "Gulf Inspection Services",
   });
 }

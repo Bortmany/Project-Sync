@@ -108,6 +108,35 @@ export async function assertFileSuitsRequirement(
 }
 
 /**
+ * The revision number this file would merely repeat, or null. Asked by the upload route before
+ * storeFile(): a new revision whose bytes are identical (same SHA-256) to the document's CURRENT
+ * revision is not saved until the uploader has been asked and said "upload anyway". Nothing is ever
+ * dropped silently — the uploader decides — and nothing already filed is touched. Permission is
+ * judged first, through the same loader every upload uses, so this never tells anybody anything
+ * about a document they may not upload to.
+ */
+export async function identicalCurrentRevision(
+  actor: ActorContext,
+  meta: UploadMeta,
+  checksumSha256: string,
+): Promise<number | null> {
+  if (!meta.documentId || meta.allowIdentical) return null;
+  const target = await assertCanUploadTo(actor, meta);
+  if (!target.documentId) return null;
+
+  const document = await prisma.document.findFirst({
+    where: { id: target.documentId, project: { orgId: target.orgId } },
+    select: { currentVersionId: true },
+  });
+  if (!document?.currentVersionId) return null;
+  const current = await prisma.documentVersion.findFirst({
+    where: { id: document.currentVersionId, documentId: target.documentId },
+    select: { checksumSha256: true, revisionNumber: true },
+  });
+  return current && current.checksumSha256 === checksumSha256 ? current.revisionNumber : null;
+}
+
+/**
  * The rule itself. It applies to a new checklist upload AND to a new revision of a document that
  * already satisfies a mandatory item — otherwise a real PDF could be followed by a junk text file
  * under the same green tick. Nothing already filed is re-judged.

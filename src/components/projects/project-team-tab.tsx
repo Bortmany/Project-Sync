@@ -3,17 +3,19 @@
 
 "use client";
 
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  addMember,
   removeMember,
   removeProjectDiscipline,
   upsertMember,
   upsertProjectDiscipline,
 } from "@/components/actions";
 import { UserPicker, type PickedUser } from "@/components/people/user-picker";
-import { useAction } from "@/components/hooks/use-action";
-import { useDisciplines } from "@/components/hooks/use-api";
+import { fieldError, useAction } from "@/components/hooks/use-action";
+import { useDisciplines, useMe } from "@/components/hooks/use-api";
 import {
   Avatar,
   Button,
@@ -22,6 +24,9 @@ import {
   ErrorBanner,
   Modal,
   Select,
+  focusWhenReady,
+  neighbourOf,
+  type FocusAfterClose,
 } from "@/components/ui";
 import type { ProjectDTO, RoleName } from "@/lib/zod-schemas";
 
@@ -51,8 +56,11 @@ export function ProjectTeamTab({
   canManage: boolean;
 }) {
   const queryClient = useQueryClient();
-  const { run, pending } = useAction();
+  const { run, pending, fieldErrors, clearFieldError } = useAction();
   const disciplines = useDisciplines();
+  const me = useMe();
+  // Only an administrator can change somebody's account, so only they are offered the shortcut.
+  const isAdmin = me.data?.role === "ADMIN";
 
   const [addDisciplineOpen, setAddDisciplineOpen] = useState(false);
   const [addMemberOpen, setAddMemberOpen] = useState(false);
@@ -60,6 +68,25 @@ export function ProjectTeamTab({
   const [newRole, setNewRole] = useState<RoleName>("ENGINEER");
   const [newDiscipline, setNewDiscipline] = useState("");
   const [confirmRemove, setConfirmRemove] = useState<{ userId: string; name: string } | null>(null);
+  // The two lists' "+ Add …" buttons, where focus goes when a list has nothing left to land on.
+  const addDisciplineButton = useRef<HTMLButtonElement>(null);
+  const addMemberButton = useRef<HTMLButtonElement>(null);
+  const membersList = useRef<HTMLUListElement>(null);
+  // "Add a member" opens with the cursor in its Person search, ready to type a name.
+  const personSearch = useRef<HTMLInputElement>(null);
+  // Set when a member is removed: their row (and its Remove button, the dialog's opener) goes, so
+  // once the dialog has closed focus moves to the next member's Remove, else the one above, else
+  // "+ Add member".
+  const afterRemove = useRef<FocusAfterClose | null>(null);
+
+  // A cancelled "Add a member" forgets who was picked: opening it again starts empty.
+  function closeAddMember() {
+    clearFieldError("userId");
+    setPicked(null);
+    setNewDiscipline("");
+    setNewRole("ENGINEER");
+    setAddMemberOpen(false);
+  }
 
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: ["project", project.id] });
@@ -68,6 +95,24 @@ export function ProjectTeamTab({
   function membersOf(disciplineId: string) {
     return project.members.filter((member) => member.disciplineId === disciplineId);
   }
+
+  // A discipline lead signs off contractors' work and sees the whole discipline, so a contractor is
+  // never offered as one — the server refuses it too (upsertProjectDiscipline). One already set
+  // before that rule stays listed, so the box still says who it is until somebody changes it.
+  function possibleLeads(disciplineId: string, currentLeadId: string | null) {
+    return membersOf(disciplineId).filter(
+      (member) => member.projectRole !== "EXTERNAL" || member.userId === currentLeadId,
+    );
+  }
+
+  // Somebody already on the project is changed from the Members list, never through "Add a member":
+  // the search still finds them, marked "Already on this project", but they cannot be picked (and
+  // addMember refuses them if they were).
+  const alreadyOnProject = useMemo(
+    () => new Map(project.members.map((member) => [member.userId, "Already on this project"])),
+    [project.members],
+  );
+  const addMemberRefusal = fieldError(fieldErrors, "userId");
 
   const projectManagers = project.members.filter(
     (member) => member.projectRole === "PROJECT_MANAGER",
@@ -87,10 +132,15 @@ export function ProjectTeamTab({
   const contractorDisciplineOnProject =
     contractorDiscipline !== undefined &&
     project.disciplines.some((row) => row.disciplineId === contractorDiscipline.id);
+  // A contractor joins in their own discipline, so one saved before contractors needed a discipline
+  // cannot join until their account has one. An administrator gets a link straight to the fix.
+  const contractorLacksDiscipline = pickedIsContractor && !contractorDiscipline;
   const contractorProblem = !pickedIsContractor
     ? null
     : !contractorDiscipline
-      ? "This contractor has no discipline on their account yet. An administrator sets one before they can join a project."
+      ? isAdmin
+        ? "This contractor has no discipline on their account yet. Set one on their account, then add them here."
+        : "This contractor has no discipline on their account yet. An administrator sets one before they can join a project."
       : !contractorDisciplineOnProject
         ? `${contractorDiscipline.name} isn't on this project yet. Add the discipline first, then add this contractor.`
         : null;
@@ -101,7 +151,11 @@ export function ProjectTeamTab({
         title="Disciplines on this project"
         action={
           canManage ? (
-            <Button variant="secondary" onClick={() => setAddDisciplineOpen(true)}>
+            <Button
+              ref={addDisciplineButton}
+              variant="secondary"
+              onClick={() => setAddDisciplineOpen(true)}
+            >
               + Add discipline
             </Button>
           ) : null
@@ -115,6 +169,7 @@ export function ProjectTeamTab({
           <ul className="divide-y divide-[var(--border)]">
             {project.disciplines.map((discipline) => {
               const people = membersOf(discipline.disciplineId);
+              const leads = possibleLeads(discipline.disciplineId, discipline.leadId);
               return (
                 <li key={discipline.id} className="flex flex-wrap items-center gap-3 py-3">
                   <DisciplineDot colorHex={discipline.colorHex} code={discipline.code} />
@@ -130,7 +185,7 @@ export function ProjectTeamTab({
                       aria-label={`Lead for ${discipline.name}`}
                       className="w-48"
                       value={discipline.leadId ?? ""}
-                      disabled={pending || people.length === 0}
+                      disabled={pending || leads.length === 0}
                       onChange={(event) =>
                         run(
                           () =>
@@ -148,9 +203,9 @@ export function ProjectTeamTab({
                       }
                     >
                       <option value="">
-                        {people.length === 0 ? "Add members to this discipline first" : "No lead assigned"}
+                        {leads.length === 0 ? "Add members to this discipline first" : "No lead assigned"}
                       </option>
-                      {people.map((member) => (
+                      {leads.map((member) => (
                         <option key={member.userId} value={member.userId}>
                           {member.userName}
                         </option>
@@ -166,6 +221,12 @@ export function ProjectTeamTab({
                     <Button
                       variant="ghost"
                       disabled={pending || people.length > 0}
+                      // Every row has a Remove, so each says which discipline it takes off — and a
+                      // greyed-out one says why it can't yet, out loud as well as on hover.
+                      aria-label={`Remove ${discipline.name}`}
+                      aria-describedby={
+                        people.length > 0 ? `remove-discipline-why-${discipline.id}` : undefined
+                      }
                       title={
                         people.length > 0
                           ? "Remove members from this discipline first"
@@ -181,13 +242,22 @@ export function ProjectTeamTab({
                           {
                             success: `${discipline.name} removed from this project.`,
                             failure: "Couldn't remove that discipline. Try again.",
-                            onSuccess: refresh,
+                            onSuccess: () => {
+                              refresh();
+                              // The row and its button go; "+ Add discipline" heads the list.
+                              focusWhenReady(() => addDisciplineButton.current);
+                            },
                           },
                         )
                       }
                     >
                       Remove
                     </Button>
+                  ) : null}
+                  {canManage && people.length > 0 ? (
+                    <span id={`remove-discipline-why-${discipline.id}`} className="sr-only">
+                      {`${discipline.name} still has ${people.length === 1 ? "a member" : `${people.length} members`} on this project. Move or remove ${people.length === 1 ? "them" : "them all"} first.`}
+                    </span>
                   ) : null}
                 </li>
               );
@@ -200,7 +270,7 @@ export function ProjectTeamTab({
         title="Members"
         action={
           canManage ? (
-            <Button variant="secondary" onClick={() => setAddMemberOpen(true)}>
+            <Button ref={addMemberButton} variant="secondary" onClick={() => setAddMemberOpen(true)}>
               + Add member
             </Button>
           ) : null
@@ -211,9 +281,13 @@ export function ProjectTeamTab({
             No one has been added to this project yet.
           </p>
         ) : (
-          <ul className="divide-y divide-[var(--border)]">
+          <ul ref={membersList} className="divide-y divide-[var(--border)]">
             {project.members.map((member) => (
-              <li key={member.id} className="flex flex-wrap items-center gap-3 py-3">
+              <li
+                key={member.id}
+                data-member-id={member.userId}
+                className="flex flex-wrap items-center gap-3 py-3"
+              >
                 <Avatar name={member.userName} size={28} />
                 <span className="min-w-32 flex-1">
                   <span className="block text-sm font-semibold text-[var(--brand-ink)]">
@@ -285,6 +359,7 @@ export function ProjectTeamTab({
                     <Button
                       variant="ghost"
                       disabled={pending}
+                      aria-label={`Remove ${member.userName}`}
                       onClick={() =>
                         setConfirmRemove({ userId: member.userId, name: member.userName })
                       }
@@ -359,7 +434,8 @@ export function ProjectTeamTab({
       <Modal
         open={addMemberOpen}
         title="Add a member"
-        onClose={() => setAddMemberOpen(false)}
+        onClose={closeAddMember}
+        initialFocusRef={personSearch}
         footer={
           <Button
             loading={pending}
@@ -371,7 +447,7 @@ export function ProjectTeamTab({
             onClick={() =>
               run(
                 () =>
-                  upsertMember({
+                  addMember({
                     projectId: project.id,
                     userId: picked?.id ?? "",
                     projectRole: pickedRole,
@@ -380,12 +456,11 @@ export function ProjectTeamTab({
                 {
                   success: `${picked?.name ?? "Member"} added to this project.`,
                   failure: "Couldn't add this person. Try again.",
+                  // "Already on this project" is said once, under the Person box.
+                  shownOnFields: ["userId"],
                   onSuccess: () => {
                     refresh();
-                    setPicked(null);
-                    setNewDiscipline("");
-                    setNewRole("ENGINEER");
-                    setAddMemberOpen(false);
+                    closeAddMember();
                   },
                 },
               )
@@ -399,13 +474,21 @@ export function ProjectTeamTab({
           <UserPicker
             value={picked}
             label="Person"
+            searchRef={personSearch}
+            unavailable={alreadyOnProject}
             onChange={(user) => {
+              clearFieldError("userId");
               setPicked(user);
               // Picking a contractor sets both fields for them; picking a colleague clears them.
               setNewRole(user?.role === "EXTERNAL" ? "EXTERNAL" : "ENGINEER");
               setNewDiscipline(user?.role === "EXTERNAL" ? (user.disciplineId ?? "") : "");
             }}
           />
+          {addMemberRefusal ? (
+            <p role="alert" className="text-xs text-[var(--status-blocked)]">
+              {addMemberRefusal}
+            </p>
+          ) : null}
           <Select
             aria-label="Project role"
             value={pickedRole}
@@ -444,12 +527,21 @@ export function ProjectTeamTab({
           {contractorProblem ? (
             <p className="text-xs text-[var(--status-blocked)]">{contractorProblem}</p>
           ) : null}
+          {contractorLacksDiscipline && isAdmin && picked ? (
+            <Link
+              href={`/admin/users?edit=${encodeURIComponent(picked.id)}`}
+              className="inline-flex min-h-11 items-center text-sm font-semibold text-[var(--brand-primary)] underline underline-offset-2"
+            >
+              Set {picked.name}&apos;s discipline
+            </Link>
+          ) : null}
         </div>
       </Modal>
 
       <Modal
         open={confirmRemove !== null}
         title="Remove from project"
+        focusAfterCloseRef={afterRemove}
         onClose={() => setConfirmRemove(null)}
         footer={
           <>
@@ -471,6 +563,13 @@ export function ProjectTeamTab({
                     success: `${confirmRemove?.name ?? "Member"} removed from this project.`,
                     failure: "Couldn't remove this person. Try again.",
                     onSuccess: () => {
+                      const list = membersList.current;
+                      const row = Array.from(list?.querySelectorAll("[data-member-id]") ?? []).find(
+                        (element) => element.getAttribute("data-member-id") === confirmRemove?.userId,
+                      );
+                      afterRemove.current = () =>
+                        (list && neighbourOf(row, 'button[aria-label^="Remove "]', list)) ??
+                        addMemberButton.current;
                       refresh();
                       setConfirmRemove(null);
                     },

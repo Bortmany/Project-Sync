@@ -83,15 +83,44 @@ export type PermissionContext = {
   broadcastPolicy?: BroadcastPolicyValue;
 } & ({ projectId?: undefined; orgId?: string } | { projectId: string; orgId: string });
 
+/**
+ * The words a refusal carries when the person must not even learn the thing is there. The same
+ * sentence `NOT_FOUND_MESSAGE` in src/server/http.ts gives for a path that was never there.
+ */
+export const HIDDEN_REFUSAL_MESSAGE = "We could not find that.";
+
 export class ForbiddenError extends Error {
   readonly action: Action;
   readonly code = "FORBIDDEN" as const;
+  /**
+   * True when the refusal must read as "not found" (THE EXTERNAL RULE: a contractor's miss is never
+   * "forbidden"). `statusFor()` answers 404 for it and the message is the not-found sentence.
+   */
+  readonly hidden: boolean;
 
-  constructor(action: Action, message = "You do not have permission to do that.") {
-    super(message);
+  constructor(
+    action: Action,
+    message = "You do not have permission to do that.",
+    options: { hidden?: boolean } = {},
+  ) {
+    super(options.hidden ? HIDDEN_REFUSAL_MESSAGE : message);
     this.name = "ForbiddenError";
     this.action = action;
+    this.hidden = options.hidden ?? false;
   }
+}
+
+/**
+ * The one way to build a refusal for a person. A contractor's refusal is always "not found" —
+ * whatever the colleague-facing wording would have been — so every refusal they can meet goes
+ * through here (and `assertCan` below), never through a bare `new ForbiddenError`.
+ */
+export function forbidden(
+  actor: Pick<Actor, "role">,
+  action: Action,
+  message?: string,
+): ForbiddenError {
+  return new ForbiddenError(action, message, { hidden: actor.role === "EXTERNAL" });
 }
 
 /** Actions only an administrator ever performs. */
@@ -275,7 +304,7 @@ export function can(actor: Actor, action: Action, ctx: PermissionContext = {}): 
 
 /** Same question, but throws the app's typed error when the answer is no. */
 export function assertCan(actor: Actor, action: Action, ctx: PermissionContext = {}): void {
-  if (!can(actor, action, ctx)) throw new ForbiddenError(action);
+  if (!can(actor, action, ctx)) throw forbidden(actor, action);
 }
 
 /**

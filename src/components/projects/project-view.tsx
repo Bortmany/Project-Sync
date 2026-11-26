@@ -17,7 +17,7 @@ import { ProjectTeamTab } from "@/components/projects/project-team-tab";
 import { fieldError, useAction } from "@/components/hooks/use-action";
 import { isExternalUser, isManager, isManagerOn, useMe, useProject } from "@/components/hooks/use-api";
 import { FavoriteStar } from "@/components/shell/favorite-star";
-import { formatDate, toDateInputValue } from "@/components/format";
+import { formatDateRange, toDateInputValue } from "@/components/format";
 import {
   Breadcrumb,
   Button,
@@ -36,7 +36,7 @@ import {
 } from "@/components/ui";
 import type { ProjectDTO, ProjectStatusName } from "@/lib/zod-schemas";
 
-function EditProjectDialog({
+export function EditProjectDialog({
   project,
   open,
   onClose,
@@ -46,13 +46,26 @@ function EditProjectDialog({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
-  const { run, pending, error, fieldErrors } = useAction();
+  const { run, pending, error, fieldErrors, reset, clearFieldError } = useAction();
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description);
   const [status, setStatus] = useState<ProjectStatusName>(project.status);
   const [startDate, setStartDate] = useState(toDateInputValue(project.startDate));
   const [targetDate, setTargetDate] = useState(toDateInputValue(project.targetDate));
   const [signoff, setSignoff] = useState(project.externalSignoffRequired);
+
+  // A cancelled edit forgets what was typed: opening the dialog again shows the saved project,
+  // never abandoned text that looks as if it had been kept.
+  function cancel() {
+    reset();
+    setName(project.name);
+    setDescription(project.description);
+    setStatus(project.status);
+    setStartDate(toDateInputValue(project.startDate));
+    setTargetDate(toDateInputValue(project.targetDate));
+    setSignoff(project.externalSignoffRequired);
+    onClose();
+  }
 
   const dateOrderError =
     startDate && targetDate && targetDate < startDate
@@ -63,10 +76,10 @@ function EditProjectDialog({
     <Modal
       open={open}
       title="Edit project"
-      onClose={onClose}
+      onClose={cancel}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={cancel}>
             Cancel
           </Button>
           <Button
@@ -113,7 +126,13 @@ function EditProjectDialog({
       <div className="space-y-3">
         {error ? <ErrorBanner message="Couldn't save these changes. Try again." /> : null}
         <Field label="Name" error={fieldError(fieldErrors, "name")}>
-          <Input value={name} onChange={(event) => setName(event.target.value)} />
+          <Input
+            value={name}
+            onChange={(event) => {
+              clearFieldError("name");
+              setName(event.target.value);
+            }}
+          />
         </Field>
         <Field label="Code" hint="The project code can't be changed after creation.">
           <Input value={project.code} disabled readOnly />
@@ -249,9 +268,7 @@ export function ProjectView({
         </div>
 
         <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--brand-text)]">
-          <span>
-            {formatDate(data.startDate)} — {formatDate(data.targetDate)}
-          </span>
+          <span>{formatDateRange(data.startDate, data.targetDate)}</span>
           <span className="inline-flex items-center gap-1">
             {data.disciplines.map((discipline) => (
               <DisciplineDot
